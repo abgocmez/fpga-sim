@@ -207,3 +207,99 @@ fn continuous_running_stops_at_a_breakpoint_instead_of_running_past_it() {
     assert!(!st.playing, "Play ended at the stop");
     assert!(st.debug.unwrap().stopped);
 }
+
+fn engine_with_debug(example: &str, breakpoints: &[&str]) -> Box<dyn Engine> {
+    let file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples")
+        .join(example)
+        .join("project.toml");
+    let mut p = Project::load(&file).unwrap();
+    p.debug = Some(sim_api::DebugSection {
+        enabled: true,
+        breakpoints: breakpoints.iter().map(|s| (*s).to_string()).collect(),
+    });
+    p.build_engine(file.parent().unwrap())
+        .unwrap_or_else(|e| panic!("{e}"))
+}
+
+/// Runs in 100 us steps until the guest stops; panics after `limit_us`.
+fn run_to_stop(e: &mut dyn Engine, limit_us: u64) {
+    let mut t = 0;
+    while e.halted().is_none() {
+        assert!(t < limit_us, "no stop within {limit_us} us");
+        run_us(e, 100);
+        t += 100;
+    }
+}
+
+#[test]
+fn a_write_watchpoint_stops_the_guest_on_the_access() {
+    if !qemu_present() {
+        eprintln!("SKIPPED: Xilinx QEMU not found");
+        return;
+    }
+    let mut e = engine_with_debug("math-qemu", &[]);
+    // Armed before the first instruction, so it is exact.
+    e.command(Command::SetBreakpoint {
+        addr: 0x43C0_0000,
+        kind: BreakKind::Write,
+        len: 4,
+        enable: true,
+    })
+    .unwrap();
+    run_to_stop(e.as_mut(), 5_000);
+    let d = e.status(false).debug.unwrap();
+    assert!(d.stopped);
+    let why = d.reason.unwrap();
+    assert!(why.contains("watchpoint at 0x43c00000"), "{why}");
+    // The firmware is inside Xil_Out32, writing the math IP's input register.
+    let r = regs(e.as_mut(), 0);
+    let pc = r.pc_symbol.unwrap_or_default();
+    assert!(pc.starts_with("Xil_Out32"), "pc in {pc}");
+}
+
+#[test]
+fn core_one_stops_at_its_own_breakpoint() {
+    let qemu_and_xsim =
+        qemu_present() && sim_api::find_vivado().is_some() && sim_api::find_dpi_lib().is_some();
+    if !qemu_and_xsim {
+        eprintln!("SKIPPED: needs QEMU, Vivado XSim and the DPI library");
+        return;
+    }
+    // `main` of dma_cpu1.elf (core 1 runs at 0x04000000).
+    let mut e = engine_with_debug("dma-regression", &["0x40005e4"]);
+    run_to_stop(e.as_mut(), 2_000);
+    let d = e.status(false).debug.unwrap();
+    assert_eq!((d.core, d.pc), (Some(1), Some(0x0400_05e4)), "{d:?}");
+    let r1 = regs(e.as_mut(), 1);
+    assert_eq!(r1.r[15], 0x0400_05e4);
+    // Core 0 is readable too, and is somewhere else (its code is at 0x1xxxxx).
+    let r0 = regs(e.as_mut(), 0);
+    assert!(
+        (0x0010_0000..0x0011_0000).contains(&r0.r[15]),
+        "core 0 pc {:#x}",
+        r0.r[15]
+    );
+}
+
+#[test]
+fn a_read_watchpoint_stops_the_guest_on_the_load() {
+    if !qemu_present() {
+        eprintln!("SKIPPED: Xilinx QEMU not found");
+        return;
+    }
+    let mut e = engine_with_debug("math-qemu", &[]);
+    e.command(Command::SetBreakpoint {
+        addr: 0x43C0_0004,
+        kind: BreakKind::Read,
+        len: 4,
+        enable: true,
+    })
+    .unwrap();
+    run_to_stop(e.as_mut(), 5_000);
+    let d = e.status(false).debug.unwrap();
+    let why = d.reason.unwrap();
+    assert!(why.contains("watchpoint at 0x43c00004"), "{why}");
+    let pc = regs(e.as_mut(), 0).pc_symbol.unwrap_or_default();
+    assert!(pc.starts_with("Xil_In32"), "pc in {pc}");
+}

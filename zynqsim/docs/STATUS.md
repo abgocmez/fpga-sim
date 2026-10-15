@@ -122,10 +122,10 @@ Needs the Xilinx QEMU. The CPUs run under QEMU's gdb stub: `-gdb` and `-S`, a de
 | Execution breakpoints (`[debug] breakpoints = ["main", "0x100614"]`, `breakpoint_set`), run stops there, next run continues (steps off the breakpoint first) | verified | `backend-qemu::e2e::a_breakpoint_stops_the_guest_and_its_registers_are_exact`, `sim-api::qemu_debug::*`, `mcp::debugger_through_mcp` |
 | `cpu_regs`: r0-r15, CPSR, mode, flags, pc symbol, while stopped; refused (with the reason) while not stopped | verified | same tests; `gui::model::registers_appear_in_the_model_when_the_guest_stops` |
 | Guest state at every stop is reproducible between sessions (4 consecutive stops, 2 sessions: identical registers) | verified | `backend-qemu::e2e::registers_are_the_same_in_every_debug_session` |
-| `watchpoint_set` (write/read/access), `breakpoint_list`, `symbol_lookup` (ELF symbols, both directions) | `breakpoint_list`, `symbol_lookup`: verified; **watchpoint: implemented-untested** | no test makes a watchpoint fire: QEMU's behaviour for MMIO regions is not established |
+| `watchpoint_set` (write/read/access), `breakpoint_list`, `symbol_lookup` (ELF symbols, both directions) | verified for write and read watchpoints on PL registers | `sim-api::qemu_debug::a_write_watchpoint_stops_the_guest_on_the_access` (stops inside `Xil_Out32`, reason `watchpoint at 0x43c00000`) and `a_read_watchpoint_stops_the_guest_on_the_load` (inside `Xil_In32`). Access watchpoints (`Z4`) use the same path but no test makes one fire; RAM watchpoints were not tried |
 | `Play` stops at a breakpoint and reports why instead of running past it | verified | `sim-api::qemu_debug::continuous_running_stops_at_a_breakpoint_instead_of_running_past_it` |
 | ELF symbol reader (ELF32 LE `.symtab`, no DWARF) | verified | `sim-api::elf::tests::*` on the C and the Rust firmware |
-| Core 1 stops and registers (`cpu_regs core=1`) | implemented-untested | thread selection is generic; no test runs a second core to a breakpoint |
+| Core 1 stops and registers (`cpu_regs core=1`) | verified | `sim-api::qemu_debug::core_one_stops_at_its_own_breakpoint`: the DMA regression's second core stops at its `main` (0x040005e4), core 0 is readable at the same time. Breakpoint addresses are global, so a symbol of core 0's ELF resolves only core 0's code (core 1 needs a numeric address) |
 | `cpu_disasm`, single-step, reverse debugging, DWARF source lines | stub / not-planned | `cpu_disasm` is `Planned("P5")`; there is no disassembler |
 
 Limits that matter:
