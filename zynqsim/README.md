@@ -32,6 +32,19 @@ zynqsim-gui --project examples/demo/project.toml
 
 Keys in the GUI: `1`-`4` toggle switches, `Q` `W` `E` `R` hold buttons.
 
+### Waveforms
+
+The **Waveforms** tab (next to 2D/3D board) shows the signals the trace recorded: board switches,
+buttons and LEDs, UART bytes, Pmod pins, and `bus.<port>.addr/data/write` derived from every
+PS/PL bus access. Tick signals in the list on the left (the search box takes words in any order),
+then use the mouse wheel to zoom around the pointer, drag to pan and click to place a cursor; the
+column left of the plot shows each value at the cursor (or under the pointer). **follow live
+time** keeps the newest time at the right edge, **fit** shows the whole run and **export VCD**
+writes the whole trace. 1-bit signals are drawn as steps, vectors as hex boxes, a signal with too
+many changes for the window is marked "truncated: zoom in". Only signals recorded at the PL
+boundary exist, not the design's internal nets (see `docs/adr/014-waveform-viewer.md`). The MCP
+tool `waveform_get` returns the same windows as JSON, optionally drawn as SVG or PNG.
+
 ### Run real firmware
 
 ```

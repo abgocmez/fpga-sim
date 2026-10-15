@@ -5,6 +5,7 @@ mod audio_out;
 mod loader;
 mod model;
 mod source_view;
+mod waves;
 
 use app::{App, Opts};
 use model::Model;

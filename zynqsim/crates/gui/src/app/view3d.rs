@@ -117,9 +117,25 @@ impl App {
     /// The 2D/3D selector and, for 3D, camera shortcuts.
     pub(super) fn view_tabs(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.view_3d, false, "2D board");
-            ui.selectable_value(&mut self.view_3d, true, "3D board");
-            if self.view_3d {
+            let waves = self.wave_ui.tab;
+            if ui
+                .selectable_label(!waves && !self.view_3d, "2D board")
+                .clicked()
+            {
+                self.view_3d = false;
+                self.wave_ui.tab = false;
+            }
+            if ui
+                .selectable_label(!waves && self.view_3d, "3D board")
+                .clicked()
+            {
+                self.view_3d = true;
+                self.wave_ui.tab = false;
+            }
+            if ui.selectable_label(waves, "Waveforms").clicked() {
+                self.wave_ui.tab = true;
+            }
+            if self.view_3d && !waves {
                 ui.separator();
                 if ui.small_button("reset view").clicked() {
                     self.cam = Camera::default();

@@ -4,6 +4,7 @@ mod dialogs;
 mod media;
 mod project;
 mod view3d;
+mod wave_view;
 
 use crate::loader::ProjectDraft;
 use crate::model::{Model, SPEEDS};
@@ -88,6 +89,8 @@ pub struct App {
     seen_generation: u32,
     // media panels
     media: media::MediaUi,
+    // waveform tab
+    wave_ui: wave_view::WaveUi,
 }
 
 impl App {
@@ -149,6 +152,7 @@ impl App {
             autoplay: false,
             seen_generation: 0,
             media: media::MediaUi::default(),
+            wave_ui: wave_view::WaveUi::default(),
         }
     }
 
@@ -936,10 +940,15 @@ impl App {
         egui::CentralPanel::default().show(ctx, |ui| {
             self.view_tabs(ui);
             ui.add_space(2.0);
-            if self.view_3d {
-                self.board_view_3d(ui, ctx);
+            if self.wave_ui.tab {
+                self.waves_view(ui);
             } else {
-                self.board_view(ui, ctx);
+                self.model.waves.active = false;
+                if self.view_3d {
+                    self.board_view_3d(ui, ctx);
+                } else {
+                    self.board_view(ui, ctx);
+                }
             }
         });
         self.project_window(ctx);
@@ -1260,6 +1269,132 @@ mod tests {
         h.app
             .open_project_file(std::path::PathBuf::from("no/such/project.toml"));
         assert!(h.app.draft_msg.is_some());
+    }
+
+    #[test]
+    fn the_waveform_tab_zooms_pans_and_places_a_cursor() {
+        use sim_api::{Command, Input};
+        let mut h = Harness::new();
+        let client = h.app.model.client.clone();
+        let run = |ps: u64| {
+            client.command(Command::Run { duration_ps: ps }).unwrap();
+        };
+        // Switch 0 goes high at 2 ms of a 4 ms run.
+        run(2_000_000_000);
+        client
+            .command(Command::Input(Input::SetSwitch { index: 0, on: true }))
+            .unwrap();
+        run(2_000_000_000);
+
+        h.app.wave_ui.tab = true;
+        h.app.model.waves.toggle("board.sw0");
+        h.app.model.waves.toggle("uart1.tx");
+        for _ in 0..3 {
+            h.frame(vec![]);
+        }
+        let plot = h.app.wave_ui.plot.expect("the plot was drawn");
+        assert!(h.app.model.waves.active);
+        assert!(
+            h.app
+                .model
+                .waves
+                .catalogue
+                .iter()
+                .any(|s| s.name == "board.sw0"),
+            "catalogue fetched"
+        );
+        let span0 = h.app.model.waves.span_ps;
+        assert!(span0 >= 2_000_000_000, "fitted to the run: {span0}");
+        let names: Vec<&str> = h
+            .app
+            .wave_ui
+            .readouts
+            .iter()
+            .map(|r| r.0.as_str())
+            .collect();
+        assert_eq!(names, ["board.sw0", "uart1.tx"]);
+
+        // A click at 25% and 75% of the window places the cursor and reads
+        // the switch before and after it went high.
+        let at = |frac: f32| pos2(plot.min.x + frac * plot.width(), plot.min.y + 40.0);
+        h.click(at(0.25));
+        h.frame(vec![]);
+        let c1 = h.app.model.waves.cursor_ps.expect("cursor placed");
+        assert!(c1 < 1_500_000_000 && c1 > 500_000_000, "cursor {c1}");
+        assert_eq!(
+            h.app.wave_ui.readouts[0].1, "0",
+            "{:?}",
+            h.app.wave_ui.readouts
+        );
+        h.click(at(0.75));
+        h.frame(vec![]);
+        let c2 = h.app.model.waves.cursor_ps.unwrap();
+        assert!(c2 > c1);
+        assert_eq!(
+            h.app.wave_ui.readouts[0].1, "1",
+            "{:?}",
+            h.app.wave_ui.readouts
+        );
+        assert!(
+            h.app.model.state.switches[0],
+            "the cursor clicks sent no board input"
+        );
+
+        // The wheel zooms around the pointer: the time under it stays put.
+        let p = at(0.5);
+        let t_under = |h: &Harness, x: f32| {
+            let w = &h.app.model.waves;
+            w.from_ps as f64 + f64::from((x - plot.min.x) / plot.width()) * w.span_ps as f64
+        };
+        h.frame(vec![Event::PointerMoved(p)]);
+        let before = t_under(&h, p.x);
+        for _ in 0..4 {
+            h.frame(vec![Event::MouseWheel {
+                unit: MouseWheelUnit::Point,
+                delta: vec2(0.0, 80.0),
+                modifiers: Modifiers::NONE,
+            }]);
+        }
+        for _ in 0..6 {
+            h.frame(vec![]);
+        }
+        let span1 = h.app.model.waves.span_ps;
+        assert!(span1 < span0 / 2, "zoomed in: {span0} -> {span1}");
+        let after = t_under(&h, p.x);
+        assert!(
+            (after - before).abs() < span1 as f64 * 0.02,
+            "time under the pointer moved {before} -> {after}"
+        );
+        // The data window followed the view and is no longer truncated.
+        let d = h.app.model.waves.data.as_ref().unwrap();
+        assert_eq!(d.from_ps, h.app.model.waves.from_ps);
+        assert_eq!(d.to_ps, h.app.model.waves.to_ps());
+
+        // Dragging to the right moves the window to earlier times.
+        let from0 = h.app.model.waves.from_ps;
+        assert!(from0 > 0);
+        let a = at(0.4);
+        h.frame(vec![Event::PointerMoved(a)]);
+        h.press(a);
+        h.frame(vec![Event::PointerMoved(a + vec2(30.0, 0.0))]);
+        h.frame(vec![Event::PointerMoved(a + vec2(80.0, 0.0))]);
+        h.release(a + vec2(80.0, 0.0));
+        let from1 = h.app.model.waves.from_ps;
+        assert!(from1 < from0, "panned earlier: {from0} -> {from1}");
+        assert_eq!(h.app.model.waves.span_ps, span1, "a drag keeps the zoom");
+        assert!(!h.app.model.waves.follow);
+
+        // The drag did not move the cursor, and "fit" shows everything.
+        assert_eq!(h.app.model.waves.cursor_ps, Some(c2));
+        h.app.model.waves.fit();
+        h.frame(vec![]);
+        assert_eq!(h.app.model.waves.from_ps, 0);
+        assert!(h.app.model.waves.span_ps >= span0);
+
+        // Leaving the tab stops the fetching.
+        h.app.wave_ui.tab = false;
+        h.frame(vec![]);
+        assert!(!h.app.model.waves.active);
     }
 
     #[test]

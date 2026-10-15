@@ -1,6 +1,6 @@
 //! The tool table (prompt §13).
 
-use crate::schema::{boolean, enumeration, integer, number, object, string};
+use crate::schema::{boolean, enumeration, integer, number, object, string, string_array};
 use serde_json::Value;
 use sim_api::Capability;
 
@@ -608,6 +608,60 @@ pub fn tool_defs() -> Vec<ToolDef> {
             ),
         ),
         t(
+            "waveform_get",
+            "Read the value changes of chosen signals inside a time window, for debugging timing:              `signals` are names from the catalogue (call with no `signals` to list them: board              switches/buttons/LEDs `board.*`, Pmod pins `pmod.*`, `uart1.tx`, `net.*`, and              `bus.<port>.addr|data|write` derived from every PS/PL bus access). A name ending in              `*` matches by prefix. Times are picoseconds; `changes` are `[time_ps, value]`              and `initial` is the value in effect at `from`. The answer is bounded:              `truncated` is true when a signal had more than `max_changes` changes in the window              (it is complete up to its `covered_to_ps`; narrow the window to see the rest). Only              signals the engine recorded at the PL boundary exist, not the PL's internal nets.              `render` adds an SVG (inline, or in `path`) or a PNG image of the same window.",
+            Needs(C::Trace),
+            object(
+                vec![
+                    (
+                        "signals",
+                        string_array(
+                            "Signal names or `prefix*` patterns; omit to list the catalogue.",
+                            &["board.led0", "uart1.tx", "bus.M_AXI_GP0.*"],
+                        ),
+                    ),
+                    ("from", duration("Start of the window (default 0).")),
+                    (
+                        "to",
+                        duration("End of the window (default: the newest record)."),
+                    ),
+                    (
+                        "max_changes",
+                        integer(
+                            "Most changes per signal (default 2000, max 20000).",
+                            Some(1),
+                            Some(20000),
+                            &[500],
+                        ),
+                    ),
+                    (
+                        "render",
+                        enumeration(
+                            "Also draw the window: svg, png or none (default).",
+                            &["none", "svg", "png"],
+                        ),
+                    ),
+                    (
+                        "width",
+                        integer(
+                            "Picture width in pixels (default 1000).",
+                            Some(200),
+                            Some(4000),
+                            &[1000],
+                        ),
+                    ),
+                    (
+                        "path",
+                        string(
+                            "Write the SVG/PNG here (inside an allowed root) instead of inline.",
+                            &["out/wave.svg"],
+                        ),
+                    ),
+                ],
+                &[],
+            ),
+        ),
+        t(
             "trace_get",
             "Read a page of trace records (inputs, signal changes, UART bytes, markers).",
             Needs(C::Trace),
@@ -839,7 +893,8 @@ mod tests {
                 &"pmod_set",
                 &"pmod_state",
                 &"source_line",
-                &"trace_get"
+                &"trace_get",
+                &"waveform_get"
             ],
             "undocumented extensions"
         );

@@ -1917,6 +1917,9 @@ impl QemuEngine {
                 TraceFormat::Vcd => trace::to_vcd(&self.trace),
                 TraceFormat::Perfetto => trace::to_perfetto_json(&self.trace),
             })),
+            Query::SignalCatalogue | Query::Waveform { .. } => {
+                crate::wave::answer(&self.trace, q)
+            }
             Query::Snapshots => Ok(Response::Snapshots(
                 self.snapshots.iter().map(|s| s.name.clone()).collect(),
             )),

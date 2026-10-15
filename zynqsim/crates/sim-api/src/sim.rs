@@ -409,6 +409,9 @@ impl Simulator {
                 TraceFormat::Vcd => trace::to_vcd(&self.st.trace),
                 TraceFormat::Perfetto => trace::to_perfetto_json(&self.st.trace),
             })),
+            Query::SignalCatalogue | Query::Waveform { .. } => {
+                crate::wave::answer(&self.st.trace, q)
+            }
             Query::Recording => Ok(Response::Recording(Box::new(self.recording()))),
             Query::Snapshots => Ok(Response::Snapshots(
                 self.snapshots.keys().cloned().collect(),

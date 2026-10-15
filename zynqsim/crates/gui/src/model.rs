@@ -91,6 +91,8 @@ pub struct Model {
     pub load: Option<LoadJob>,
     /// Why the last load failed.
     pub load_error: Option<String>,
+    /// The waveform viewer's state (signal list, window, cursor).
+    pub waves: crate::waves::WaveState,
     cursors: [u64; 2],
     events: Receiver<Event>,
     video_seen: u32,
@@ -130,6 +132,7 @@ impl Model {
             trace_generation: 0,
             load: None,
             load_error: None,
+            waves: crate::waves::WaveState::default(),
             cursors: [0; 2],
             events,
             video_seen: 0,
@@ -169,6 +172,10 @@ impl Model {
         fresh.audio_wanted = self.audio_wanted;
         fresh.generation = self.generation + 1;
         fresh.load = self.load.take();
+        // The chosen signals outlive an engine swap; the time axis does not.
+        fresh.waves.selected = std::mem::take(&mut self.waves.selected);
+        fresh.waves.filter = std::mem::take(&mut self.waves.filter);
+        fresh.waves.active = self.waves.active;
         *self = fresh;
         Ok(())
     }
@@ -420,6 +427,7 @@ impl Model {
                 self.trace_generation = self.generation;
             }
         }
+        self.refresh_waves();
     }
 
     /// Flips a slide switch.

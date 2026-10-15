@@ -7,6 +7,8 @@
 mod export;
 mod hash;
 mod log;
+pub mod wave_scene;
+pub mod waveform;
 
 pub use export::{to_perfetto_json, to_vcd};
 pub use hash::Fnv64;
