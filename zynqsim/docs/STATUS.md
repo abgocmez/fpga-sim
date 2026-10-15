@@ -108,7 +108,7 @@ control plane drive it). Caveats are listed under *Known limits of the P1 engine
 | VCD export (signals and UART bytes) | verified | `trace::export::tests::*` (not opened in a third-party viewer). Bus events are not in the VCD |
 | Perfetto (Chrome trace-event JSON) export | verified | `trace::export::tests::perfetto_is_valid_json_with_all_events` |
 | Bounded trace for QEMU engines: the newest 1,000,000 records are kept, the digest and record count cover all of them, `trace_get`/events use absolute indices | verified | `trace::log::tests::a_bounded_log_keeps_the_digest_and_absolute_indices`. VCD/Perfetto exports of a long QEMU run cover only the retained tail (`trace_dropped` in `run --json` says how many were dropped) |
-| Waveforms from XSim (`.wdb`) | implemented-untested | `[rtl] waves = true` records a database in the run directory; not exercised by a test |
+| Waveforms from XSim (`.wdb`) | verified by hand | `[rtl] waves = true` records `xsim/zs_snap.wdb` in the run directory (`%TEMP%\zynqsimun-*`), which is **kept** (also with `ZYNQSIM_KEEP_RUN=1`; the path is printed on stderr); XSim is ended cleanly so the database is closed. Run on the board demo: 11 MB file written. No automated test, and the file was not opened in the Vivado viewer |
 | FST export | not-planned | VCD is sufficient for now |
 | AXI protocol checkers, latency histograms | stub | not implemented |
 

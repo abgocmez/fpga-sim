@@ -415,6 +415,8 @@ pub struct QemuEngine {
     work_dir: PathBuf,
     pl_finish_noted: bool,
     spec: QemuSpec,
+    /// Keep the run directory (logs, XSim build, waveform) when the engine ends.
+    keep_dir: bool,
     /// Every state-changing request applied so far, run targets normalised to
     /// `RunUntil`. Re-applying it to a fresh engine reproduces this one.
     journal: Vec<Command>,
@@ -604,6 +606,12 @@ impl QemuEngine {
                 ),
             },
         );
+        // Not in the trace: the path differs per run and would change the digest.
+        if std::env::var_os("ZYNQSIM_KEEP_RUN").is_some()
+            || spec.rtl.as_ref().is_some_and(|r| r.waves)
+        {
+            eprintln!("zynqsim: run directory kept: {}", spec.work_dir.display());
+        }
         Ok(QemuEngine {
             board: BoardState::new(&def),
             def,
@@ -621,6 +629,8 @@ impl QemuEngine {
             work_dir: spec.work_dir.clone(),
             pl_finish_noted: false,
             spec: spec.clone(),
+            keep_dir: std::env::var_os("ZYNQSIM_KEEP_RUN").is_some()
+                || spec.rtl.as_ref().is_some_and(|r| r.waves),
             journal: Vec::new(),
             journal_bytes: 0,
             journal_ok: true,
@@ -1019,7 +1029,7 @@ impl Drop for QemuEngine {
         // Stop QEMU so it releases its log files, then remove the run
         // directory. After a failure the logs are the evidence: keep them.
         self.machine.kill();
-        if self.failure.is_none() {
+        if self.failure.is_none() && !self.keep_dir {
             let _ = std::fs::remove_dir_all(&self.work_dir);
             if let Some(parent) = self.work_dir.parent() {
                 // The shared scratch root is removed only when nothing else is in it.

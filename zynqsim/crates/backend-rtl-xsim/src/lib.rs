@@ -149,6 +149,8 @@ pub struct XsimPl {
     media: Vec<MediaEvent>,
     video_src: VideoSource,
     audio_src: AudioSource,
+    /// A waveform database is being recorded: end the run cleanly so it is valid.
+    waves: bool,
     /// The design uses the codec or HDMI DPI functions.
     has_media: bool,
     /// The design uses the board switch/button/LED DPI functions.
@@ -468,6 +470,7 @@ impl XsimPl {
             media: Vec::new(),
             video_src: VideoSource::color_bars(320, 240),
             audio_src: AudioSource::Silence,
+            waves: cfg.waves,
             has_media: sources_mention(
                 &cfg.sources,
                 &["zs_ssm2603", "zs_hdmi", "zs_audio_", "zs_video_"],
@@ -824,6 +827,18 @@ impl PlTarget for XsimPl {
 
 impl Drop for XsimPl {
     fn drop(&mut self) {
+        // The testbench ends (`$finish`) when its peer closes, and only then
+        // does XSim write out the waveform database: give it a moment.
+        if self.waves && !self.finished {
+            self.rp.shutdown();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while Instant::now() < deadline {
+                if matches!(self.child.try_wait(), Ok(Some(_))) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
         self.kill();
     }
 }

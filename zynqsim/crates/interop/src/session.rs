@@ -100,7 +100,12 @@ impl Session {
         })
     }
 
-    /// The next request id.
+    /// Closes both directions of the connection. The peer sees end of file.
+    pub fn shutdown(&self) {
+        let _ = self.stream.shutdown(std::net::Shutdown::Both);
+    }
+
+    /// Allocates a fresh request id.
     pub fn alloc_id(&mut self) -> u32 {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
