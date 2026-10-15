@@ -131,9 +131,15 @@ pub struct DebugSection {
     #[serde(default)]
     pub enabled: bool,
     /// Execution breakpoints planted before the first instruction: addresses
-    /// (`0x100614`) or ELF symbols (`main`).
+    /// (`0x100614`), ELF symbols (`main`) or source lines (`main.rs:42`, needs
+    /// DWARF line info in the ELF).
     #[serde(default)]
     pub breakpoints: Vec<String>,
+    /// Extra directories (relative to the project file) searched for the
+    /// source files the ELF's line table names, besides the compilation
+    /// directory recorded in it and the project directory.
+    #[serde(default)]
+    pub source_dirs: Vec<String>,
 }
 
 /// `[storage]` section: what sits in the board's microSD slot (PS SDIO0) and
@@ -598,6 +604,9 @@ impl Project {
                     device_values,
                     debug: debug.enabled,
                     breakpoints: debug.breakpoints.clone(),
+                    source_dirs: std::iter::once(base.to_path_buf())
+                        .chain(debug.source_dirs.iter().map(|d| resolve(base, d)))
+                        .collect(),
                     qemu,
                     dtb,
                     elf0,

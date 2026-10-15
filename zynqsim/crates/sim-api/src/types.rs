@@ -164,6 +164,9 @@ pub struct BreakpointInfo {
     /// ELF symbol at the address, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symbol: Option<String>,
+    /// Source file and line of the address, when the ELF has line information.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<SourceRef>,
 }
 
 /// Registers of one core, read while it is stopped.
@@ -180,6 +183,35 @@ pub struct CpuRegs {
     /// ELF symbol and offset of the pc, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pc_symbol: Option<String>,
+    /// Source file and line of the pc, when the ELF has line information.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pc_source: Option<SourceRef>,
+}
+
+/// A source file and line, as the ELF's DWARF line table names them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceRef {
+    /// File path as in the line table (`/` separators, relative to the
+    /// compilation directory when it lies inside it).
+    pub file: String,
+    /// 1-based line.
+    pub line: u32,
+}
+
+/// The source position of a code address.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceLine {
+    /// The queried address.
+    pub addr: u64,
+    /// File path as in the line table.
+    pub file: String,
+    /// 1-based line.
+    pub line: u32,
+    /// 1-based column, 0 when the compiler did not record one.
+    pub column: u32,
+    /// Function containing the address (DWARF name, else the ELF symbol).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub function: Option<String>,
 }
 
 /// An ELF symbol.
@@ -459,6 +491,28 @@ pub enum Query {
     Symbol {
         /// Address or symbol name.
         query: String,
+    },
+    /// The source line of a code address (DWARF line table of core 0's ELF).
+    /// Needs [`Capability::MemoryAccess`].
+    SourceLine {
+        /// Code address.
+        addr: u64,
+    },
+    /// The text of a source file the ELF's line table names, found relative to
+    /// the compilation directory and the project. Needs
+    /// [`Capability::MemoryAccess`].
+    SourceFile {
+        /// File as named by [`Response::SourceLine`] (a unique trailing part
+        /// of the path is enough).
+        path: String,
+    },
+    /// Where `file:line` has code: the addresses a breakpoint there needs.
+    /// Needs [`Capability::MemoryAccess`].
+    SourceAddrs {
+        /// File (a unique trailing part of the path is enough).
+        file: String,
+        /// 1-based line.
+        line: u32,
     },
     /// Physical memory. Needs [`Capability::MemoryAccess`].
     MemRead {
@@ -750,6 +804,26 @@ pub enum Response {
     },
     /// A resolved symbol.
     Symbol(SymbolInfo),
+    /// The source position of a code address.
+    SourceLine(SourceLine),
+    /// The text of a source file.
+    SourceFile {
+        /// The file as the line table names it.
+        file: String,
+        /// Where it was found on this machine.
+        resolved: String,
+        /// Its text (lossy UTF-8).
+        text: String,
+    },
+    /// Addresses of a `file:line`.
+    SourceAddrs {
+        /// The file as the line table names it.
+        file: String,
+        /// The line that has code (the requested one, or the next with code).
+        line: u32,
+        /// Where its code starts.
+        addrs: Vec<u64>,
+    },
     /// Guest memory contents.
     Memory {
         /// Physical address of the first byte.

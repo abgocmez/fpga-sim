@@ -3,7 +3,7 @@
 # Build: `cargo xtask firmware` (or `cargo build --release` in this directory).
 [workspace]
 resolver = "3"
-members = ["rt", "hello", "audio_demo", "hdmi_demo", "irq_demo", "oled_demo", "rgb_demo", "tmp2_demo", "als_demo", "acl_demo", "pcam_demo", "net_demo", "sd_demo", "qspi_demo"]
+members = ["rt", "hello", "audio_demo", "hdmi_demo", "irq_demo", "oled_demo", "rgb_demo", "tmp2_demo", "als_demo", "acl_demo", "pcam_demo", "net_demo", "sd_demo", "qspi_demo", "debug_demo"]
 
 [workspace.package]
 version = "0.1.0"
@@ -15,6 +15,13 @@ opt-level = "s"
 panic = "abort"
 lto = true
 codegen-units = 1
+
+# `debug = 1` (line tables and function names, no variables or types) for the
+# source-level debugging demo: about 9 KiB of `.debug_*` sections that are not
+# loaded. (`line-tables-only` leaves out the function names.) The other demos
+# stay without debug info, as the committed fixtures are.
+[profile.release.package.debug_demo]
+debug = "limited"
 
 [profile.dev]
 panic = "abort"
