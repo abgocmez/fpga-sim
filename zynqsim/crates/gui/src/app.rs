@@ -334,6 +334,18 @@ impl App {
                 }
             });
         }
+        // The source line of the stopped pc, when the ELF has line info.
+        let has_source = self.model.source.view.is_some();
+        egui::CollapsingHeader::new(if has_source {
+            "Source (stopped)"
+        } else {
+            "Source"
+        })
+        .id_salt("source")
+        .default_open(has_source)
+        .show(ui, |ui| {
+            crate::source_view::show(ui, &mut self.model.source);
+        });
         egui::CollapsingHeader::new("PL (bus accesses)").show(ui, |ui| {
             let bus: Vec<&TraceRecord> = self
                 .model

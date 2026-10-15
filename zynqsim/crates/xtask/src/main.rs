@@ -149,6 +149,7 @@ const FIRMWARE: &[(&str, &str)] = &[
     ("net_demo", "rust_net.elf"),
     ("sd_demo", "rust_sd.elf"),
     ("qspi_demo", "rust_qspi.elf"),
+    ("debug_demo", "rust_debug.elf"),
 ];
 
 /// Builds `firmware/` (its own workspace) and copies the ELFs into `fixtures/elf`.
@@ -160,8 +161,20 @@ fn firmware() -> bool {
 ==> cargo build --release (in {})",
         dir.display()
     );
+    // The build directory is recorded in the DWARF compilation unit of the
+    // `debug_demo` ELF; remap it to `.` so the committed fixture does not carry
+    // the path of whoever built it (the debugger finds sources through
+    // `[debug] source_dirs`). These are the flags of `firmware/.cargo/config.toml`
+    // plus the remap: an env var replaces the config's rustflags, it does not add.
+    let flags = [
+        "-Clink-arg=-Tlink.ld".to_string(),
+        "-Clink-arg=-Lrt".to_string(),
+        format!("--remap-path-prefix={}=.", dir.display()),
+    ]
+    .join("\x1f");
     let built = Command::new(cargo_program())
         .args(["build", "--release"])
+        .env("CARGO_ENCODED_RUSTFLAGS", flags)
         .current_dir(&dir)
         .status();
     match built {

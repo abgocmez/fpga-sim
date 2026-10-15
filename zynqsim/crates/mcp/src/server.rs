@@ -10,6 +10,7 @@ use sim_api::{
 use std::path::{Path, PathBuf};
 
 mod net;
+mod source;
 
 /// Longest simulated span a single `sim_run` may cover.
 const MAX_RUN_PS: u64 = 3600 * Ps::PER_S;
@@ -446,22 +447,42 @@ impl McpServer {
                             regs.insert(name, json!(format!("{v:#010x}")));
                         }
                         let f = |bit: u32| r.cpsr & (1 << bit) != 0;
-                        Ok(Out::json(json!({
+                        let mut out = json!({
                             "core": r.core,
                             "mode": r.mode,
                             "pc_symbol": r.pc_symbol,
+                            "pc_source": r.pc_source,
                             "regs": regs,
                             "cpsr": format!("{:#010x}", r.cpsr),
                             "flags": { "N": f(31), "Z": f(30), "C": f(29), "V": f(28) },
                             "irq_masked": f(7),
                             "fiq_masked": f(6),
                             "thumb": f(5),
-                        })))
+                        });
+                        // The lines around the pc, when the file is readable.
+                        if let Some(s) = &r.pc_source {
+                            if let Ok((resolved, lines)) = self.source_window(&s.file, s.line, 3) {
+                                out["source_context"] =
+                                    json!({ "resolved_path": resolved, "lines": lines });
+                            }
+                        }
+                        Ok(Out::json(out))
                     }
                     r => Err(unexpected(&r)),
                 }
             }
+            "source_line" => self.source_line(a),
+            "breakpoint_set" if a.get("addr").is_none() && a.get("location").is_some() => {
+                self.breakpoint_at_location(a)
+            }
             "breakpoint_set" | "watchpoint_set" => {
+                if a.get("addr").is_none() {
+                    return Err(ApiError::invalid_argument(if name == "breakpoint_set" {
+                        "give `addr` or `location` (symbol, address or file.rs:LINE)"
+                    } else {
+                        "`addr` is required"
+                    }));
+                }
                 let addr = a.get("addr").and_then(Value::as_u64).unwrap_or(0);
                 let enable = a.get("enable").and_then(Value::as_bool).unwrap_or(true);
                 let (kind, len) = if name == "breakpoint_set" {

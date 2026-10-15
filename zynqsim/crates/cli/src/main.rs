@@ -86,6 +86,11 @@ enum Cmd {
         /// After the run, save a Pmod device's picture: `JA=FILE.png`.
         #[arg(long = "device-out")]
         device_out: Vec<String>,
+        /// Stop the guest here (turns the debugger on): an address, an ELF
+        /// symbol or a source line `main.rs:42` (needs DWARF line info).
+        /// Repeatable; the stop is reported with its file and line.
+        #[arg(long = "break")]
+        breakpoints: Vec<String>,
         /// Set a physical quantity of a Pmod device, at the start or at a
         /// simulated time: `JA.temperature=23.5` or `5ms@JA.temperature=-12.25`.
         #[arg(long = "device-set")]
@@ -255,6 +260,7 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
             video_out,
             audio_out,
             device_out,
+            breakpoints,
             device_set,
             pcap,
         } => cmd_run(
@@ -277,6 +283,7 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
                 device_out,
                 device_set,
                 pcap,
+                breakpoints,
             },
         ),
         Cmd::Test { recording } => cmd_test(json, &recording),
@@ -427,6 +434,7 @@ struct RunArgs {
     device_out: Vec<String>,
     device_set: Vec<String>,
     pcap: Option<PathBuf>,
+    breakpoints: Vec<String>,
 }
 
 /// `JA`..`JE` (any case) to the Pmod port index 0..=4.
@@ -521,8 +529,15 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), Failure> {
 fn build_engine(
     project: &Option<PathBuf>,
     seed: Option<u64>,
+    breakpoints: &[String],
 ) -> Result<Box<dyn sim_api::Engine>, Failure> {
     let Some(file) = project else {
+        if !breakpoints.is_empty() {
+            return Err(fail(
+                2,
+                "--break needs --project (a project with the qemu PS)",
+            ));
+        }
         let mut cfg = SimConfig::default();
         if let Some(s) = seed {
             cfg.seed = s;
@@ -532,6 +547,11 @@ fn build_engine(
     let mut p = Project::load(file)?;
     if let Some(s) = seed {
         p.sim.seed = s;
+    }
+    if !breakpoints.is_empty() {
+        let d = p.debug.get_or_insert_with(Default::default);
+        d.enabled = true;
+        d.breakpoints.extend(breakpoints.iter().cloned());
     }
     let base = file.parent().unwrap_or(Path::new("."));
     let errors: Vec<String> = p
@@ -560,7 +580,7 @@ fn build_engine(
 
 fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
     let total = Ps(sim_api::parse_duration(&a.duration)?);
-    let mut engine = build_engine(&a.project, a.seed)?;
+    let mut engine = build_engine(&a.project, a.seed, &a.breakpoints)?;
     let script = script::parse(&a.at, engine.def())?;
 
     if a.video_in.is_some() || a.audio_in.is_some() {
@@ -739,6 +759,26 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
     };
 
     let st = engine.status(false);
+    // Where the guest is stopped, when a breakpoint ended the run.
+    let debug = st.debug.as_ref().filter(|d| d.stopped).map(|d| {
+        let regs = match engine.query(
+            &Query::CpuRegs {
+                core: d.core.unwrap_or(0),
+            },
+            false,
+        ) {
+            Ok(Response::CpuRegs(r)) => Some(r),
+            _ => None,
+        };
+        json!({
+            "stopped": true,
+            "core": d.core,
+            "pc": d.pc,
+            "reason": d.reason,
+            "pc_symbol": regs.as_ref().and_then(|r| r.pc_symbol.clone()),
+            "source": regs.as_ref().and_then(|r| r.pc_source.clone()),
+        })
+    });
     let mut uart = |port: u8| -> String {
         match engine.query(
             &Query::UartRead {
@@ -801,6 +841,7 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
                 "rgb": engine.board().rgb,
                 "network": network,
                 "storage": st.storage,
+                "debug": debug,
                 "leds": leds,
                 "uart": { "0": u0, "1": u1 },
                 "inputs": recording.as_ref().map(|r| r.entries.len()),
@@ -817,6 +858,16 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
         );
         println!("time      : {}", Ps(st.now_ps));
         println!("trace     : {} records, {}", st.trace_len, st.trace_hash);
+        if let Some(d) = &debug {
+            let src = match (d["source"]["file"].as_str(), d["source"]["line"].as_u64()) {
+                (Some(f), Some(l)) => format!(" at {f}:{l}"),
+                _ => String::new(),
+            };
+            println!(
+                "stopped   : {}{src}",
+                d["reason"].as_str().unwrap_or("stopped")
+            );
+        }
         if bus_accesses > 0 {
             println!("pl bus    : {bus_accesses} access(es)");
         }

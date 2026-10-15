@@ -1,0 +1,35 @@
+# Source-level debugging of Rust firmware (firmware/debug_demo, built with `debug = 1`):
+# the CPU stops at a line of main.rs, `cpu_regs` reports `pc_source`, `source_line` returns
+# the surrounding lines of the file, and the GUI's Source panel shows them.
+#
+#   zynqsim run --project examples/rust-debug/project.toml --for 1ms
+#   zynqsim-mcp, then: project_open -> sim_run 1ms -> cpu_regs / source_line
+#
+# `breakpoints` takes addresses, ELF symbols and `file.rs:LINE`. The ELF names its source
+# as `debug_demo/src/main.rs`, relative to the firmware workspace it was built in;
+# `source_dirs` tells the debugger where that workspace is (relative to this file).
+# Timing under the debugger is NOT reproducible; the guest's state at each stop is.
+# Needs the Xilinx QEMU (Vitis).
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "demo"          # no PL
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_debug.elf"
+
+[debug]
+enabled = true
+breakpoints = ["main.rs:19"]
+source_dirs = ["../../firmware"]

@@ -425,11 +425,15 @@ impl Simulator {
                 "device_image",
                 "the demo engine has no PL pins (use qemu + xsim with the pin-group DPI)",
             )),
-            Query::Breakpoints | Query::Symbol { .. } | Query::Disasm { .. } => Err(self
-                .unsupported(
-                    "breakpoints and symbols",
-                    "the demo engine runs no CPU (use the qemu backend with [debug])",
-                )),
+            Query::Breakpoints
+            | Query::Symbol { .. }
+            | Query::Disasm { .. }
+            | Query::SourceLine { .. }
+            | Query::SourceFile { .. }
+            | Query::SourceAddrs { .. } => Err(self.unsupported(
+                "breakpoints and symbols",
+                "the demo engine runs no CPU (use the qemu backend with [debug])",
+            )),
             Query::VideoFrame => Err(self.unsupported(
                 "video_frame",
                 "video needs a PL with an HDMI model (qemu + xsim)",

@@ -239,6 +239,11 @@ first instruction, `QemuMachine::run_until` returns `RunEnd::Stopped` when a sto
 does. `QemuEngine` keeps the stop (`Status.debug`), makes `cpu_regs` available only then, and the
 server's `Play` ends at a stop (`Engine::halted`).
 
+Source lines (ADR-013): `sim-api::source::SourceMap` reads the ELF's `.debug_line` and subprogram
+DIEs with `gimli`/`object` once at engine start. `Query::{SourceLine, SourceFile, SourceAddrs}`
+answer from it; `cpu_regs.pc_source`, stop reasons and breakpoint listings carry the line, and
+`file.rs:LINE` is accepted wherever a breakpoint location is (project, MCP, CLI `--break`).
+
 ## 8. Known limitations at P0
 
 See [STATUS.md](STATUS.md). In short: no CPU, no RTL, no AXI; pins unverified; layout

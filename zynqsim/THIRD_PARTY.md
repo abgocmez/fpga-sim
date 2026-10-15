@@ -130,7 +130,8 @@ linked; they are located at run time and driven as separate processes (see
 | fdeflate | 0.3.7 | MIT OR Apache-2.0 |
 | find-msvc-tools | 0.1.14 | MIT OR Apache-2.0 |
 | flate2 | 1.1.10 | MIT OR Apache-2.0 |
-| foldhash | 0.1.5 | Zlib |
+| fnv | 1.0.7 | Apache-2.0 / MIT |
+| foldhash | 0.1.5, 0.2.0 | Zlib |
 | foreign-types | 0.5.0 | MIT/Apache-2.0 |
 | foreign-types-macros | 0.2.4 | MIT/Apache-2.0 |
 | foreign-types-shared | 0.3.1 | MIT/Apache-2.0 |
@@ -145,6 +146,7 @@ linked; they are located at run time and driven as separate processes (see
 | futures-util | 0.3.34 | MIT OR Apache-2.0 |
 | gethostname | 1.1.0 | Apache-2.0 |
 | getrandom | 0.3.4, 0.4.3 | MIT OR Apache-2.0 |
+| gimli | 0.34.0 | MIT OR Apache-2.0 |
 | gl_generator | 0.14.0 | Apache-2.0 |
 | glow | 0.16.0 | MIT OR Apache-2.0 OR Zlib |
 | glutin | 0.32.3 | Apache-2.0 |
@@ -160,7 +162,7 @@ linked; they are located at run time and driven as separate processes (see
 | half | 2.7.1 | MIT OR Apache-2.0 |
 | hash32 | 0.3.1 | MIT OR Apache-2.0 |
 | hashbrown | 0.15.5, 0.17.1 | MIT OR Apache-2.0 |
-| heapless | 0.9.3 | MIT OR Apache-2.0 |
+| heapless | 0.8.0, 0.9.3 | MIT OR Apache-2.0 |
 | heck | 0.5.0 | MIT OR Apache-2.0 |
 | hermit-abi | 0.5.3 | MIT OR Apache-2.0 |
 | hex | 0.4.3 | MIT OR Apache-2.0 |
@@ -198,6 +200,7 @@ linked; they are located at run time and driven as separate processes (see
 | log | 0.4.34 | MIT OR Apache-2.0 |
 | mach2 | 0.6.0 | BSD-2-Clause OR MIT OR Apache-2.0 |
 | malloc_buf | 0.0.6 | MIT |
+| managed | 0.8.0 | 0BSD |
 | memchr | 2.8.3 | Unlicense OR MIT |
 | memmap2 | 0.9.11 | MIT OR Apache-2.0 |
 | memoffset | 0.9.1 | MIT |
@@ -238,6 +241,7 @@ linked; they are located at run time and driven as separate processes (see
 | objc2-ui-kit | 0.2.2 | MIT |
 | objc2-uniform-type-identifiers | 0.2.2 | MIT |
 | objc2-user-notifications | 0.2.2 | MIT |
+| object | 0.40.0 | Apache-2.0 OR MIT |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 |
 | once_cell_polyfill | 1.70.2 | MIT OR Apache-2.0 |
 | orbclient | 0.3.55 | MIT |
@@ -301,6 +305,7 @@ linked; they are located at run time and driven as separate processes (see
 | smithay-client-toolkit | 0.19.2, 0.20.0 | MIT |
 | smithay-clipboard | 0.7.3 | MIT |
 | smol_str | 0.2.2 | MIT OR Apache-2.0 |
+| smoltcp | 0.12.0 | 0BSD |
 | spirv | 0.3.0+sdk-1.3.268.0 | Apache-2.0 |
 | stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 |
 | static_assertions | 1.1.0 | MIT OR Apache-2.0 |

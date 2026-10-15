@@ -14,6 +14,8 @@ backend-qemu = { version = "0.1.0", path = "../backend-qemu" }
 backend-rtl-xsim = { version = "0.1.0", path = "../backend-rtl-xsim" }
 fatfs = { version = "0.3.6", default-features = false, features = ["std", "alloc"] }
 fscommon = "0.1.1"
+gimli = { version = "0.34.0", default-features = false, features = ["read", "std"] }
+object = { version = "0.40.0", default-features = false, features = ["read_core", "elf", "std"] }
 board-zybo = { version = "0.1.0", path = "../board-zybo" }
 pl-api = { version = "0.1.0", path = "../pl-api" }
 pl-native = { version = "0.1.0", path = "../pl-native" }
@@ -25,3 +27,8 @@ toml = "1.1.8"
 trace = { version = "0.1.0", path = "../trace" }
 yaxpeax-arch = "0.3.2"
 yaxpeax-arm = "0.5.0"
+
+[dev-dependencies]
+# Tests build a tiny ELF with a hand-made line table.
+gimli = { version = "0.34.0", default-features = false, features = ["read", "std", "write"] }
+object = { version = "0.40.0", default-features = false, features = ["read_core", "elf", "std", "write"] }

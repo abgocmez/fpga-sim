@@ -10,11 +10,12 @@ use crate::elf::Symbols;
 use crate::engine::Engine;
 use crate::error::ApiError;
 use crate::netlog::NetLog;
+use crate::source::SourceMap;
 use crate::types::DeviceStatus;
 use crate::types::{
     AudioSpec, BreakKind, BreakpointInfo, Capability, Command, CpuRegs, DebugStatus, DisasmLine,
-    Fidelity, Input, MediaStatus, Query, Response, Status, StorageDevice, StorageStatus,
-    SymbolInfo, TraceFormat, VideoSpec,
+    Fidelity, Input, MediaStatus, Query, Response, SourceLine, SourceRef, Status, StorageDevice,
+    StorageStatus, SymbolInfo, TraceFormat, VideoSpec,
 };
 use backend_qemu::{BreakKind as GdbKind, QemuConfig, QemuError, QemuMachine, RunEnd, UartMode};
 use board_zybo::{BoardDef, BoardState};
@@ -160,8 +161,12 @@ pub struct QemuSpec {
     pub pl_name: String,
     /// Attach QEMU's gdb stub (see `[debug]` in `project.toml`).
     pub debug: bool,
-    /// Execution breakpoints to plant at start (addresses or ELF symbols).
+    /// Execution breakpoints to plant at start: addresses, ELF symbols or
+    /// `file.rs:LINE` (needs DWARF line info in the ELF).
     pub breakpoints: Vec<String>,
+    /// Absolute directories searched for the sources of the ELF's line table
+    /// (besides its compilation directory), the project directory first.
+    pub source_dirs: Vec<PathBuf>,
     /// Devices on Pmod ports: `(port 0..=4 for JA..JE, kind)`.
     pub devices: Vec<(u8, String)>,
     /// Initial physical quantities of those devices: `(port, name, value)`.
@@ -557,6 +562,10 @@ pub struct QemuEngine {
     journal_ok: bool,
     /// Symbols of core 0's ELF (empty if it has none).
     symbols: Symbols,
+    /// DWARF line table of core 0's ELF (empty if it has none).
+    source: SourceMap,
+    /// Where to look for the files the line table names.
+    source_dirs: Vec<PathBuf>,
     /// Devices on Pmod ports; shared with the PL adapter, which feeds them
     /// pin changes the moment they arrive (ADR-009).
     devs: Arc<Mutex<devices::Bank>>,
@@ -613,19 +622,47 @@ fn gdb_kind(k: BreakKind) -> GdbKind {
     }
 }
 
-/// An address (`0x100614`, `1049108`) or an ELF symbol name.
-fn resolve_location(text: &str, symbols: &Symbols) -> Result<u32, ApiError> {
+/// Splits `file.rs:42` into its parts (the line is after the last colon, so a
+/// Windows drive letter is fine). `None` for anything else.
+fn split_file_line(t: &str) -> Option<(&str, u32)> {
+    let (file, line) = t.rsplit_once(':')?;
+    let line: u32 = line.trim().parse().ok()?;
+    let file = file.trim();
+    (!file.is_empty() && line > 0).then_some((file, line))
+}
+
+/// The source position of an address, when the ELF has line information.
+fn source_ref(map: &SourceMap, addr: u32) -> Option<SourceRef> {
+    map.lookup(addr).map(|l| SourceRef {
+        file: l.file.to_string(),
+        line: l.line,
+    })
+}
+
+/// An address (`0x100614`, `1049108`), an ELF symbol name or `file.rs:LINE`.
+/// A source line may start code in several places; all are returned.
+fn resolve_locations(
+    text: &str,
+    symbols: &Symbols,
+    source: &SourceMap,
+) -> Result<Vec<u32>, ApiError> {
     let t = text.trim();
     let num = match t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
         Some(h) => u32::from_str_radix(h, 16).ok(),
         None => t.parse::<u32>().ok(),
     };
-    num.or_else(|| symbols.by_name(t).map(|s| s.addr))
-        .ok_or_else(|| {
-            ApiError::not_found(format!(
-                "`{t}` is neither an address nor a symbol of the ELF"
-            ))
-        })
+    if let Some(a) = num.or_else(|| symbols.by_name(t).map(|s| s.addr)) {
+        return Ok(vec![a]);
+    }
+    if let Some((file, line)) = split_file_line(t) {
+        let found = source
+            .addrs_for(file, line)
+            .map_err(|m| ApiError::not_found(format!("breakpoint `{t}`: {m}")))?;
+        return Ok(found.addrs);
+    }
+    Err(ApiError::not_found(format!(
+        "`{t}` is neither an address, a symbol nor a `file.rs:LINE` of the ELF"
+    )))
 }
 
 /// Averages the RGB LED pins into PWM duty cycles.
@@ -763,21 +800,24 @@ impl QemuEngine {
         let devs = Arc::new(Mutex::new(bank));
         pl.set_pin_sink(Box::new(BankSink(Arc::clone(&devs))));
         let symbols = Symbols::load(&spec.elf0).unwrap_or_default();
+        let source = SourceMap::load(&spec.elf0).unwrap_or_default();
         let debug = if spec.debug {
             machine.attach_debugger(&mut pl).map_err(map_err)?;
             let symbols = symbols.clone();
             let mut breakpoints = Vec::new();
             for b in &spec.breakpoints {
-                let addr = resolve_location(b, &symbols)?;
-                machine
-                    .debug_break(GdbKind::Exec, true, addr, 4)
-                    .map_err(|e| ApiError::io(e.to_string()))?;
-                breakpoints.push(BreakpointInfo {
-                    addr: u64::from(addr),
-                    kind: BreakKind::Exec,
-                    len: 4,
-                    symbol: symbols.containing(addr).map(|(s, _)| s.name.clone()),
-                });
+                for addr in resolve_locations(b, &symbols, &source)? {
+                    machine
+                        .debug_break(GdbKind::Exec, true, addr, 4)
+                        .map_err(|e| ApiError::io(e.to_string()))?;
+                    breakpoints.push(BreakpointInfo {
+                        addr: u64::from(addr),
+                        kind: BreakKind::Exec,
+                        len: 4,
+                        symbol: symbols.containing(addr).map(|(s, _)| s.name.clone()),
+                        source: source_ref(&source, addr),
+                    });
+                }
             }
             Some(DebugState {
                 symbols,
@@ -852,6 +892,8 @@ impl QemuEngine {
             journal_bytes: 0,
             journal_ok: true,
             symbols,
+            source,
+            source_dirs: spec.source_dirs.clone(),
             devs,
             rgb: RgbMeter::default(),
             snapshots: Vec::new(),
@@ -1329,12 +1371,16 @@ impl QemuEngine {
             }
             None => "stop".to_string(),
         };
+        let at = source_ref(&self.source, pc)
+            .map(|s| format!("{}:{}", s.file, s.line))
+            .unwrap_or_default();
         let text = format!(
             "core {core} stopped: {reason} at pc={pc:#010x}{}",
-            if sym.is_empty() {
-                String::new()
-            } else {
-                format!(" ({sym})")
+            match (sym.is_empty(), at.is_empty()) {
+                (true, true) => String::new(),
+                (false, true) => format!(" ({sym})"),
+                (true, false) => format!(" ({at})"),
+                (false, false) => format!(" ({sym}, {at})"),
             }
         );
         d.stops += 1;
@@ -1732,6 +1778,11 @@ impl QemuEngine {
                             kind,
                             len: if kind == BreakKind::Exec { 4 } else { len },
                             symbol,
+                            source: if kind == BreakKind::Exec {
+                                source_ref(&self.source, a)
+                            } else {
+                                None
+                            },
                         });
                     }
                 }
@@ -2067,6 +2118,51 @@ impl QemuEngine {
                     offset,
                 }))
             }
+            Query::SourceLine { addr } => {
+                let a = u32::try_from(*addr).map_err(|_| {
+                    ApiError::invalid_argument("addresses above 4 GiB do not exist on this core")
+                })?;
+                if self.source.is_empty() {
+                    return Err(ApiError::not_found(
+                        "the ELF has no line information (build the firmware with debug info, \
+                         for example `debug = \"line-tables-only\"`)",
+                    ));
+                }
+                let l = self.source.lookup(a).ok_or_else(|| {
+                    ApiError::not_found(format!("no source line for address {a:#x}"))
+                })?;
+                Ok(Response::SourceLine(SourceLine {
+                    addr: *addr,
+                    file: l.file.to_string(),
+                    line: l.line,
+                    column: l.column,
+                    function: l.function.map(str::to_string).or_else(|| {
+                        self.symbols.containing(a).map(|(s, _)| s.name.clone())
+                    }),
+                }))
+            }
+            Query::SourceFile { path } => {
+                let (resolved, text) = self
+                    .source
+                    .read_source(path, &self.source_dirs)
+                    .map_err(ApiError::not_found)?;
+                Ok(Response::SourceFile {
+                    file: path.clone(),
+                    resolved: resolved.to_string_lossy().into_owned(),
+                    text,
+                })
+            }
+            Query::SourceAddrs { file, line } => {
+                let f = self
+                    .source
+                    .addrs_for(file, *line)
+                    .map_err(ApiError::not_found)?;
+                Ok(Response::SourceAddrs {
+                    file: f.file,
+                    line: f.line,
+                    addrs: f.addrs.into_iter().map(u64::from).collect(),
+                })
+            }
             Query::CpuRegs { core } if self.debug.is_some() => {
                 if *core > 1 {
                     return Err(ApiError::invalid_argument("core must be 0 or 1"));
@@ -2101,6 +2197,7 @@ impl QemuEngine {
                     cpsr: r.cpsr,
                     mode: cpsr_mode(r.cpsr).to_string(),
                     pc_symbol,
+                    pc_source: source_ref(&self.source, r.r[15]),
                 }))
             }
             Query::CpuRegs { .. } => Err(self.unsupported(

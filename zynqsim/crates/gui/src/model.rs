@@ -77,6 +77,8 @@ pub struct Model {
     pub generation: u32,
     /// Registers of each core while the guest is stopped under the debugger.
     pub cpu_regs: [Option<sim_api::CpuRegs>; 2],
+    /// The source line of the stopped pc (the Source panel).
+    pub source: crate::source_view::SourceTracker,
     /// The newest picture of each attached Pmod device: `(port, kind, state,
     /// width, height, rgba)`.
     pub device_images: Vec<(u8, String, String, u32, u32, Vec<u8>)>,
@@ -121,6 +123,7 @@ impl Model {
             net: None,
             generation: 0,
             cpu_regs: [None, None],
+            source: Default::default(),
             device_images: Vec::new(),
             device_values: Vec::new(),
             device_polled: None,
@@ -285,6 +288,7 @@ impl Model {
         let stopped = self.status.debug.as_ref().is_some_and(|d| d.stopped);
         if !stopped {
             self.cpu_regs = [None, None];
+            self.source.update(&self.client, &self.cpu_regs);
             return;
         }
         for core in 0..2u8 {
@@ -293,6 +297,7 @@ impl Model {
                 _ => None,
             };
         }
+        self.source.update(&self.client, &self.cpu_regs);
     }
 
     /// Fetches new HDMI frames and DAC audio when the status says there are some.
