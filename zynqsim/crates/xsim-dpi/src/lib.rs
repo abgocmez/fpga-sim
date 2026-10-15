@@ -17,7 +17,9 @@
 //! Build the library with `cargo xtask dpi`
 //! (`cargo build --release -p xsim-dpi --features freestanding`).
 
-#![cfg_attr(feature = "freestanding", no_std)]
+// Only on Windows: the `no_std` build needs the panic handler and allocator
+// that `win` provides. Elsewhere the feature is accepted and builds as `std`.
+#![cfg_attr(all(feature = "freestanding", windows), no_std)]
 
 extern crate alloc;
 

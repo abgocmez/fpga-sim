@@ -1,0 +1,11 @@
+# Text files are checked out with LF everywhere: some tests compare file
+# contents (board TOML, golden data) and must not depend on core.autocrlf.
+* text=auto eol=lf
+*.png binary
+*.elf binary
+*.a binary
+*.wdb binary
+*.wav binary
+*.db binary
+*.ps1 text eol=crlf
+*.bat text eol=crlf

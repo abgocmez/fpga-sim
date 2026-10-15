@@ -39,6 +39,6 @@ jobs:
       - name: clippy (freestanding DPI library)
         run: cargo clippy -p xsim-dpi --features freestanding -- -D warnings
       - name: test
-        run: cargo test --workspace
+        run: cargo test --workspace --no-fail-fast
       - name: release build (zynqsim, zynqsim-gui, zynqsim-mcp)
         run: cargo build --release
