@@ -91,7 +91,10 @@ fn is_absolute(p: &str) -> bool {
 /// the host may be Windows and DWARF paths come from the build machine).
 fn has_suffix(path: &str, suffix: &str) -> bool {
     let p: Vec<&str> = path.split('/').filter(|c| !c.is_empty()).collect();
-    let s: Vec<&str> = suffix.split('/').filter(|c| !c.is_empty() && *c != ".").collect();
+    let s: Vec<&str> = suffix
+        .split('/')
+        .filter(|c| !c.is_empty() && *c != ".")
+        .collect();
     if s.is_empty() || s.len() > p.len() {
         return false;
     }
@@ -107,10 +110,7 @@ impl SourceMap {
         let d = std::fs::read(path)
             .map_err(|e| ApiError::io(format!("cannot read {}: {e}", path.display())))?;
         SourceMap::parse(&d).map_err(|m| {
-            ApiError::invalid_argument(format!(
-                "{}: cannot read debug info: {m}",
-                path.display()
-            ))
+            ApiError::invalid_argument(format!("{}: cannot read debug info: {m}", path.display()))
         })
     }
 
@@ -238,7 +238,8 @@ impl SourceMap {
         rows.sort_by_key(|r| (r.addr, u8::from(r.line != 0)));
         map.rows = rows;
         map.funcs.sort_by_key(|f| (f.low, f.high));
-        map.funcs.dedup_by(|a, b| a.low == b.low && a.high == b.high);
+        map.funcs
+            .dedup_by(|a, b| a.low == b.low && a.high == b.high);
         Ok(map)
     }
 
@@ -353,7 +354,11 @@ impl SourceMap {
                 format!(
                     "no source file `{file}` in the line table (known: {}{})",
                     shown.join(", "),
-                    if known.len() > shown.len() { ", ..." } else { "" }
+                    if known.len() > shown.len() {
+                        ", ..."
+                    } else {
+                        ""
+                    }
                 )
             });
         }
@@ -510,11 +515,14 @@ mod tests {
 
     /// One unit: `(file, dir)`, sequences `(start, [(offset, line, column, stmt)], end offset)`
     /// and functions `(name, low, size)`.
+    /// `(offset, line, column, is_stmt)`.
+    type TestRow = (u64, u64, u64, bool);
+
     struct TestUnit {
         comp_dir: &'static str,
         dir: &'static str,
         file: &'static str,
-        sequences: Vec<(u64, Vec<(u64, u64, u64, bool)>, u64)>,
+        sequences: Vec<(u64, Vec<TestRow>, u64)>,
         funcs: Vec<(&'static str, u64, u64)>,
     }
 
@@ -671,14 +679,27 @@ mod tests {
         let l = m.addrs_for("alpha.rs", 10).unwrap();
         assert_eq!((l.file.as_str(), l.line), ("src/alpha.rs", 10));
         assert_eq!(l.addrs, vec![0x10_0000, 0x10_0010]);
-        assert_eq!(m.addrs_for("src/alpha.rs", 11).unwrap().addrs, vec![0x10_0008]);
-        assert_eq!(m.addrs_for("SRC\\ALPHA.RS", 11).unwrap().addrs, vec![0x10_0008]);
+        assert_eq!(
+            m.addrs_for("src/alpha.rs", 11).unwrap().addrs,
+            vec![0x10_0008]
+        );
+        assert_eq!(
+            m.addrs_for("SRC\\ALPHA.RS", 11).unwrap().addrs,
+            vec![0x10_0008]
+        );
         // Line 12 is not a statement, line 9 has no code: both resolve forward
         // to the next line that does (10), or fail when none is left.
         assert_eq!(m.addrs_for("alpha.rs", 9).unwrap().line, 10);
-        assert!(m.addrs_for("alpha.rs", 12).unwrap_err().contains("past the last"));
+        assert!(
+            m.addrs_for("alpha.rs", 12)
+                .unwrap_err()
+                .contains("past the last")
+        );
         let e = m.addrs_for("nosuch.rs", 1).unwrap_err();
-        assert!(e.contains("no source file") && e.contains("alpha.rs"), "{e}");
+        assert!(
+            e.contains("no source file") && e.contains("alpha.rs"),
+            "{e}"
+        );
         // `a.rs` must not match `alpha.rs`.
         assert!(m.addrs_for("a.rs", 10).is_err());
         // Every address maps back to the line it was asked for.
@@ -711,7 +732,9 @@ mod tests {
         // A file that exists but is not in the line table is never served.
         std::fs::write(dir.join("secret.txt"), "no").unwrap();
 
-        let (p, text) = m.read_source("alpha.rs", std::slice::from_ref(&dir)).unwrap();
+        let (p, text) = m
+            .read_source("alpha.rs", std::slice::from_ref(&dir))
+            .unwrap();
         assert!(p.ends_with("alpha.rs"));
         assert_eq!(text, "fn alpha() {}\n");
         let e = m
@@ -719,7 +742,9 @@ mod tests {
             .unwrap_err();
         assert!(e.contains("not a source file"), "{e}");
         // beta.rs is in the line table but not on disk: say where it looked.
-        let e = m.read_source("beta.rs", std::slice::from_ref(&dir)).unwrap_err();
+        let e = m
+            .read_source("beta.rs", std::slice::from_ref(&dir))
+            .unwrap_err();
         assert!(e.contains("source_dirs") && e.contains("beta.rs"), "{e}");
         // Without search directories only the absolute compilation directory
         // is tried.
@@ -732,8 +757,7 @@ mod tests {
         let m = SourceMap::load(&fixture("rust_debug.elf")).unwrap();
         assert!(!m.is_empty(), "rust_debug.elf must carry line tables");
         let src = std::fs::read_to_string(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../firmware/debug_demo/src/main.rs"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../firmware/debug_demo/src/main.rs"),
         )
         .unwrap();
         let line_of = |mark: &str| {
@@ -750,7 +774,11 @@ mod tests {
             let line = line_of(mark);
             let found = m.addrs_for("main.rs", line).unwrap();
             assert_eq!(found.line, line, "{mark} has code on its own line");
-            assert!(found.file.ends_with("debug_demo/src/main.rs"), "{}", found.file);
+            assert!(
+                found.file.ends_with("debug_demo/src/main.rs"),
+                "{}",
+                found.file
+            );
             assert!(!found.addrs.is_empty());
             for a in &found.addrs {
                 let l = m.lookup(*a).unwrap();

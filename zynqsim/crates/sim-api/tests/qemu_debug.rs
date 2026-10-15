@@ -217,6 +217,7 @@ fn engine_with_debug(example: &str, breakpoints: &[&str]) -> Box<dyn Engine> {
     p.debug = Some(sim_api::DebugSection {
         enabled: true,
         breakpoints: breakpoints.iter().map(|s| (*s).to_string()).collect(),
+        ..Default::default()
     });
     p.build_engine(file.parent().unwrap())
         .unwrap_or_else(|e| panic!("{e}"))

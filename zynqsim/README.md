@@ -148,6 +148,24 @@ and the CPSR there, `symbol_lookup` maps addresses to ELF symbols, and the next 
 continues. Registers exist at stops, not at an arbitrary time, and timing under the debugger is not
 reproducible (docs/adr/007-debugger-on-guest-stops.md).
 
+#### Source lines
+
+If the ELF has DWARF line info, stops are reported as `file:line` (docs/adr/013-dwarf-source.md):
+
+```
+zynqsim run --project examples/rust-debug/project.toml --for 1ms --break main.rs:38
+zynqsim-mcp            # then: project_open examples/rust-debug, sim_run 1ms, cpu_regs, source_line
+zynqsim-gui --project examples/rust-debug/project.toml --play   # at the stop: side panel "Source"
+```
+
+Breakpoints accept `main.rs:LINE` (a trailing part of the path is enough) in `[debug] breakpoints`,
+`breakpoint_set location=` and `run --break`. `source_line` returns the file/line/function of an
+address or symbol with the lines around it, `cpu_regs` has `pc_source` and `source_context`, and the
+GUI's Source panel shows the file with the current line highlighted. Sources are found through the
+compilation directory recorded in the ELF, the project directory and `[debug] source_dirs`.
+`firmware/debug_demo` is built with `debug = 1` for this (`cargo xtask firmware`); the other
+firmware ELFs carry no debug info. Only lines and function names are read: no variables, no stepping.
+
 ### MCP
 
 ```json
@@ -168,7 +186,7 @@ what the board receives.
 | `crates/` | `sim-core`, `trace`, `board-zybo`, `devices`, `sim-api`, `mcp`, `cli`, `gui`, `xtask`, `interop`, `pl-api`, `pl-native`, `backend-qemu`, `backend-rtl-xsim`, `xsim-dpi` |
 | `boards/` | board descriptions (TOML) |
 | `docs/` | `DESIGN.md`, `STATUS.md`, `TESTPLAN.md`, `adr/` |
-| `examples/` | `demo`, `math-qemu`, `math-debug`, `dma-regression`, `board-demo`, `audio-demo`, `hdmi-demo`, `irq-demo`, `oled-demo`, `rgb-demo`, `rust-hello`, `net-demo`, `sd-demo`, `qspi-demo` projects |
+| `examples/` | `demo`, `math-qemu`, `math-debug`, `dma-regression`, `board-demo`, `audio-demo`, `hdmi-demo`, `irq-demo`, `oled-demo`, `rgb-demo`, `rust-hello`, `rust-debug`, `net-demo`, `sd-demo`, `qspi-demo` projects |
 | `firmware/` | Rust `no_std` Cortex-A9 firmware (`hello`, `audio_demo`, `hdmi_demo`, `irq_demo`, `oled_demo`, `rgb_demo`, `net_demo`, `sd_demo`, `qspi_demo`); its own workspace, built by `cargo xtask firmware` |
 | `fixtures/` | prototype firmware ELFs, the prebuilt Rust ELFs (`rust_*.elf`) and the RTL used by the examples and tests |
 

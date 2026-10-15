@@ -93,7 +93,12 @@ fn a_stop_is_reported_as_a_line_of_the_rust_source() {
 
     // SourceLine at the pc: same line, a column, the function.
     match e
-        .query(&Query::SourceLine { addr: u64::from(r.r[15]) }, false)
+        .query(
+            &Query::SourceLine {
+                addr: u64::from(r.r[15]),
+            },
+            false,
+        )
         .unwrap()
     {
         Response::SourceLine(l) => {
@@ -106,7 +111,12 @@ fn a_stop_is_reported_as_a_line_of_the_rust_source() {
     // The file's text, found through `[debug] source_dirs`, has the marked
     // statement on that very line.
     match e
-        .query(&Query::SourceFile { path: src.file.clone() }, false)
+        .query(
+            &Query::SourceFile {
+                path: src.file.clone(),
+            },
+            false,
+        )
         .unwrap()
     {
         Response::SourceFile { text, resolved, .. } => {
@@ -121,7 +131,13 @@ fn a_stop_is_reported_as_a_line_of_the_rust_source() {
     run_us(e.as_mut(), 500);
     assert!(e.halted().is_some());
     let again = regs(e.as_mut()).pc_source.unwrap();
-    assert_eq!(again, SourceRef { file: src.file, line });
+    assert_eq!(
+        again,
+        SourceRef {
+            file: src.file,
+            line
+        }
+    );
 }
 
 #[test]
@@ -162,10 +178,7 @@ fn a_source_line_breakpoint_can_be_set_at_run_time() {
     let s = regs(e.as_mut()).pc_source.unwrap();
     assert_eq!(s.line, line);
     // The firmware had already printed the collatz result.
-    match e
-        .query(&Query::SourceFile { path: s.file }, false)
-        .unwrap()
-    {
+    match e.query(&Query::SourceFile { path: s.file }, false).unwrap() {
         Response::SourceFile { text, .. } => assert!(text.contains("fn collatz_steps")),
         r => panic!("{r:?}"),
     }
@@ -192,5 +205,9 @@ fn bad_source_locations_are_refused_with_the_reason() {
         .query(&Query::SourceLine { addr: 0x0010_0000 }, false)
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::NotFound);
-    assert!(err.message.contains("no line information"), "{}", err.message);
+    assert!(
+        err.message.contains("no line information"),
+        "{}",
+        err.message
+    );
 }

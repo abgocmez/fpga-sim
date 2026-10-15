@@ -18,8 +18,8 @@ mod project;
 mod qemu_engine;
 mod recording;
 mod server;
-mod source;
 pub mod sim;
+mod source;
 pub mod storage;
 mod tbgen;
 mod tools;
@@ -53,8 +53,8 @@ pub use tools::{
 pub use types::{
     AudioSpec, BreakKind, BreakpointInfo, Capability, Command, CpuRegs, DebugStatus,
     DeviceRegisterInfo, DeviceStatus, DeviceValueInfo, DisasmLine, Event, Fidelity, Input,
-    MediaStatus, NetDirection, NetFrame, NetStatus, Query, Response, Status, StorageDevice,
-    SourceLine, SourceRef, StorageStatus, SymbolInfo, TraceFormat, VideoSpec,
+    MediaStatus, NetDirection, NetFrame, NetStatus, Query, Response, SourceLine, SourceRef, Status,
+    StorageDevice, StorageStatus, SymbolInfo, TraceFormat, VideoSpec,
 };
 
 /// Board definition, state, rendering and hit-testing.

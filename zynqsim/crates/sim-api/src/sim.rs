@@ -430,11 +430,10 @@ impl Simulator {
             | Query::Disasm { .. }
             | Query::SourceLine { .. }
             | Query::SourceFile { .. }
-            | Query::SourceAddrs { .. } => Err(self
-                .unsupported(
-                    "breakpoints and symbols",
-                    "the demo engine runs no CPU (use the qemu backend with [debug])",
-                )),
+            | Query::SourceAddrs { .. } => Err(self.unsupported(
+                "breakpoints and symbols",
+                "the demo engine runs no CPU (use the qemu backend with [debug])",
+            )),
             Query::VideoFrame => Err(self.unsupported(
                 "video_frame",
                 "video needs a PL with an HDMI model (qemu + xsim)",

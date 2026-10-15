@@ -4,6 +4,7 @@ mod app;
 mod audio_out;
 mod loader;
 mod model;
+mod source_view;
 
 use app::{App, Opts};
 use model::Model;

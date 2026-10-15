@@ -51,7 +51,9 @@ fn source_lines_through_mcp() {
     let run = call("sim_run", json!({ "duration": "1ms" }));
     assert_eq!(run["isError"], false, "{run}");
     assert_eq!(run["structuredContent"]["debug"]["stopped"], true, "{run}");
-    let reason = run["structuredContent"]["debug"]["reason"].as_str().unwrap();
+    let reason = run["structuredContent"]["debug"]["reason"]
+        .as_str()
+        .unwrap();
     assert!(reason.contains(&format!("main.rs:{step}")), "{reason}");
 
     // cpu_regs shows file:line and the lines around it.
@@ -69,7 +71,12 @@ fn source_lines_through_mcp() {
     let cur: Vec<&Value> = lines.iter().filter(|l| l["current"] == true).collect();
     assert_eq!(cur.len(), 1);
     assert_eq!(cur[0]["line"], step);
-    assert!(cur[0]["text"].as_str().unwrap().contains("MARK:collatz-step"));
+    assert!(
+        cur[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("MARK:collatz-step")
+    );
 
     // source_line by address (the pc), with a small context.
     let pc = sc["regs"]["pc"].as_str().unwrap();
@@ -109,7 +116,10 @@ fn source_lines_through_mcp() {
         json!({ "location": format!("main.rs:{call_sum}") }),
     );
     assert_eq!(b["isError"], false, "{b}");
-    assert_eq!(b["structuredContent"]["breakpoints"][0]["source"]["line"], call_sum);
+    assert_eq!(
+        b["structuredContent"]["breakpoints"][0]["source"]["line"],
+        call_sum
+    );
     let list = call("breakpoint_list", json!({}));
     let bps = list["structuredContent"]["breakpoints"].as_array().unwrap();
     assert!(

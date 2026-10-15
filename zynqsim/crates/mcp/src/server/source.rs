@@ -110,24 +110,25 @@ impl McpServer {
     pub(super) fn breakpoint_at_location(&mut self, a: &Value) -> Result<Out, ApiError> {
         let loc = str_arg(a, "location")?.trim().to_string();
         let enable = a.get("enable").and_then(Value::as_bool).unwrap_or(true);
-        let addrs: Vec<u64> = if let Some((file, line)) = split_location(&loc) {
-            match self.client.query(Query::SourceAddrs {
-                file: file.to_string(),
-                line,
-            })? {
-                Response::SourceAddrs { addrs, .. } => addrs,
-                r => return Err(unexpected(&r)),
-            }
-        } else if let Some(h) = loc.strip_prefix("0x").or_else(|| loc.strip_prefix("0X")) {
-            vec![u64::from_str_radix(h, 16).map_err(|_| {
-                ApiError::invalid_argument(format!("`{loc}` is not a hex address"))
-            })?]
-        } else {
-            match self.client.query(Query::Symbol { query: loc.clone() })? {
-                Response::Symbol(s) => vec![s.addr],
-                r => return Err(unexpected(&r)),
-            }
-        };
+        let addrs: Vec<u64> =
+            if let Some((file, line)) = split_location(&loc) {
+                match self.client.query(Query::SourceAddrs {
+                    file: file.to_string(),
+                    line,
+                })? {
+                    Response::SourceAddrs { addrs, .. } => addrs,
+                    r => return Err(unexpected(&r)),
+                }
+            } else if let Some(h) = loc.strip_prefix("0x").or_else(|| loc.strip_prefix("0X")) {
+                vec![u64::from_str_radix(h, 16).map_err(|_| {
+                    ApiError::invalid_argument(format!("`{loc}` is not a hex address"))
+                })?]
+            } else {
+                match self.client.query(Query::Symbol { query: loc.clone() })? {
+                    Response::Symbol(s) => vec![s.addr],
+                    r => return Err(unexpected(&r)),
+                }
+            };
         let mut set = Vec::new();
         for addr in &addrs {
             self.client.command(Command::SetBreakpoint {

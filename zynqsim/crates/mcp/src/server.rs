@@ -461,8 +461,7 @@ impl McpServer {
                         });
                         // The lines around the pc, when the file is readable.
                         if let Some(s) = &r.pc_source {
-                            if let Ok((resolved, lines)) = self.source_window(&s.file, s.line, 3)
-                            {
+                            if let Ok((resolved, lines)) = self.source_window(&s.file, s.line, 3) {
                                 out["source_context"] =
                                     json!({ "resolved_path": resolved, "lines": lines });
                             }
