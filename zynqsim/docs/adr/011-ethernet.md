@@ -131,3 +131,11 @@ built, so its jitter is not measured here. B was measured: see below.
 * With `restrict = false` the guest can reach the host's network (slirp NAT, host ICMP, DNS);
   frames then depend on the host and are not reproducible. Not tested beyond "DHCP offers a
   router and the gateway still answers ping".
+
+## Known limit: the debugger (found while integrating)
+
+A project without `[network]` normally starts QEMU with `-net none` (an unplugged NIC). With `[debug]`
+enabled that option is **not** passed: with it, this QEMU build's gdb stub intermittently stopped
+answering (`registers_are_the_same_in_every_debug_session` failed in 5 of 6 runs; none without the
+option). A debugged session therefore keeps QEMU's implicit user-mode NIC, which is not captured
+and not part of the reproducible trace. Cause not investigated.

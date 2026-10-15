@@ -449,8 +449,13 @@ impl QemuMachine {
             Some(n) => args.extend(n.qemu_args(&net_log)),
             // QEMU otherwise attaches an implicit user-mode network (and, with
             // `restrict` off, a path to the host's network) that the host
-            // could neither see nor reproduce.
-            None => args.extend(["-net".to_string(), "none".to_string()]),
+            // could neither see nor reproduce. Not under the debugger: with
+            // `-net none` the gdb stub of this QEMU build intermittently
+            // stops answering (found by `registers_are_the_same_in_every_
+            // debug_session`, 5 of 6 runs), and a debugged session is not
+            // reproducible anyway.
+            None if !cfg.debug => args.extend(["-net".to_string(), "none".to_string()]),
+            None => {}
         }
         // `if=sd,index=0` binds to the card of `sdhci@e0100000` (PS SDIO0) and
         // `if=mtd` to the flash child of the QSPI node: verified with
