@@ -279,6 +279,7 @@ impl McpServer {
         match name {
             "project_open" => self.project_open(a),
             "project_validate" => self.project_validate(a),
+            "project_create_from_xsa" => self.project_create_from_xsa(a),
             "sim_run" => {
                 let d = parse_duration(str_arg(a, "duration")?)?;
                 self.run_chunked(d, call)?;
@@ -796,6 +797,63 @@ impl McpServer {
             diagnostics,
         });
         Ok(Out::json(out))
+    }
+
+    /// `project_create_from_xsa`: plans and writes a project, never starts it.
+    fn project_create_from_xsa(&mut self, a: &Value) -> Result<Out, ApiError> {
+        use sim_api::xsa;
+        let xsa_file = self.resolve(str_arg(a, "xsa_path")?, true)?;
+        let out_dir = self.resolve(str_arg(a, "out_dir")?, false)?;
+        let mut rtl = Vec::new();
+        if let Some(list) = a.get("rtl").and_then(Value::as_array) {
+            for item in list.iter().filter_map(Value::as_str) {
+                rtl.push(self.resolve(item, true)?);
+            }
+        }
+        let opts = xsa::ImportOptions {
+            rtl,
+            // An existing file inside the roots becomes a path relative to `out_dir`;
+            // anything else is written as given (the ELF may be built later).
+            elf: a.get("elf").and_then(Value::as_str).map(|e| {
+                self.resolve(e, true)
+                    .map_or_else(|_| e.to_string(), |p| p.display().to_string())
+            }),
+            elf1: None,
+            filelist: None,
+        };
+        let plan = xsa::plan(&xsa_file, &out_dir, &opts)?;
+        let created = plan.write(&out_dir)?;
+        let file = out_dir.join("project.toml");
+        let project = Project::load(&file)?;
+        let diagnostics = project.validate(&out_dir);
+        let errors = diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .count();
+        let d = &plan.handoff.design;
+        Ok(Out::json(json!({
+            "project": file.display().to_string(),
+            "report": out_dir.join("xsa-report.md").display().to_string(),
+            "created": created.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+            "design": d.name,
+            "vivado_version": d.vivado_version,
+            "ps7": d.ps7,
+            "pl_instances": d.ips.iter().map(|i| json!({
+                "instance": i.instance,
+                "vlnv": i.vlnv,
+                "class": i.class,
+                "address": i.address.first().map(|a| json!({
+                    "base": a.base, "size": a.size(), "master_port": a.master_interface,
+                })),
+            })).collect::<Vec<_>>(),
+            "interrupts": d.interrupts,
+            "testbench_module": plan.testbench_module,
+            "unmodelled": plan.unmodelled,
+            "warnings": plan.warnings,
+            "diagnostics": diagnostics,
+            "errors": errors,
+            "runnable": errors == 0,
+        })))
     }
 
     fn project_validate(&mut self, a: &Value) -> Result<Out, ApiError> {

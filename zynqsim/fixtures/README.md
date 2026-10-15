@@ -15,6 +15,15 @@ simulated Cortex-A9.
 `rust_hdmi`, and `rust_net.elf` (`firmware/net_demo`: Cadence GEM driver + smoltcp DHCP/ping, see
 `docs/adr/011-ethernet.md`).
 
+## `xsa/`
+
+Vivado 2022.1 hardware platforms written by `xsa/make_xsa.tcl` (batch mode, no bitstream; the
+script documents how to run it): `zs_math_gpio.xsa` (PS7 with the Zybo Z7-20 board preset, the
+`my_math_ip` module reference at `0x43C00000`, an AXI GPIO at `0x41200000` with its interrupt on
+`IRQ_F2P[0]`, FCLK0 100 MHz) and `zs_math_only.xsa` (the same without the GPIO). Used by
+`xsa-import`, `sim-api`, `zynqsim` and `zynqsim-mcp` tests. A module reference's RTL is not in
+the archive: pass `rtl/math/my_math_ip.v` with `--rtl`.
+
 ## `rtl/`
 
 User-supplied RTL and testbench tops from the prototype, used as inputs to the XSim backend.

@@ -69,7 +69,7 @@ fn index_or_id(what: &str, id_example: &str) -> Vec<(&'static str, Value)> {
 /// Every tool, in presentation order.
 pub fn tool_defs() -> Vec<ToolDef> {
     use Capability as C;
-    use Gate::{Needs, Open, Planned};
+    use Gate::{Needs, Open};
     let none = || object(vec![], &[]);
     vec![
         // --- project -----------------------------------------------------
@@ -92,14 +92,37 @@ pub fn tool_defs() -> Vec<ToolDef> {
         ),
         t(
             "project_create_from_xsa",
-            "Create a project from a Vivado XSA/HWH export. Not available yet.",
-            Planned("P3"),
+            "Create a project from a Vivado hardware handoff (.xsa or .hwh): reads the PS7              configuration, every PL IP with its VLNV, address map, interrupts and clocks, writes              project.toml, a generated testbench for the user's AXI4-Lite RTL and xsa-report.md              into `out_dir`, and returns the report summary. IP that has no model (AXI GPIO,              Timer, ... need the vendor-ip library, milestone P3) is listed under `unmodelled`              and makes the project invalid: `runnable` is then false and project_open refuses              to start it. Existing files are never overwritten.",
+            Open,
             object(
-                vec![(
-                    "xsa_path",
-                    string("Path to the .xsa file.", &["design.xsa"]),
-                )],
-                &["xsa_path"],
+                vec![
+                    (
+                        "xsa_path",
+                        string("Path to the .xsa (or .hwh) file.", &["design.xsa"]),
+                    ),
+                    (
+                        "out_dir",
+                        string(
+                            "Directory for the project (created; project.toml must not exist).",
+                            &["projects/design"],
+                        ),
+                    ),
+                    (
+                        "rtl",
+                        string_array(
+                            "User RTL files (Verilog/SystemVerilog) the handoff does not carry,                              for example the sources of module references.",
+                            &["rtl/my_ip.v"],
+                        ),
+                    ),
+                    (
+                        "elf",
+                        string(
+                            "Firmware ELF for core 0 (path as it should appear in project.toml,                              relative to out_dir; default fw/app.elf).",
+                            &["fw/app.elf"],
+                        ),
+                    ),
+                ],
+                &["xsa_path", "out_dir"],
             ),
         ),
         t(

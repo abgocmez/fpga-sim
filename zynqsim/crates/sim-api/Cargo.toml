@@ -25,6 +25,7 @@ sim-core = { version = "0.1.0", path = "../sim-core" }
 thiserror = "2.0.21"
 toml = "1.1.8"
 trace = { version = "0.1.0", path = "../trace" }
+xsa-import = { version = "0.1.0", path = "../xsa-import" }
 yaxpeax-arch = "0.3.2"
 yaxpeax-arm = "0.5.0"
 

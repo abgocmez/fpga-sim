@@ -133,6 +133,11 @@ fn check_value(name: &str, schema: &Value, v: &Value) -> Result<(), String> {
     if !ok {
         return Err(format!("`{name}` must be {ty}, got {}", kind(v)));
     }
+    if let (Some(items), Some(list)) = (schema.get("items"), v.as_array()) {
+        for (i, item) in list.iter().enumerate() {
+            check_value(&format!("{name}[{i}]"), items, item)?;
+        }
+    }
     if let Some(allowed) = schema.get("enum").and_then(Value::as_array) {
         if !allowed.contains(v) {
             let list: Vec<String> = allowed

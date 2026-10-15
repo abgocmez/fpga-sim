@@ -299,6 +299,9 @@ pub struct Project {
     /// Connection table: instance port to PS port or board pin.
     #[serde(default)]
     pub connect: BTreeMap<String, String>,
+    /// Where the project came from (`zynqsim init --xsa`) and which IP has no model.
+    #[serde(default)]
+    pub xsa: Option<crate::xsa::XsaSection>,
     /// Board devices attached to connectors.
     #[serde(default)]
     pub devices: BTreeMap<String, String>,
@@ -970,6 +973,9 @@ impl Project {
         }
         if let Some(s) = &self.storage {
             self.validate_storage(s, base, &mut d);
+        }
+        if let Some(x) = &self.xsa {
+            x.validate(&mut d);
         }
         d
     }

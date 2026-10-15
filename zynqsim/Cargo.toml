@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/sim-core",
     "crates/trace",
+    "crates/xsa-import",
     "crates/board-zybo",
     "crates/devices",
     "crates/sim-api",
@@ -20,6 +21,7 @@ members = [
 default-members = [
     "crates/sim-core",
     "crates/trace",
+    "crates/xsa-import",
     "crates/board-zybo",
     "crates/devices",
     "crates/sim-api",

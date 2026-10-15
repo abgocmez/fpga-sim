@@ -25,6 +25,7 @@ mod tbgen;
 mod tools;
 mod types;
 mod wave;
+pub mod xsa;
 
 pub use duration::parse_duration;
 pub use engine::Engine;
