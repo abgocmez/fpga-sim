@@ -59,7 +59,7 @@ Rust has no stable runtime-skip, so a skipped test is reported as passed. Run wi
   `--view3d`, `--project-window`) were inspected by hand on Windows only.
 * **Sound output**: no test opens a sound device; the queue and resampler are tested, the device
   stream is not.
-* **Linux and macOS**: `.github/workflows/ci.yml` is written but has never run.
+* **Linux and macOS**: CI passes there, but without QEMU/Vivado, so the engine tests skip; they are only exercised on the Windows development machine. macOS has no run of the XSim crates at all (Windows-only).
 * **Coverage-guided fuzzing**: `cargo fuzz` targets do not exist yet.
 * **Third-party viewers**: VCD was not opened in GTKWave and Perfetto JSON was not loaded in the
   Perfetto UI; only their formats are checked.
