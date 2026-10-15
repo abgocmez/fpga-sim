@@ -17,6 +17,21 @@ const SLICES_PER_SECOND: u64 = 100;
 const MAX_CHUNK_PS: u64 = 200 * 1_000_000;
 /// Wall-clock budget of one playing tick before requests are served again.
 const TICK_BUDGET: Duration = Duration::from_millis(20);
+/// After serving a request, wait this long for the next one before running a
+/// slice: a front end asks for its state as a burst of requests, and each
+/// would otherwise queue behind a whole slice of a slow engine.
+const REQUEST_GRACE: Duration = Duration::from_millis(2);
+/// A slice that has been postponed this long by a stream of requests runs
+/// anyway.
+const MAX_POSTPONE: Duration = Duration::from_millis(50);
+/// Bounds of the adaptive chunk (simulated picoseconds per `run_for`), so a
+/// slow engine is asked for less simulated time per call and the request
+/// queue is looked at often.
+const MIN_CHUNK_PS: u64 = 20 * 1_000_000;
+/// A chunk that took longer than this shrinks the next one.
+const CHUNK_WALL_HIGH: Duration = Duration::from_millis(12);
+/// A chunk that took less than this lets the next one grow.
+const CHUNK_WALL_LOW: Duration = Duration::from_millis(3);
 
 enum Msg {
     Command(Command, Sender<Result<Response, ApiError>>),
@@ -133,16 +148,25 @@ fn broadcast(subs: &mut Vec<Sender<Event>>, ev: &Event) {
     subs.retain(|s| s.send(ev.clone()).is_ok());
 }
 
+/// What woke the engine thread up.
+enum Kind {
+    Request,
+    Tick,
+}
+
 fn serve(mut sim: Box<dyn Engine>, rx: Receiver<Msg>) {
     let mut subs: Vec<Sender<Event>> = Vec::new();
     // Simulated picoseconds per wall-clock second while playing.
     let mut playing: Option<u64> = None;
     let mut next_slice = Instant::now();
+    let mut grace_until = Instant::now();
+    let mut chunk_ps = MAX_CHUNK_PS;
     let mut published = sim.trace().len();
 
     loop {
         let msg = if playing.is_some() {
-            let wait = next_slice.saturating_duration_since(Instant::now());
+            let due = next_slice.max(grace_until).min(next_slice + MAX_POSTPONE);
+            let wait = due.saturating_duration_since(Instant::now());
             match rx.recv_timeout(wait) {
                 Ok(m) => Some(m),
                 Err(RecvTimeoutError::Timeout) => None,
@@ -155,6 +179,11 @@ fn serve(mut sim: Box<dyn Engine>, rx: Receiver<Msg>) {
             }
         };
 
+        let msg_kind = if msg.is_some() {
+            Kind::Request
+        } else {
+            Kind::Tick
+        };
         match msg {
             Some(Msg::Subscribe(tx)) => subs.push(tx),
             Some(Msg::Query(q, reply)) => {
@@ -198,9 +227,14 @@ fn serve(mut sim: Box<dyn Engine>, rx: Receiver<Msg>) {
             None => {}
         }
 
+        if matches!(msg_kind, Kind::Request) {
+            grace_until = Instant::now() + REQUEST_GRACE;
+        }
+
         if let Some(pps) = playing {
             let now = Instant::now();
-            if now >= next_slice {
+            let due = next_slice.max(grace_until).min(next_slice + MAX_POSTPONE);
+            if now >= due {
                 // One slice of simulated time per tick, no catch-up: a slow
                 // host slows simulated time instead of changing what is
                 // simulated. The slice is run in small chunks and abandoned
@@ -210,7 +244,8 @@ fn serve(mut sim: Box<dyn Engine>, rx: Receiver<Msg>) {
                 let started = Instant::now();
                 let mut done = 0u64;
                 while done < want {
-                    let chunk = (want - done).min(MAX_CHUNK_PS);
+                    let chunk = (want - done).min(chunk_ps);
+                    let chunk_start = Instant::now();
                     if let Err(e) = sim.run_for(Ps(chunk)) {
                         // A faulting engine stops continuous running and says why.
                         playing = None;
@@ -219,6 +254,12 @@ fn serve(mut sim: Box<dyn Engine>, rx: Receiver<Msg>) {
                         break;
                     }
                     done += chunk;
+                    let took = chunk_start.elapsed();
+                    if took > CHUNK_WALL_HIGH {
+                        chunk_ps = (chunk_ps / 2).max(MIN_CHUNK_PS);
+                    } else if took < CHUNK_WALL_LOW {
+                        chunk_ps = (chunk_ps * 2).min(MAX_CHUNK_PS);
+                    }
                     if let Some(why) = sim.halted() {
                         // A breakpoint is a stop, not something to run past.
                         playing = None;
@@ -276,6 +317,67 @@ mod tests {
         // Input note + switch signal + led1 signal.
         assert_eq!(got.len(), 4, "{got:?}"); // note, sw1, led1, led5 (RGB)
         assert!(matches!(got[0], Event::Trace { .. }));
+    }
+
+    /// An engine whose `run_for` costs wall time, like RTL in XSim.
+    struct SlowEngine(Simulator);
+
+    impl Engine for SlowEngine {
+        fn def(&self) -> &BoardDef {
+            Engine::def(&self.0)
+        }
+        fn board(&self) -> &BoardState {
+            Engine::board(&self.0)
+        }
+        fn trace(&self) -> &trace::TraceLog {
+            Engine::trace(&self.0)
+        }
+        fn status(&self, playing: bool) -> Status {
+            Engine::status(&self.0, playing)
+        }
+        fn command(&mut self, cmd: Command) -> Result<Response, ApiError> {
+            Engine::command(&mut self.0, cmd)
+        }
+        fn query(&mut self, q: &Query, playing: bool) -> Result<Response, ApiError> {
+            Engine::query(&mut self.0, q, playing)
+        }
+        fn run_for(&mut self, d: Ps) -> Result<(), ApiError> {
+            std::thread::sleep(Duration::from_millis(25));
+            Engine::run_for(&mut self.0, d)
+        }
+    }
+
+    /// A front end refreshes its view with a burst of sequential requests.
+    /// While a slow engine plays, the burst must cost about one slice, not
+    /// one slice per request (the GUI stuttered on RTL projects).
+    #[test]
+    fn a_burst_of_requests_does_not_wait_one_slice_each() {
+        let sim = Simulator::new(SimConfig::default()).unwrap();
+        let c = SimClient::spawn_engine(Box::new(SlowEngine(sim)));
+        c.command(Command::Play {
+            ps_per_second: Ps::PER_S,
+        })
+        .unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        let mut worst = Duration::ZERO;
+        for _ in 0..5 {
+            let t = Instant::now();
+            for _ in 0..10 {
+                c.status().unwrap();
+            }
+            worst = worst.max(t.elapsed());
+            std::thread::sleep(Duration::from_millis(40));
+        }
+        // Per slice of 25 ms, ten requests took ~250 ms before.
+        assert!(
+            worst < Duration::from_millis(120),
+            "a burst of 10 requests took {worst:?}"
+        );
+        c.command(Command::Pause).unwrap();
+        assert!(
+            c.status().unwrap().now_ps > 0,
+            "time advanced while playing"
+        );
     }
 
     #[test]

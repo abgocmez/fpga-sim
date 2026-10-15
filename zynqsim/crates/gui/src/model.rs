@@ -84,6 +84,7 @@ pub struct Model {
     /// temperature...): `(port, quantities)`.
     pub device_values: Vec<(u8, Vec<sim_api::DeviceValueInfo>)>,
     device_polled: Option<Instant>,
+    trace_generation: u32,
     /// An engine being built in the background.
     pub load: Option<LoadJob>,
     /// Why the last load failed.
@@ -123,6 +124,7 @@ impl Model {
             device_images: Vec::new(),
             device_values: Vec::new(),
             device_polled: None,
+            trace_generation: 0,
             load: None,
             load_error: None,
             cursors: [0; 2],
@@ -360,6 +362,7 @@ impl Model {
         if restored {
             self.console = [String::new(), String::new()];
             self.cursors = [0; 2];
+            self.trace_total = usize::MAX; // refetch the tail
         }
         if let Ok(s) = self.client.status() {
             self.status = s;
@@ -399,14 +402,18 @@ impl Model {
         } else {
             None
         };
+        // The tail only changes when the trace grew (or was rewound).
         let total = self.status.trace_len;
-        let from = total.saturating_sub(TRACE_TAIL);
-        if let Ok(Response::Trace { records, .. }) = self.client.query(Query::Trace {
-            from,
-            max: TRACE_TAIL,
-        }) {
-            self.trace_tail = records;
-            self.trace_total = total;
+        if total != self.trace_total || self.generation != self.trace_generation {
+            let from = total.saturating_sub(TRACE_TAIL);
+            if let Ok(Response::Trace { records, .. }) = self.client.query(Query::Trace {
+                from,
+                max: TRACE_TAIL,
+            }) {
+                self.trace_tail = records;
+                self.trace_total = total;
+                self.trace_generation = self.generation;
+            }
         }
     }
 
