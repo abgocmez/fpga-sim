@@ -33,6 +33,8 @@ release build). Regenerate golden images: `cargo xtask golden` (review the diff)
 | `zynqsim` (CLI) | run output and JSON, fidelity statement, record/test/trace round trip and tamper (exit 1), init, unsupported (exit 3), usage errors (exit 2), inspect, 5-process determinism, `--at` grammar | the CLI is scriptable with stable exit codes |
 | `zynqsim-gui` | model actions reach the simulation, console accumulation and restore, error surfacing, reset seed, key bindings, trace line formatting; project draft round trip, PS-only and PL-only edits, validation messages; speaker queue and resampler | GUI behaviour is correct without a window or a sound card |
 | `board-zybo` (3D) | deterministic render, camera clamps, picking at three cameras, state shows in pixels | the 3D view draws and picks what the state says |
+| `backend-qemu` `net::tests` (13) | RFC 1071 checksum vectors, ARP/ICMP/UDP summaries and direction, corrupted checksums reported, malformed/truncated/random frames never panic, Ethernet padding ignored, pcap reader across partial writes and garbage, virtual-time recovery, pcap writer, config validation, QEMU arguments, MAC/CIDR parsers | the Ethernet frame decoder and capture reader are right without QEMU |
+| `sim-api` `netlog::tests` (3), `project::tests::network_*` (3) | counters, direction, paging, bounded retention, digest depends on the payload; `[network]` defaults/overrides, every problem with its field, needs a CPU backend | the engine's capture record and the `[network]` section behave as documented |
 
 ## Tests that need external engines (P1)
 
@@ -47,6 +49,17 @@ release build). Regenerate golden images: `cargo xtask golden` (review the diff)
 | `backend-rtl-xsim` `media` (4: build, codec, HDMI, polling stress) | Vivado XSim | same |
 | `zynqsim` `audio_demo_*`, `hdmi_demo_*`; `mcp` `audio_and_hdmi_demos_through_mcp` | Xilinx QEMU + Vivado XSim + the DPI library | same (the MCP test asserts the library exists) |
 | `zynqsim-gui` `model` e2e (2: project load + audio, HDMI frame) | Xilinx QEMU + Vivado XSim + the DPI library | same |
+| `backend-qemu` `net` (5: ping + every frame captured, two-run determinism, custom subnet/MAC, unplugged NIC, open network) | Xilinx QEMU + co-sim DTB (no PL, no XSim) | prints `SKIPPED:` and returns |
+| `zynqsim` `net` (6: ping + pcap pair check, two-process determinism of digest/UART/pcap bytes, record/replay, trace/VCD, `--pcap` refusal, bad `[network]`), `mcp` `net` (2: capability gate; capture, paging, snapshot/restore/replay), `zynqsim-gui` `ethernet_counters_*` | Xilinx QEMU (the bad-section and gate tests need nothing) | same |
+
+### §14.2 peripheral conformance: Ethernet
+
+`xemacps + lwIP` is represented by Rust `no_std` firmware (`firmware/net_demo`: GEM driver +
+smoltcp) that must report four ICMP echo replies with the payload unchanged, against QEMU's
+`cadence_gem` model. The Xilinx BSP's lwIP/xemacps sources are C and are not in this repository,
+so they were not run. QEMU's model accepted this driver; which GEM features it models was not
+audited, and interrupt-driven operation, checksum offload and jumbo frames are not exercised
+(see STATUS.md, Ethernet).
 
 Rust has no stable runtime-skip, so a skipped test is reported as passed. Run with
 `cargo test -- --nocapture | findstr SKIPPED` to see which ones did not actually run.

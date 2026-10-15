@@ -11,6 +11,10 @@ simulated Cortex-A9.
 | `dma_test.elf`, `dma_cpu1.elf` | `dma_demo/sw`, `dma_demo/sw_cpu1` | DMA accelerator regression, two cores (needs the `dma_xform` RTL and an RTL backend) |
 | `board_test.elf` | `board_demo/sw` | GPIO / LED demo (needs the `gpio_ctrl` RTL) |
 
+`rust_*.elf` are built from `../firmware` by `cargo xtask firmware`: `rust_hello`, `rust_audio`,
+`rust_hdmi`, and `rust_net.elf` (`firmware/net_demo`: Cadence GEM driver + smoltcp DHCP/ping, see
+`docs/adr/011-ethernet.md`).
+
 ## `rtl/`
 
 User-supplied RTL and testbench tops from the prototype, used as inputs to the XSim backend.

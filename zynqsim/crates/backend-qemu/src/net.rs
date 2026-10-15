@@ -133,7 +133,10 @@ impl NetConfig {
         if gw & mask != net & mask {
             p.push((
                 "gateway",
-                format!("{} is not inside {}/{}", self.gateway, self.subnet, self.prefix),
+                format!(
+                    "{} is not inside {}/{}",
+                    self.gateway, self.subnet, self.prefix
+                ),
             ));
         } else if gw == net & mask || gw == (net & mask) | !mask {
             p.push((
@@ -398,7 +401,11 @@ pub fn describe(f: &[u8]) -> FrameInfo {
     let l3 = &f[14..];
     match ethertype {
         0x0806 => {
-            if l3.len() < 28 || be16(&l3[0..2]) != 1 || be16(&l3[2..4]) != 0x0800 || l3[4] != 6 || l3[5] != 4
+            if l3.len() < 28
+                || be16(&l3[0..2]) != 1
+                || be16(&l3[2..4]) != 0x0800
+                || l3[4] != 6
+                || l3[5] != 4
             {
                 return other(format!("malformed ARP ({} bytes)", f.len()));
             }
@@ -464,7 +471,10 @@ fn describe_ipv4(ip: &[u8], frame_len: usize) -> FrameInfo {
             };
             FrameInfo {
                 kind,
-                summary: format!("{text}{note}{}", if ok { "" } else { " (bad ICMP checksum)" }),
+                summary: format!(
+                    "{text}{note}{}",
+                    if ok { "" } else { " (bad ICMP checksum)" }
+                ),
                 checksums_ok: header_ok && ok,
             }
         }
@@ -628,7 +638,12 @@ mod tests {
             GW,
             GUEST,
             0x0800,
-            &ipv4(1, [10, 0, 2, 15], [10, 0, 2, 2], &icmp_echo(8, 0x2b2b, 3, &data)),
+            &ipv4(
+                1,
+                [10, 0, 2, 15],
+                [10, 0, 2, 2],
+                &icmp_echo(8, 0x2b2b, 3, &data),
+            ),
         );
         let i = describe(&req);
         assert_eq!(i.kind, FrameKind::IcmpEchoRequest);
@@ -641,7 +656,12 @@ mod tests {
             GUEST,
             GW,
             0x0800,
-            &ipv4(1, [10, 0, 2, 2], [10, 0, 2, 15], &icmp_echo(0, 0x2b2b, 3, &data)),
+            &ipv4(
+                1,
+                [10, 0, 2, 2],
+                [10, 0, 2, 15],
+                &icmp_echo(0, 0x2b2b, 3, &data),
+            ),
         );
         assert_eq!(describe(&rep).kind, FrameKind::IcmpEchoReply);
     }
@@ -680,7 +700,10 @@ mod tests {
         assert!(describe(&short_arp).summary.starts_with("malformed ARP"));
         let mut bad = ipv4(1, [1, 1, 1, 1], [2, 2, 2, 2], &[0; 8]);
         bad[0] = 0x42; // IHL 2 words
-        assert_eq!(describe(&eth(GW, GUEST, 0x0800, &bad)).kind, FrameKind::Other);
+        assert_eq!(
+            describe(&eth(GW, GUEST, 0x0800, &bad)).kind,
+            FrameKind::Other
+        );
         let mut long = ipv4(1, [1, 1, 1, 1], [2, 2, 2, 2], &[0; 8]);
         long[2..4].copy_from_slice(&900u16.to_be_bytes());
         assert!(
@@ -693,7 +716,12 @@ mod tests {
             GW,
             GUEST,
             0x0800,
-            &ipv4(17, [10, 0, 2, 15], [10, 0, 2, 2], &[0, 68, 0, 67, 0, 8, 0, 0]),
+            &ipv4(
+                17,
+                [10, 0, 2, 15],
+                [10, 0, 2, 2],
+                &[0, 68, 0, 67, 0, 8, 0, 0],
+            ),
         );
         for n in 0..=ok.len() {
             let _ = describe(&ok[..n]);
@@ -830,10 +858,7 @@ mod tests {
             a[1],
             "user,id=zsnet0,net=10.0.2.0/24,host=10.0.2.2,restrict=on"
         );
-        assert_eq!(
-            a[3],
-            "nic,netdev=zsnet0,macaddr=00:0a:35:00:1e:53"
-        );
+        assert_eq!(a[3], "nic,netdev=zsnet0,macaddr=00:0a:35:00:1e:53");
         assert!(a[5].ends_with("file=C:/tmp/a,,b/net.pcap"), "{}", a[5]);
         let open = NetConfig {
             restrict: false,

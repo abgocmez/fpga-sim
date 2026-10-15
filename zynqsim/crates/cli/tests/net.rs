@@ -211,7 +211,10 @@ fn network_frames_are_in_the_trace_and_the_vcd() {
     let vcd = std::fs::read_to_string(&vcd).unwrap();
     assert!(vcd.contains("net.tx_frames") && vcd.contains("net.rx_frames"));
     let p = std::fs::read_to_string(&perfetto).unwrap();
-    assert!(p.contains("net tx 42B ARP who-has 10.0.2.2 tell 10.0.2.15"), "ARP marker");
+    assert!(
+        p.contains("net tx 42B ARP who-has 10.0.2.2 tell 10.0.2.15"),
+        "ARP marker"
+    );
     assert!(p.contains("ICMP echo-request 10.0.2.15 > 10.0.2.2 id=0x2b2b seq=3"));
 }
 
@@ -263,8 +266,5 @@ fn a_bad_network_section_is_rejected_with_every_field_listed() {
     // `inspect` lists them as findings without starting anything.
     let o = zynqsim(&["--json", "inspect", "--project", p.to_str().unwrap()]);
     let v: Value = serde_json::from_str(&stdout(&o)).unwrap();
-    assert!(
-        v.to_string().contains("network.mac"),
-        "inspect output: {v}"
-    );
+    assert!(v.to_string().contains("network.mac"), "inspect output: {v}");
 }

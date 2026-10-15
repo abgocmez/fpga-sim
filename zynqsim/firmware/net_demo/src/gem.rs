@@ -167,7 +167,11 @@ fn mdio_write(phy: u8, reg: u8, value: u16) -> Option<()> {
     wait_mdio_idle()?;
     write32(
         GEM0 + PHYMNTNC,
-        0x4002_0000 | 0x1000_0000 | (u32::from(phy) << 23) | (u32::from(reg) << 18) | u32::from(value),
+        0x4002_0000
+            | 0x1000_0000
+            | (u32::from(phy) << 23)
+            | (u32::from(reg) << 18)
+            | u32::from(value),
     );
     wait_mdio_idle()
 }
@@ -200,11 +204,9 @@ pub fn bring_up_phy() -> Option<PhyInfo> {
     write32(GEM0 + NWCTRL, NWCTRL_MDEN);
     let mut found = None;
     for addr in 0..32u8 {
-        if let Some(id1) = mdio_read(addr, MII_PHYSID1) {
-            if id1 != 0xFFFF && id1 != 0 {
-                found = Some((addr, id1, mdio_read(addr, MII_PHYSID2)?));
-                break;
-            }
+        if let Some(id1) = mdio_read(addr, MII_PHYSID1).filter(|&v| v != 0xFFFF && v != 0) {
+            found = Some((addr, id1, mdio_read(addr, MII_PHYSID2)?));
+            break;
         }
     }
     let (addr, id1, id2) = found?;
@@ -330,7 +332,10 @@ impl TxToken for GemTx<'_> {
             (*self.gem).tx_idx = (idx + 1) % TX_SLOTS;
             (*self.gem).counters.tx_frames += 1;
         }
-        write32(GEM0 + NWCTRL, NWCTRL_MDEN | NWCTRL_RXEN | NWCTRL_TXEN | NWCTRL_STARTTX);
+        write32(
+            GEM0 + NWCTRL,
+            NWCTRL_MDEN | NWCTRL_RXEN | NWCTRL_TXEN | NWCTRL_STARTTX,
+        );
         r
     }
 }

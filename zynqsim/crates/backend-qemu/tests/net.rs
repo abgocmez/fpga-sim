@@ -69,6 +69,10 @@ struct Outcome {
 /// Runs in 100 us slices until the firmware reports a result, collecting the
 /// frames each slice produced.
 fn run_net(cfg: &QemuConfig) -> Outcome {
+    run_net_in(cfg, 100_000)
+}
+
+fn run_net_in(cfg: &QemuConfig, slice_ns: u64) -> Outcome {
     let mut m = QemuMachine::spawn(cfg).expect("QEMU starts");
     let mut pl = NativePl::new();
     let mut uart = String::new();
@@ -76,7 +80,7 @@ fn run_net(cfg: &QemuConfig) -> Outcome {
     let mut lo = 0u64;
     let mut target = 0u64;
     loop {
-        target += 100_000;
+        target += slice_ns;
         match m
             .run_until(target, &mut pl, Duration::from_secs(60))
             .expect("run")
@@ -195,6 +199,49 @@ fn two_runs_produce_identical_frames_times_and_uart() {
     assert_eq!(x.end_ns, y.end_ns);
 }
 
+/// With no `[network]` the GEM has no netdev (`-net none`; QEMU would attach
+/// an implicit user-mode network otherwise): nothing answers and nothing is
+/// captured. QEMU's PHY model still reports link up, there being no cable
+/// detection in it.
+#[test]
+fn an_unplugged_nic_gets_no_answers_and_captures_nothing() {
+    let Some(mut cfg) = config("unplugged", NetConfig::default()) else {
+        eprintln!("SKIPPED: Xilinx QEMU / co-sim DTB not found (set ZYNQSIM_QEMU)");
+        return;
+    };
+    cfg.net = None;
+    let o = run_net_in(&cfg, 1_000_000);
+    assert!(o.uart.contains("link=up"), "{}", o.uart);
+    assert!(o.uart.contains("DHCP: no answer"), "{}", o.uart);
+    assert!(o.uart.contains("0/4 replies"), "{}", o.uart);
+    assert!(o.uart.contains("rx=0"), "nothing is delivered: {}", o.uart);
+    assert!(o.uart.contains("RESULT: FAIL"), "{}", o.uart);
+    assert!(o.frames.is_empty(), "{:?}", o.frames);
+}
+
+/// `restrict = false` changes what the DHCP server offers (a router and DNS)
+/// and lets the guest reach the host's network; the gateway still answers
+/// ping itself, so this does not depend on the real network being there.
+#[test]
+fn an_open_network_offers_a_router_and_the_gateway_still_answers() {
+    let net = NetConfig {
+        restrict: false,
+        ..NetConfig::default()
+    };
+    let Some(cfg) = config("open", net) else {
+        eprintln!("SKIPPED: Xilinx QEMU / co-sim DTB not found (set ZYNQSIM_QEMU)");
+        return;
+    };
+    let o = run_net(&cfg);
+    assert!(
+        o.uart
+            .contains("DHCP: address=10.0.2.15/24 server=10.0.2.2 router=10.0.2.2"),
+        "{}",
+        o.uart
+    );
+    assert!(o.uart.contains("RESULT: ALL PASS"), "{}", o.uart);
+}
+
 #[test]
 fn a_custom_subnet_and_mac_reach_the_firmware_and_the_wire() {
     let net = NetConfig {
@@ -226,7 +273,11 @@ fn a_custom_subnet_and_mac_reach_the_firmware_and_the_wire() {
         .expect("an ARP frame");
     assert_eq!(arp.summary, "ARP who-has 192.168.50.2 tell 192.168.50.15");
     // Every frame the board sent carries the configured MAC as its source.
-    for (_, f) in o.frames.iter().filter(|(_, f)| direction(f) == Direction::Tx) {
+    for (_, f) in o
+        .frames
+        .iter()
+        .filter(|(_, f)| direction(f) == Direction::Tx)
+    {
         assert_eq!(&f[6..12], &[0x02, 0x11, 0x22, 0x33, 0x44, 0x55]);
     }
 }

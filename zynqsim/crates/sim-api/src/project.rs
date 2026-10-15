@@ -1062,11 +1062,13 @@ files = ["rtl/*.v"]
     #[test]
     fn network_section_problems_are_reported_with_their_fields() {
         assert!(net_findings("[network]\n").is_empty());
-        let f = net_findings(
-            "[network]\nmac = \"nope\"\nsubnet = \"10.0.2.0/33\"\ngateway = \"x\"\n",
-        );
+        let f =
+            net_findings("[network]\nmac = \"nope\"\nsubnet = \"10.0.2.0/33\"\ngateway = \"x\"\n");
         for want in ["network.mac", "network.subnet", "network.gateway"] {
-            assert!(f.iter().any(|(n, s)| n == want && *s == Severity::Error), "{f:?}");
+            assert!(
+                f.iter().any(|(n, s)| n == want && *s == Severity::Error),
+                "{f:?}"
+            );
         }
         // Consistency between the fields is checked once each parses.
         let f = net_findings("[network]\nsubnet = \"10.0.2.0/24\"\ngateway = \"10.0.9.2\"\n");
@@ -1083,10 +1085,9 @@ files = ["rtl/*.v"]
 
     #[test]
     fn the_nic_needs_a_cpu_backend() {
-        let p = Project::from_toml(
-            "schema_version = 1\n[board]\nname = \"zybo-z7-20\"\n[network]\n",
-        )
-        .unwrap();
+        let p =
+            Project::from_toml("schema_version = 1\n[board]\nname = \"zybo-z7-20\"\n[network]\n")
+                .unwrap();
         let d = p.validate(Path::new("."));
         assert!(
             d.iter()

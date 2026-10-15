@@ -277,8 +277,12 @@ impl QemuMachine {
         }
         let net_log = cfg.work_dir.join("net.pcap");
         let _ = std::fs::remove_file(&net_log);
-        if let Some(n) = &cfg.net {
-            args.extend(n.qemu_args(&net_log));
+        match &cfg.net {
+            Some(n) => args.extend(n.qemu_args(&net_log)),
+            // QEMU otherwise attaches an implicit user-mode network (and, with
+            // `restrict` off, a path to the host's network) that the host
+            // could neither see nor reproduce.
+            None => args.extend(["-net".to_string(), "none".to_string()]),
         }
 
         let out_log = cfg.work_dir.join("qemu.out.log");

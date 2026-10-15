@@ -332,8 +332,11 @@ impl App {
                     ));
                     if n.bad_checksums > 0 {
                         ui.label(
-                            RichText::new(format!("{} frame(s) with a bad checksum", n.bad_checksums))
-                                .color(Color32::from_rgb(235, 160, 20)),
+                            RichText::new(format!(
+                                "{} frame(s) with a bad checksum",
+                                n.bad_checksums
+                            ))
+                            .color(Color32::from_rgb(235, 160, 20)),
                         );
                     }
                     if !n.restricted {

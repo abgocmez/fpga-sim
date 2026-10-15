@@ -56,7 +56,11 @@ fn network_project_through_mcp() {
         return;
     }
 
-    let open = call(&mut s, "project_open", json!({ "path": "examples/net-demo" }));
+    let open = call(
+        &mut s,
+        "project_open",
+        json!({ "path": "examples/net-demo" }),
+    );
     assert_eq!(open["isError"], false, "{open}");
     assert_eq!(open["structuredContent"]["simulation_started"], true);
 
@@ -89,7 +93,12 @@ fn network_project_through_mcp() {
     assert_eq!(frames[0]["kind"], "udp");
     assert_eq!(frames[4]["summary"], "ARP who-has 10.0.2.2 tell 10.0.2.15");
     assert_eq!(frames[5]["direction"], "rx");
-    assert!(frames[5]["hex"].as_str().unwrap().starts_with("000a35001e53"));
+    assert!(
+        frames[5]["hex"]
+            .as_str()
+            .unwrap()
+            .starts_with("000a35001e53")
+    );
     let t: Vec<u64> = frames.iter().map(|f| f["t_ns"].as_u64().unwrap()).collect();
     assert!(t.windows(2).all(|w| w[0] <= w[1]), "{t:?}");
 
@@ -107,8 +116,8 @@ fn network_project_through_mcp() {
     assert!(msg.contains("user-mode"), "{msg}");
 
     // Snapshot, run on, restore: the digest and the capture come back.
-    let hash0 = call(&mut s, "status_get", json!({}))["structuredContent"]["status"]["trace_hash"]
-        .clone();
+    let hash0 =
+        call(&mut s, "status_get", json!({}))["structuredContent"]["status"]["trace_hash"].clone();
     let r = call(&mut s, "snapshot_save", json!({ "name": "pinged" }));
     assert_eq!(r["isError"], false, "{r}");
     let r = call(&mut s, "sim_run", json!({ "duration": "2ms" }));
