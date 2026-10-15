@@ -96,6 +96,19 @@ enum Cmd {
         /// Import a Vivado simulation file list (not available yet).
         #[arg(long)]
         filelist: Option<PathBuf>,
+        /// Generate a testbench and project for the AXI4-Lite slave IP in this
+        /// Verilog/SystemVerilog file; repeat for further source files.
+        #[arg(long = "ip")]
+        ip: Vec<PathBuf>,
+        /// With --ip: the module to test (default: the first module found).
+        #[arg(long)]
+        module: Option<String>,
+        /// With --ip: firmware ELF the project runs (default fw/app.elf).
+        #[arg(long)]
+        elf: Option<String>,
+        /// With --ip: the IP's base address, for the comment in project.toml.
+        #[arg(long)]
+        base: Option<String>,
     },
     /// Show the board, the backends and, with --project, validate a project.
     Inspect {
@@ -213,7 +226,26 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
             },
         ),
         Cmd::Test { recording } => cmd_test(json, &recording),
-        Cmd::Init { dir, xsa, filelist } => cmd_init(json, &dir, xsa, filelist),
+        Cmd::Init {
+            dir,
+            xsa,
+            filelist,
+            ip,
+            module,
+            elf,
+            base,
+        } => cmd_init(
+            json,
+            &dir,
+            xsa,
+            filelist,
+            InitIp {
+                ip,
+                module,
+                elf,
+                base,
+            },
+        ),
         Cmd::Inspect { project } => cmd_inspect(json, project.as_deref()),
         Cmd::Trace {
             recording,
@@ -607,12 +639,115 @@ fn cmd_trace(
     Ok(if report.matches { 0 } else { 1 })
 }
 
+/// The `--ip` options of `init`.
+struct InitIp {
+    ip: Vec<PathBuf>,
+    module: Option<String>,
+    elf: Option<String>,
+    base: Option<String>,
+}
+
+/// `init --ip`: a testbench and project for an AXI4-Lite slave IP.
+fn init_from_ip(json: bool, dir: &Path, o: InitIp) -> Result<u8, Failure> {
+    let mut found = None;
+    let mut last_err = String::new();
+    for f in &o.ip {
+        let src = std::fs::read_to_string(f)
+            .map_err(|e| fail(2, format!("cannot read {}: {e}", f.display())))?;
+        match sim_api::parse_module(&src, o.module.as_deref()) {
+            Ok(m) => {
+                found = Some(m);
+                break;
+            }
+            Err(e) => last_err = format!("{}: {e}", f.display()),
+        }
+    }
+    let m = found.ok_or_else(|| fail(2, last_err))?;
+    let axi = sim_api::detect_axi_lite(&m).map_err(|e| fail(2, e))?;
+    let base = match o.base.as_deref() {
+        Some(b) => parse_addr(b)?,
+        None => 0x43C0_0000,
+    };
+    let file = dir.join("project.toml");
+    let tb_path = dir.join("tb").join("cosim_top.sv");
+    for p in [&file, &tb_path] {
+        if p.exists() {
+            return Err(fail(
+                2,
+                format!("{} already exists; refusing to overwrite", p.display()),
+            ));
+        }
+    }
+    std::fs::create_dir_all(dir.join("tb"))
+        .map_err(|e| fail(2, format!("cannot create {}: {e}", dir.display())))?;
+    write_file(&tb_path, sim_api::generate_testbench(&m, &axi).as_bytes())?;
+    let rtl: Vec<String> =
+        o.ip.iter()
+            .map(|p| sim_api::relative_path(dir, p))
+            .collect();
+    let elf = o.elf.unwrap_or_else(|| "fw/app.elf".to_string());
+    write_file(
+        &file,
+        sim_api::generate_project(&rtl, "tb/cosim_top.sv", &elf, &m.name, base).as_bytes(),
+    )?;
+    let elf_exists = dir.join(&elf).is_file();
+    if json {
+        println!(
+            "{}",
+            json!({
+                "created": [file.display().to_string(), tb_path.display().to_string()],
+                "module": m.name,
+                "interface": axi.prefix,
+                "addr_width": axi.addr_width,
+                "clock": axi.clock,
+                "reset": axi.reset.as_ref().map(|r| &r.0),
+                "elf": elf,
+                "elf_exists": elf_exists,
+            })
+        );
+    } else {
+        println!(
+            "module    : {} (AXI4-Lite {}*, {} address bits)",
+            m.name, axi.prefix, axi.addr_width
+        );
+        println!(
+            "clock/rst : {} / {}",
+            axi.clock,
+            axi.reset.as_ref().map_or("none".to_string(), |r| format!(
+                "{} (active {})",
+                r.0,
+                if r.1 { "low" } else { "high" }
+            ))
+        );
+        println!("created   : {}", file.display());
+        println!("created   : {}", tb_path.display());
+        if !elf_exists {
+            println!(
+                "next      : build your firmware to {} (the project does not validate until it exists)",
+                dir.join(&elf).display()
+            );
+        }
+        println!(
+            "run       : zynqsim run --project {} --for 20ms",
+            file.display()
+        );
+    }
+    Ok(0)
+}
+
 fn cmd_init(
     json: bool,
     dir: &Path,
     xsa: Option<PathBuf>,
     filelist: Option<PathBuf>,
+    ip: InitIp,
 ) -> Result<u8, Failure> {
+    if !ip.ip.is_empty() {
+        if xsa.is_some() || filelist.is_some() {
+            return Err(fail(2, "--ip cannot be combined with --xsa or --filelist"));
+        }
+        return init_from_ip(json, dir, ip);
+    }
     if xsa.is_some() || filelist.is_some() {
         return Err(fail(
             3,

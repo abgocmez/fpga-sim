@@ -18,6 +18,7 @@ mod qemu_engine;
 mod recording;
 mod server;
 pub mod sim;
+mod tbgen;
 mod tools;
 mod types;
 
@@ -35,6 +36,10 @@ pub use recording::{
 };
 pub use server::SimClient;
 pub use sim::Simulator;
+pub use tbgen::{
+    AxiLite, Dir, ModuleInfo, Port, detect_axi_lite, generate_project, generate_testbench,
+    parse_module, relative_path,
+};
 pub use tools::{
     BackendInfo, BackendKind, BackendRole, detect_backends, find_dpi_lib, find_on_path,
     find_vivado, locate, locate_binary,

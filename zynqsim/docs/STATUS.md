@@ -66,9 +66,9 @@ control plane drive it). Caveats are listed under *Known limits of the P1 engine
   `target/dpi`: a plain workspace build compiles the same crate without exports and would
   replace it, which the adapter detects and reports).
   Tests that need it print `SKIPPED:` and pass vacuously when it is absent, so check the output.
-* **The RTL testbench top is user-supplied** (it imports the `rp_*` DPI functions). Generation of a
-  testbench from `[connect]`, `[connect]` for RTL ports, XSA/HWH ingestion and globs in
-  `rtl.files` are not implemented (milestone P3).
+* **The RTL testbench top is user-supplied**, except that `zynqsim init --ip` generates one for an
+  AXI4-Lite slave. Generation from `[connect]`, `[connect]` for RTL ports, XSA/HWH ingestion and
+  globs in `rtl.files` are not implemented (milestone P3).
 * **QEMU sessions cannot** change the quantum, and cannot read registers *at an arbitrary
   time*. A machine that is merely paused sits in QEMU's sync wait holding the global lock, so
   neither the monitor nor the gdb stub can answer (measured: the `-gdb` port accepts the TCP
@@ -210,6 +210,7 @@ missing. See ADR-006.
 | MCP `cpu_regs`, `breakpoint_set`, `watchpoint_set`, `breakpoint_list`, `symbol_lookup` | verified for QEMU projects with `[debug]` | `mcp::scenario::debugger_through_mcp`; without `[debug]` they say how to enable it |
 | MCP `cpu_disasm`, `symbol_lookup` | verified for QEMU projects (no `[debug]` needed) | `mcp::scenario::debugger_through_mcp` |
 | MCP tools needing PL signals/network | stub | `unsupported` naming the missing capability |
+| `zynqsim init --ip FILE`: testbench + `project.toml` generated from the module header of an AXI4-Lite slave IP (32-bit data, any prefix/case, active-low or high reset, extra clocks tied to FCLK0, other inputs tied low) | verified | `sim-api::tbgen::tests::*` (header parsing incl. attributes/comments/parameters/non-ANSI, detection, rejections with reasons), `zynqsim::init_ip_generates_a_project_that_passes_with_the_real_firmware` (generated for `my_math_ip.v`: the real firmware passes with the same 21 bus accesses and 329 trace records as the native model). The parser reads module headers only, it is not a Verilog parser; IPs with AXI masters, interrupts or other bus flavours are refused (use a hand-written testbench). Interrupt outputs and AXI4 full are not generated |
 | `project_create_from_xsa`, `pmod_attach` | stub | milestones P3 / P2 |
 | CLI: `run` (any engine, `--at` inputs incl. `uartN:`/`swN:`/`btnN:`, `--dump-mem`, `--dump-image`), `inspect`, `init`, `trace`, `test` (exit codes 0/1/2/3, `--json`) | verified | `crates/cli/tests/cli.rs` |
 | CLI: `mcp`, `gui` launchers | implemented-untested | not covered by a test |

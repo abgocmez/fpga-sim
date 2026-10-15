@@ -87,6 +87,16 @@ RTL is cached so a firmware change does not recompile it). **Save project.tomlâ€
 result. The **3D board** tab shows the board in perspective: drag to rotate, wheel to zoom, click
 the switches and buttons.
 
+### Test your own firmware and IP
+
+```
+zynqsim init mytest --ip rtl/my_ip.v --elf fw/app.elf   # testbench + project.toml for an AXI4-Lite slave
+zynqsim run --project mytest/project.toml --for 20ms --json
+```
+
+[docs/TEST_YOUR_DESIGN.md](docs/TEST_YOUR_DESIGN.md) covers the firmware side, what the generator
+does and does not do, how to turn a run into a test, and how to debug a failure.
+
 ### Debugging the CPU
 
 ```

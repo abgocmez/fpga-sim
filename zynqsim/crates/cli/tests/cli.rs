@@ -794,3 +794,109 @@ fn hdmi_demo_scans_out_a_frame_and_captures_the_host_image() {
         "HDMI TX picture differs from the test card"
     );
 }
+
+// ------------------------------------------------------------ init --ip
+
+fn fixtures() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures")
+}
+
+/// `init --ip` writes a testbench and project for an AXI4-Lite IP that run
+/// the real firmware against the real RTL, with the same bus traffic as the
+/// native model of the same IP.
+#[test]
+fn init_ip_generates_a_project_that_passes_with_the_real_firmware() {
+    if !qemu_available() || !xsim_available() {
+        eprintln!("SKIPPED: needs the Xilinx QEMU and Vivado XSim");
+        return;
+    }
+    ensure_dpi_lib();
+    let d = temp("init-ip");
+    let ip = fixtures().join("rtl/math/my_math_ip.v");
+    let elf = fixtures().join("elf/math_test.elf");
+    let o = zynqsim(&[
+        "--json",
+        "init",
+        d.to_str().unwrap(),
+        "--ip",
+        ip.to_str().unwrap(),
+        "--elf",
+        elf.to_str().unwrap(),
+    ]);
+    assert_eq!(
+        o.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let v: Value = serde_json::from_str(&stdout(&o)).unwrap();
+    assert_eq!(v["module"], "my_math_ip");
+    assert_eq!(v["interface"], "S_AXI_");
+    assert_eq!(v["addr_width"], 4);
+    assert_eq!(v["elf_exists"], true);
+    let tb = std::fs::read_to_string(d.join("tb/cosim_top.sv")).unwrap();
+    assert!(tb.contains("my_math_ip dut ("));
+
+    // Refuses to overwrite.
+    let again = zynqsim(&["init", d.to_str().unwrap(), "--ip", ip.to_str().unwrap()]);
+    assert_eq!(again.status.code(), Some(2));
+
+    let o = zynqsim(&[
+        "--json",
+        "run",
+        "--project",
+        d.join("project.toml").to_str().unwrap(),
+        "--for",
+        "3ms",
+    ]);
+    assert_eq!(
+        o.status.code(),
+        Some(0),
+        "{} {}",
+        stdout(&o),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let r: Value = serde_json::from_str(&stdout(&o)).unwrap();
+    let uart = r["uart"]["1"].as_str().unwrap();
+    assert!(uart.contains("RESULT: ALL PASS"), "{uart}");
+    assert_eq!(
+        r["bus_accesses"], 21,
+        "same traffic as the native model run"
+    );
+}
+
+#[test]
+fn init_ip_explains_what_is_wrong_with_an_unsuitable_module() {
+    let d = temp("init-ip-bad");
+    let src = d.join("not_axi.v");
+    std::fs::write(
+        &src,
+        "module m (input clk, input [7:0] d, output [7:0] q);\nendmodule\n",
+    )
+    .unwrap();
+    let o = zynqsim(&[
+        "init",
+        d.join("proj").to_str().unwrap(),
+        "--ip",
+        src.to_str().unwrap(),
+    ]);
+    assert_eq!(o.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains("AXI4-Lite"), "{err}");
+    assert!(
+        !d.join("proj").join("project.toml").exists(),
+        "nothing written"
+    );
+
+    // A missing module name is reported with the name.
+    let o = zynqsim(&[
+        "init",
+        d.join("proj2").to_str().unwrap(),
+        "--ip",
+        src.to_str().unwrap(),
+        "--module",
+        "other",
+    ]);
+    assert_eq!(o.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&o.stderr).contains("`other`"));
+}

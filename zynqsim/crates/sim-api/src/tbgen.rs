@@ -1,0 +1,1095 @@
+//! Testbench generation for an AXI4-Lite slave IP.
+//!
+//! Reads the module header of a Verilog/SystemVerilog file, finds the AXI4-Lite
+//! slave interface, the clock and the reset by their names, and writes the
+//! `cosim_top.sv` that stands in for the PS7: it drives the IP from the
+//! remote-port link exactly like the hand-written fixtures do. The header
+//! parser is deliberately small (ANSI and non-ANSI port lists, parameters with
+//! simple arithmetic, attributes and comments); it is not a Verilog parser.
+
+use std::collections::HashMap;
+use std::fmt::Write as _;
+
+/// Direction of a port.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dir {
+    /// `input`
+    In,
+    /// `output`
+    Out,
+    /// `inout`
+    InOut,
+}
+
+/// One port of the module.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Port {
+    /// Name.
+    pub name: String,
+    /// Direction.
+    pub dir: Dir,
+    /// Width in bits.
+    pub width: u32,
+}
+
+/// What was learnt from the module header.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModuleInfo {
+    /// Module name.
+    pub name: String,
+    /// Ports in declaration order.
+    pub ports: Vec<Port>,
+}
+
+/// The AXI4-Lite slave interface found in a module.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AxiLite {
+    /// Common name prefix of the interface signals (`S_AXI_`).
+    pub prefix: String,
+    /// Port names by role (`awaddr`, `wdata`, ...), in the module's own case.
+    pub signals: HashMap<&'static str, String>,
+    /// Address width in bits.
+    pub addr_width: u32,
+    /// Clock port.
+    pub clock: String,
+    /// Reset port and whether it is active low.
+    pub reset: Option<(String, bool)>,
+}
+
+const ROLES: [(&str, bool); 19] = [
+    ("awaddr", true),
+    ("awprot", false),
+    ("awvalid", true),
+    ("awready", true),
+    ("wdata", true),
+    ("wstrb", true),
+    ("wvalid", true),
+    ("wready", true),
+    ("bresp", true),
+    ("bvalid", true),
+    ("bready", true),
+    ("araddr", true),
+    ("arprot", false),
+    ("arvalid", true),
+    ("arready", true),
+    ("rdata", true),
+    ("rresp", true),
+    ("rvalid", true),
+    ("rready", true),
+];
+
+// ----------------------------------------------------------------- lexing
+
+/// Removes `//` and `/* */` comments and `(* *)` attributes.
+fn strip(src: &str) -> String {
+    let b: Vec<char> = src.chars().collect();
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0;
+    while i < b.len() {
+        let two = |a: char, c: char| b[i] == a && i + 1 < b.len() && b[i + 1] == c;
+        if two('/', '/') {
+            while i < b.len() && b[i] != '\n' {
+                i += 1;
+            }
+        } else if two('/', '*') {
+            i += 2;
+            while i + 1 < b.len() && !(b[i] == '*' && b[i + 1] == '/') {
+                i += 1;
+            }
+            i += 2;
+        } else if two('(', '*') && !(i + 2 < b.len() && b[i + 2] == ')') {
+            i += 2;
+            while i + 1 < b.len() && !(b[i] == '*' && b[i + 1] == ')') {
+                i += 1;
+            }
+            i += 2;
+            out.push(' ');
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Text inside the balanced bracket pair starting at `s[open]`, and the index
+/// after the closing bracket.
+fn balanced(s: &str, open: usize) -> Option<(&str, usize)> {
+    let b = s.as_bytes();
+    let (o, c) = match b.get(open)? {
+        b'(' => (b'(', b')'),
+        b'[' => (b'[', b']'),
+        b'{' => (b'{', b'}'),
+        _ => return None,
+    };
+    let mut depth = 0i32;
+    for (i, &ch) in b.iter().enumerate().skip(open) {
+        if ch == o {
+            depth += 1;
+        } else if ch == c {
+            depth -= 1;
+            if depth == 0 {
+                return Some((&s[open + 1..i], i + 1));
+            }
+        }
+    }
+    None
+}
+
+/// Splits at top-level commas (outside any bracket).
+fn split_top(s: &str, sep: char) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    for ch in s.chars() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            _ => {}
+        }
+        if ch == sep && depth == 0 {
+            out.push(std::mem::take(&mut cur));
+        } else {
+            cur.push(ch);
+        }
+    }
+    if !cur.trim().is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+// ------------------------------------------------------------- expressions
+
+struct Eval<'a> {
+    t: Vec<char>,
+    i: usize,
+    vars: &'a HashMap<String, i64>,
+}
+
+impl Eval<'_> {
+    fn ws(&mut self) {
+        while self.i < self.t.len() && self.t[self.i].is_whitespace() {
+            self.i += 1;
+        }
+    }
+
+    fn expr(&mut self) -> Result<i64, String> {
+        let mut v = self.term()?;
+        loop {
+            self.ws();
+            match self.t.get(self.i) {
+                Some('+') => {
+                    self.i += 1;
+                    v += self.term()?;
+                }
+                Some('-') => {
+                    self.i += 1;
+                    v -= self.term()?;
+                }
+                _ => return Ok(v),
+            }
+        }
+    }
+
+    fn term(&mut self) -> Result<i64, String> {
+        let mut v = self.atom()?;
+        loop {
+            self.ws();
+            match self.t.get(self.i) {
+                Some('*') => {
+                    self.i += 1;
+                    v *= self.atom()?;
+                }
+                Some('/') => {
+                    self.i += 1;
+                    let d = self.atom()?;
+                    if d == 0 {
+                        return Err("division by zero".into());
+                    }
+                    v /= d;
+                }
+                _ => return Ok(v),
+            }
+        }
+    }
+
+    fn atom(&mut self) -> Result<i64, String> {
+        self.ws();
+        let c = *self.t.get(self.i).ok_or("unexpected end")?;
+        if c == '(' {
+            self.i += 1;
+            let v = self.expr()?;
+            self.ws();
+            if self.t.get(self.i) == Some(&')') {
+                self.i += 1;
+            }
+            return Ok(v);
+        }
+        if c == '-' {
+            self.i += 1;
+            return Ok(-self.atom()?);
+        }
+        if c.is_ascii_digit() || c == '\'' {
+            let start = self.i;
+            while self.i < self.t.len()
+                && (self.t[self.i].is_ascii_alphanumeric()
+                    || self.t[self.i] == '\''
+                    || self.t[self.i] == '_')
+            {
+                self.i += 1;
+            }
+            let s: String = self.t[start..self.i]
+                .iter()
+                .filter(|c| **c != '_')
+                .collect();
+            return parse_number(&s);
+        }
+        if c.is_ascii_alphabetic() || c == '_' || c == '$' {
+            let start = self.i;
+            while self.i < self.t.len()
+                && (self.t[self.i].is_ascii_alphanumeric()
+                    || self.t[self.i] == '_'
+                    || self.t[self.i] == '$')
+            {
+                self.i += 1;
+            }
+            let id: String = self.t[start..self.i].iter().collect();
+            if id == "$clog2" {
+                self.ws();
+                if self.t.get(self.i) == Some(&'(') {
+                    self.i += 1;
+                    let v = self.expr()?;
+                    self.ws();
+                    if self.t.get(self.i) == Some(&')') {
+                        self.i += 1;
+                    }
+                    let mut bits = 0;
+                    while (1i64 << bits) < v.max(1) {
+                        bits += 1;
+                    }
+                    return Ok(bits);
+                }
+            }
+            return self
+                .vars
+                .get(&id)
+                .copied()
+                .ok_or_else(|| format!("unknown parameter `{id}`"));
+        }
+        Err(format!(
+            "cannot evaluate `{}`",
+            self.t.iter().collect::<String>()
+        ))
+    }
+}
+
+fn parse_number(s: &str) -> Result<i64, String> {
+    // `32'd4`, `4'hF`, `'b1`, `12`.
+    let (digits, radix) = match s.find('\'') {
+        Some(p) => {
+            let rest = &s[p + 1..];
+            let rest = rest.trim_start_matches(['s', 'S']);
+            let (r, d) = rest.split_at(1.min(rest.len()));
+            let radix = match r {
+                "d" | "D" => 10,
+                "h" | "H" => 16,
+                "b" | "B" => 2,
+                "o" | "O" => 8,
+                _ => return Err(format!("bad number `{s}`")),
+            };
+            (d.to_string(), radix)
+        }
+        None => (s.to_string(), 10),
+    };
+    i64::from_str_radix(&digits, radix).map_err(|_| format!("bad number `{s}`"))
+}
+
+fn eval(text: &str, vars: &HashMap<String, i64>) -> Result<i64, String> {
+    let mut e = Eval {
+        t: text.chars().collect(),
+        i: 0,
+        vars,
+    };
+    let v = e.expr()?;
+    e.ws();
+    if e.i != e.t.len() {
+        return Err(format!("cannot evaluate `{text}`"));
+    }
+    Ok(v)
+}
+
+// ------------------------------------------------------------------ header
+
+fn is_ident_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '$'
+}
+
+/// Parameters (`parameter [integer] NAME = expr`) from a declaration list.
+fn read_params(list: &str, vars: &mut HashMap<String, i64>) {
+    for item in split_top(list, ',') {
+        let mut t = item.trim();
+        for kw in ["parameter", "localparam"] {
+            if let Some(r) = t.strip_prefix(kw) {
+                t = r.trim_start();
+            }
+        }
+        let Some((lhs, rhs)) = t.split_once('=') else {
+            continue;
+        };
+        // The name is the last identifier before `=` (after type words).
+        let name: String = lhs
+            .trim()
+            .rsplit(|c: char| !is_ident_char(c))
+            .next()
+            .unwrap_or("")
+            .to_string();
+        if name.is_empty() {
+            continue;
+        }
+        if let Ok(v) = eval(rhs.trim(), vars) {
+            vars.insert(name, v);
+        }
+    }
+}
+
+fn parse_range(text: &str, vars: &HashMap<String, i64>) -> Result<u32, String> {
+    let inner = text.trim().trim_start_matches('[').trim_end_matches(']');
+    let (msb, lsb) = inner
+        .split_once(':')
+        .ok_or_else(|| format!("unsupported range `{text}`"))?;
+    let (m, l) = (eval(msb, vars)?, eval(lsb, vars)?);
+    Ok((m - l).unsigned_abs() as u32 + 1)
+}
+
+/// Splits `input wire signed [3:0] name` style text into
+/// `(dir, width_text, name)`; `dir` is `None` if no direction keyword.
+fn port_item(item: &str) -> (Option<Dir>, Option<String>, String) {
+    let t = item.split('=').next().unwrap_or("").trim();
+    let mut rest = t;
+    let mut dir = None;
+    for (kw, d) in [
+        ("input", Dir::In),
+        ("output", Dir::Out),
+        ("inout", Dir::InOut),
+    ] {
+        if let Some(r) = rest.strip_prefix(kw) {
+            if r.starts_with(|c: char| c.is_whitespace() || c == '[') {
+                dir = Some(d);
+                rest = r.trim_start();
+            }
+        }
+    }
+    let mut range = None;
+    loop {
+        rest = rest.trim_start();
+        let word_end = rest.find(|c: char| !is_ident_char(c)).unwrap_or(rest.len());
+        let word = &rest[..word_end];
+        if matches!(
+            word,
+            "wire" | "reg" | "logic" | "signed" | "unsigned" | "var" | "bit"
+        ) {
+            rest = &rest[word_end..];
+        } else if rest.starts_with('[') {
+            match balanced(rest, 0) {
+                Some((_, end)) => {
+                    range = Some(rest[..end].to_string());
+                    rest = &rest[end..];
+                }
+                None => break,
+            }
+        } else {
+            break;
+        }
+    }
+    (dir, range, rest.trim().to_string())
+}
+
+/// Parses the header of module `want` (or the first module).
+pub fn parse_module(src: &str, want: Option<&str>) -> Result<ModuleInfo, String> {
+    let s = strip(src);
+    let mut search = 0;
+    let (name, after) = loop {
+        let Some(p) = s[search..].find("module") else {
+            return Err(match want {
+                Some(w) => format!("module `{w}` was not found"),
+                None => "no module found".to_string(),
+            });
+        };
+        let at = search + p;
+        let before_ok = at == 0 || !is_ident_char(s[..at].chars().last().unwrap_or(' '));
+        let tail = &s[at + 6..];
+        search = at + 6;
+        if !before_ok || !tail.starts_with(|c: char| c.is_whitespace()) {
+            continue;
+        }
+        let tail_trim = tail.trim_start();
+        let n_end = tail_trim
+            .find(|c: char| !is_ident_char(c))
+            .unwrap_or(tail_trim.len());
+        let name = &tail_trim[..n_end];
+        if name.is_empty() || name == "endmodule" {
+            continue;
+        }
+        if want.is_none_or(|w| w == name) {
+            let off = s.len() - tail_trim.len() + n_end;
+            break (name.to_string(), off);
+        }
+    };
+
+    let mut vars: HashMap<String, i64> = HashMap::new();
+    let mut i = after;
+    let bytes = s.as_bytes();
+    let skip_ws = |i: &mut usize| {
+        while *i < bytes.len() && (bytes[*i] as char).is_whitespace() {
+            *i += 1;
+        }
+    };
+    skip_ws(&mut i);
+    if bytes.get(i) == Some(&b'#') {
+        i += 1;
+        skip_ws(&mut i);
+        let (list, end) = balanced(&s, i).ok_or("unbalanced parameter list")?;
+        read_params(list, &mut vars);
+        i = end;
+        skip_ws(&mut i);
+    }
+    let (plist, end) = if bytes.get(i) == Some(&b'(') {
+        balanced(&s, i).ok_or("unbalanced port list")?
+    } else {
+        ("", i)
+    };
+    let body_start = s[end..].find(';').map_or(end, |p| end + p + 1);
+    let body_end = s[body_start..]
+        .find("endmodule")
+        .map_or(s.len(), |p| body_start + p);
+    let body = &s[body_start..body_end];
+
+    // Body parameters and localparams, one statement each.
+    for stmt in body.split(';') {
+        let t = stmt.trim();
+        if t.starts_with("parameter") || t.starts_with("localparam") {
+            read_params(t, &mut vars);
+        }
+    }
+
+    let items = split_top(plist, ',');
+    let mut ports = Vec::new();
+    let ansi = items.first().is_some_and(|it| port_item(it).0.is_some());
+    if ansi {
+        let mut cur_dir = Dir::In;
+        let mut cur_range: Option<String> = None;
+        for it in &items {
+            let (d, r, n) = port_item(it);
+            if let Some(d) = d {
+                cur_dir = d;
+                cur_range = r;
+            } else if r.is_some() {
+                cur_range = r;
+            }
+            if n.is_empty() {
+                continue;
+            }
+            let width = match &cur_range {
+                Some(r) => parse_range(r, &vars).map_err(|e| format!("port `{n}`: {e}"))?,
+                None => 1,
+            };
+            ports.push(Port {
+                name: n,
+                dir: cur_dir,
+                width,
+            });
+        }
+    } else {
+        // Non-ANSI: names in the header, directions in the body.
+        let names: Vec<String> = items.iter().map(|s| s.trim().to_string()).collect();
+        let mut found: HashMap<String, Port> = HashMap::new();
+        for stmt in body.split(';') {
+            let t = stmt.trim();
+            if !(t.starts_with("input") || t.starts_with("output") || t.starts_with("inout")) {
+                continue;
+            }
+            let (d, r, _) = port_item(t.split(',').next().unwrap_or(t));
+            let Some(d) = d else { continue };
+            let width = match &r {
+                Some(r) => parse_range(r, &vars)?,
+                None => 1,
+            };
+            // Every declared name in this statement.
+            let first = t.split(',').next().unwrap_or("");
+            let (_, _, n0) = port_item(first);
+            let mut all = vec![n0];
+            all.extend(t.split(',').skip(1).map(|x| x.trim().to_string()));
+            for n in all {
+                found.insert(
+                    n.clone(),
+                    Port {
+                        name: n,
+                        dir: d,
+                        width,
+                    },
+                );
+            }
+        }
+        for n in names {
+            match found.remove(&n) {
+                Some(p) => ports.push(p),
+                None => return Err(format!("port `{n}` has no input/output declaration")),
+            }
+        }
+    }
+    if ports.is_empty() {
+        return Err(format!("module `{name}` has no ports"));
+    }
+    Ok(ModuleInfo { name, ports })
+}
+
+// -------------------------------------------------------------- detection
+
+/// Finds the AXI4-Lite slave interface, clock and reset of `m`.
+pub fn detect_axi_lite(m: &ModuleInfo) -> Result<AxiLite, String> {
+    // Group ports by the prefix that precedes a role suffix.
+    let mut groups: HashMap<String, HashMap<&'static str, &Port>> = HashMap::new();
+    for p in &m.ports {
+        let lower = p.name.to_ascii_lowercase();
+        for (role, _) in ROLES {
+            if let Some(prefix) = lower.strip_suffix(role) {
+                groups
+                    .entry(prefix.to_string())
+                    .or_default()
+                    .insert(role, p);
+            }
+        }
+    }
+    let (prefix_lc, roles) = groups
+        .into_iter()
+        .filter(|(_, r)| r.len() >= 8)
+        .max_by_key(|(prefix, r)| (r.len(), prefix.len()))
+        .ok_or_else(|| {
+            format!(
+                "`{}` has no AXI4-Lite slave interface: expected ports like S_AXI_AWADDR, \
+                 S_AXI_WDATA, S_AXI_ARVALID ... (a master, AXI4 full or AXI-Stream IP needs a \
+                 hand-written testbench, see fixtures/rtl/dma)",
+                m.name
+            )
+        })?;
+    let mut missing = Vec::new();
+    for (role, required) in ROLES {
+        if required && !roles.contains_key(role) {
+            missing.push(role);
+        }
+    }
+    if !missing.is_empty() {
+        return Err(format!(
+            "the AXI4-Lite interface `{prefix_lc}*` of `{}` lacks: {}",
+            m.name,
+            missing.join(", ")
+        ));
+    }
+    let dw = roles["wdata"].width;
+    if dw != 32 {
+        return Err(format!(
+            "the data width is {dw}: the Zynq GP ports are 32 bits wide, so only 32 is supported"
+        ));
+    }
+    let aw = roles["awaddr"].width;
+    let mut signals = HashMap::new();
+    for (role, p) in &roles {
+        signals.insert(*role, p.name.clone());
+    }
+
+    // Clock and reset among the input ports.
+    let inputs: Vec<&Port> = m.ports.iter().filter(|p| p.dir == Dir::In).collect();
+    let lc = |p: &Port| p.name.to_ascii_lowercase();
+    let clock = inputs
+        .iter()
+        .find(|p| lc(p) == format!("{prefix_lc}aclk"))
+        .or_else(|| inputs.iter().find(|p| lc(p) == format!("{prefix_lc}clk")))
+        .or_else(|| inputs.iter().find(|p| lc(p).contains("aclk")))
+        .or_else(|| {
+            inputs
+                .iter()
+                .find(|p| matches!(lc(p).as_str(), "clk" | "clock" | "aclk"))
+        })
+        .or_else(|| inputs.iter().find(|p| lc(p).contains("clk")))
+        .map(|p| p.name.clone())
+        .ok_or_else(|| {
+            format!(
+                "`{}` has no clock input (a port named *aclk or *clk)",
+                m.name
+            )
+        })?;
+    let low = |n: &str| {
+        let n = n.to_ascii_lowercase();
+        n.contains("aresetn")
+            || n.contains("resetn")
+            || n.contains("rstn")
+            || n.contains("reset_n")
+            || n.contains("rst_n")
+            || n.ends_with("_n")
+    };
+    let reset = inputs
+        .iter()
+        .find(|p| lc(p) == format!("{prefix_lc}aresetn"))
+        .or_else(|| inputs.iter().find(|p| low(&p.name)))
+        .or_else(|| {
+            inputs
+                .iter()
+                .find(|p| lc(p).contains("reset") || lc(p).contains("rst"))
+        })
+        .map(|p| (p.name.clone(), low(&p.name)));
+    // The prefix in the module's own case.
+    let prefix = roles["awaddr"].name[..prefix_lc.len()].to_string();
+    Ok(AxiLite {
+        prefix,
+        signals,
+        addr_width: aw,
+        clock,
+        reset,
+    })
+}
+
+// ------------------------------------------------------------- generation
+
+fn decl(width: u32) -> String {
+    if width > 1 {
+        format!("[{}:0] ", width - 1)
+    } else {
+        String::new()
+    }
+}
+
+/// The testbench text for `m` and its interface `axi`.
+pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
+    let sig = |r: &str| axi.signals.get(r).cloned();
+    let mut s = String::new();
+    let _ = writeln!(
+        s,
+        "`timescale 1ns / 1ps\n\
+         // Generated by `zynqsim init --ip`: stands in for the PS7 and drives `{}`\n\
+         // through its AXI4-Lite slave `{}*` from the remote-port link (lock-step).\n\
+         // Edit freely: it is a plain testbench. A write of 0xC051D0DE to offset 0x3C ends the run.\n\
+         module cosim_top;\n\
+         \x20   import \"DPI-C\" function int  rp_open(input string descr);\n\
+         \x20   import \"DPI-C\" function int  rp_next(input longint now_ns, input int idle_ms,\n\
+         \x20                                         output int addr, output int wdata,\n\
+         \x20                                         output int wstrb, output int is_write);\n\
+         \x20   import \"DPI-C\" function void rp_done_t(input int rdata, input int ok, input longint now_ns);\n\
+         \x20   import \"DPI-C\" function void rp_close();\n\
+         \x20   import \"DPI-C\" function void rp_lockstep(input int on);\n\
+         \x20   import \"DPI-C\" function longint rp_sync_target();\n\
+         \x20   import \"DPI-C\" function void rp_sync_ack(input longint now_ns);\n\
+         \x20   import \"DPI-C\" function longint rp_req_ts();\n",
+        m.name, axi.prefix
+    );
+    let _ = writeln!(
+        s,
+        "    reg aclk = 1'b0;\n    reg aresetn = 1'b0;\n    always #5 aclk = ~aclk;   // 100 MHz = FCLK_CLK0\n"
+    );
+
+    // Signal declarations for every port.
+    let role_of: HashMap<&str, &str> = axi.signals.iter().map(|(r, n)| (n.as_str(), *r)).collect();
+    for p in &m.ports {
+        let n = &p.name;
+        if *n == axi.clock || axi.reset.as_ref().is_some_and(|(r, _)| r == n) {
+            continue;
+        }
+        let w = decl(p.width);
+        match (p.dir, role_of.get(n.as_str())) {
+            (Dir::In, Some(_)) => {
+                let _ = writeln!(s, "    reg  {w}{n} = 0;");
+            }
+            (Dir::In, None) => {
+                let l = n.to_ascii_lowercase();
+                if l.contains("clk") || l.contains("clock") {
+                    let _ = writeln!(s, "    wire {w}{n} = aclk;   // other clock: tied to FCLK0");
+                } else {
+                    let _ = writeln!(
+                        s,
+                        "    wire {w}{n} = 0;      // not part of AXI4-Lite: tied low"
+                    );
+                }
+            }
+            (Dir::Out, _) => {
+                let _ = writeln!(s, "    wire {w}{n};");
+            }
+            (Dir::InOut, _) => {
+                let _ = writeln!(s, "    wire {w}{n};");
+            }
+        }
+    }
+    let _ = writeln!(s);
+
+    // Instance.
+    let _ = writeln!(s, "    {} dut (", m.name);
+    let conns: Vec<String> = m
+        .ports
+        .iter()
+        .map(|p| {
+            let net = if p.name == axi.clock {
+                "aclk".to_string()
+            } else if let Some((r, low)) = &axi.reset {
+                if &p.name == r {
+                    if *low { "aresetn" } else { "~aresetn" }.to_string()
+                } else {
+                    p.name.clone()
+                }
+            } else {
+                p.name.clone()
+            };
+            format!("        .{}({net})", p.name)
+        })
+        .collect();
+    let _ = writeln!(s, "{}\n    );\n", conns.join(",\n"));
+
+    let g = |r: &str| sig(r).unwrap_or_default();
+    let aw = axi.addr_width;
+    let _ = write!(
+        s,
+        "\
+    reg        wr_ok;
+    reg        rd_ok;
+    reg [31:0] rd_val;
+
+    task lite_write(input [31:0] a, input [31:0] d, input [3:0] st, output ok);
+        begin
+            @(posedge aclk);
+            {awaddr} <= a[{aw_hi}:0]; {wdata} <= d; {wstrb} <= st;
+            {awvalid} <= 1'b1; {wvalid} <= 1'b1;
+            @(posedge aclk);
+            while (!({awready} && {wready})) @(posedge aclk);
+            {awvalid} <= 1'b0; {wvalid} <= 1'b0; {bready} <= 1'b1;
+            @(posedge aclk);
+            while (!{bvalid}) @(posedge aclk);
+            ok = ({bresp} == 2'b00);
+            {bready} <= 1'b0;
+        end
+    endtask
+
+    task lite_read(input [31:0] a, output [31:0] d, output ok);
+        begin
+            @(posedge aclk);
+            {araddr} <= a[{aw_hi}:0]; {arvalid} <= 1'b1;
+            @(posedge aclk);
+            while (!{arready}) @(posedge aclk);
+            {arvalid} <= 1'b0; {rready} <= 1'b1;
+            @(posedge aclk);
+            while (!{rvalid}) @(posedge aclk);
+            d = {rdata}; ok = ({rresp} == 2'b00);
+            {rready} <= 1'b0;
+        end
+    endtask
+
+    integer a_i, wd_i, ws_i, iw_i, st;
+    longint tgt, rts;
+
+    initial begin
+        repeat (20) @(posedge aclk);
+        aresetn = 1'b1;
+        repeat (5) @(posedge aclk);
+        rp_lockstep(1);
+        if (rp_open(\"\") != 0) begin
+            $display(\"cosim_top: rp_open failed (is RP_SOCKET set and QEMU running?)\");
+            $finish;
+        end
+        $display(\"cosim_top: remote-port connected\");
+
+        forever begin
+            st = rp_next($time, -1, a_i, wd_i, ws_i, iw_i);
+            if (st == 0) begin
+                $display(\"cosim_top: peer closed, finishing at %0t\", $time);
+                rp_close();
+                $finish;
+            end else if (st == 3) begin
+                tgt = rp_sync_target();
+                if (tgt > $time) #(tgt - $time);
+                rp_sync_ack($time);
+            end else if (st == 2) begin
+                repeat (20) @(posedge aclk);
+            end else begin
+                rts = rp_req_ts();
+                if (rts > $time) #(rts - $time);
+                if (iw_i != 0 && a_i[7:0] == 8'h3C && wd_i == 32'hC051D0DE) begin
+                    $display(\"cosim_top: end-of-test marker at %0t\", $time);
+                    rp_done_t(0, 1, $time);
+                    rp_close();
+                    $finish;
+                end else if (iw_i != 0) begin
+                    lite_write(a_i, wd_i, ws_i[3:0], wr_ok);
+                    rp_done_t(0, wr_ok, $time);
+                end else begin
+                    lite_read(a_i, rd_val, rd_ok);
+                    rp_done_t(rd_val, rd_ok, $time);
+                end
+            end
+        end
+    end
+endmodule
+",
+        awaddr = g("awaddr"),
+        wdata = g("wdata"),
+        wstrb = g("wstrb"),
+        awvalid = g("awvalid"),
+        wvalid = g("wvalid"),
+        awready = g("awready"),
+        wready = g("wready"),
+        bready = g("bready"),
+        bvalid = g("bvalid"),
+        bresp = g("bresp"),
+        araddr = g("araddr"),
+        arvalid = g("arvalid"),
+        arready = g("arready"),
+        rready = g("rready"),
+        rvalid = g("rvalid"),
+        rdata = g("rdata"),
+        rresp = g("rresp"),
+        aw_hi = aw - 1,
+    );
+    s
+}
+
+/// `to` relative to the directory `from` (both made absolute first), with
+/// forward slashes; `to` itself if they share no root (other drive).
+pub fn relative_path(from: &std::path::Path, to: &std::path::Path) -> String {
+    let abs = |p: &std::path::Path| std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
+    let (f, t) = (abs(from), abs(to));
+    let fc: Vec<_> = f.components().collect();
+    let tc: Vec<_> = t.components().collect();
+    let common = fc.iter().zip(&tc).take_while(|(a, b)| a == b).count();
+    if common == 0 {
+        return t.to_string_lossy().replace('\\', "/");
+    }
+    let mut out = std::path::PathBuf::new();
+    for _ in common..fc.len() {
+        out.push("..");
+    }
+    for c in &tc[common..] {
+        out.push(c.as_os_str());
+    }
+    out.to_string_lossy().replace('\\', "/")
+}
+
+/// A `project.toml` for the generated testbench. Paths are as given
+/// (relative to the project directory).
+pub fn generate_project(
+    rtl_files: &[String],
+    testbench: &str,
+    elf: &str,
+    ip_name: &str,
+    base_hint: u64,
+) -> String {
+    // Paths go into TOML basic strings: forward slashes (valid on Windows
+    // too) and no quotes, so a Windows path cannot break the file.
+    let esc = |p: &str| p.replace('\\', "/").replace('"', "");
+    let elf = esc(elf);
+    let files: Vec<String> = rtl_files
+        .iter()
+        .map(|f| f.as_str())
+        .chain(std::iter::once(testbench))
+        .map(|f| format!("    \"{}\",", esc(f)))
+        .collect();
+    format!(
+        "# Generated by `zynqsim init --ip`. `{ip_name}` answers every PS access to the\n\
+         # M_AXI_GP0 window; the testbench ignores the upper address bits, so use the address your\n\
+         # block design assigns (for example {base_hint:#010x}) and offsets inside the IP.\n\
+         schema_version = 1\n\
+         \n\
+         [board]\n\
+         name = \"zybo-z7-20\"\n\
+         \n\
+         [backends]\n\
+         ps = \"qemu\"\n\
+         pl = \"xsim\"\n\
+         \n\
+         [sim]\n\
+         quantum_ns = 1000\n\
+         icount_shift = 1\n\
+         \n\
+         [boot]\n\
+         mode = \"elf\"\n\
+         \n\
+         [cpu0]\n\
+         elf = \"{elf}\"\n\
+         \n\
+         [rtl]\n\
+         files = [\n{}\n]\n\
+         top = \"cosim_top\"\n\
+         # waves = true   # keep the XSim waveform (run directory under %TEMP%\\zynqsim)\n\
+         \n\
+         # Uncomment to stop the CPU at breakpoints and read its registers:\n\
+         # [debug]\n\
+         # enabled = true\n\
+         # breakpoints = [\"main\"]\n",
+        files.join("\n")
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture(rel: &str) -> String {
+        std::fs::read_to_string(
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../fixtures/rtl")
+                .join(rel),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn the_math_ip_header_is_understood() {
+        let m = parse_module(&fixture("math/my_math_ip.v"), None).unwrap();
+        assert_eq!(m.name, "my_math_ip");
+        assert_eq!(m.ports.len(), 21);
+        let by = |n: &str| m.ports.iter().find(|p| p.name == n).unwrap();
+        assert_eq!(by("S_AXI_AWADDR").width, 4, "parameter arithmetic");
+        assert_eq!(by("S_AXI_WSTRB").width, 4, "(32/8)-1");
+        assert_eq!(by("S_AXI_RDATA").dir, Dir::Out);
+        assert_eq!(by("S_AXI_ACLK").width, 1);
+
+        let axi = detect_axi_lite(&m).unwrap();
+        assert_eq!(axi.prefix, "S_AXI_");
+        assert_eq!(axi.addr_width, 4);
+        assert_eq!(axi.clock, "S_AXI_ACLK");
+        assert_eq!(axi.reset, Some(("S_AXI_ARESETN".to_string(), true)));
+        assert_eq!(axi.signals["wdata"], "S_AXI_WDATA");
+    }
+
+    #[test]
+    fn the_generated_testbench_wires_every_port() {
+        let m = parse_module(&fixture("math/my_math_ip.v"), Some("my_math_ip")).unwrap();
+        let axi = detect_axi_lite(&m).unwrap();
+        let tb = generate_testbench(&m, &axi);
+        assert!(tb.contains("my_math_ip dut ("));
+        assert!(tb.contains(".S_AXI_ACLK(aclk)"));
+        assert!(tb.contains(".S_AXI_ARESETN(aresetn)"));
+        assert!(tb.contains("reg  [3:0] S_AXI_AWADDR = 0;"), "{tb}");
+        assert!(tb.contains("wire [31:0] S_AXI_RDATA;"));
+        assert!(tb.contains("S_AXI_AWADDR <= a[3:0];"));
+        // Every port of the module appears in the instance.
+        for p in &m.ports {
+            assert!(tb.contains(&format!(".{}(", p.name)), "{}", p.name);
+        }
+        assert!(tb.contains("rp_lockstep(1)"));
+    }
+
+    #[test]
+    fn lowercase_names_active_high_reset_and_extra_ports() {
+        let src = "
+            module ip #(parameter AW = 6) (
+                input  wire clk,
+                input  wire rst,
+                input  wire [AW-1:0] s00_axi_awaddr, input s00_axi_awvalid, output s00_axi_awready,
+                input  [31:0] s00_axi_wdata, input [3:0] s00_axi_wstrb,
+                input s00_axi_wvalid, output s00_axi_wready,
+                output [1:0] s00_axi_bresp, output s00_axi_bvalid, input s00_axi_bready,
+                input [AW-1:0] s00_axi_araddr, input s00_axi_arvalid, output s00_axi_arready,
+                output [31:0] s00_axi_rdata, output [1:0] s00_axi_rresp,
+                output s00_axi_rvalid, input s00_axi_rready,
+                input mclk, input [7:0] gpio_in, output [7:0] gpio_out
+            );
+            endmodule";
+        let m = parse_module(src, None).unwrap();
+        let axi = detect_axi_lite(&m).unwrap();
+        assert_eq!(axi.prefix, "s00_axi_");
+        assert_eq!(axi.addr_width, 6);
+        assert_eq!(axi.clock, "clk");
+        assert_eq!(axi.reset, Some(("rst".to_string(), false)), "active high");
+        let tb = generate_testbench(&m, &axi);
+        assert!(tb.contains(".rst(~aresetn)"));
+        assert!(
+            tb.contains("wire  mclk = aclk;") || tb.contains("wire mclk = aclk;"),
+            "{tb}"
+        );
+        assert!(tb.contains("wire [7:0] gpio_in = 0;"));
+        assert!(tb.contains("wire [7:0] gpio_out;"));
+    }
+
+    #[test]
+    fn non_ansi_headers_and_comments_parse() {
+        let src = "
+            // a comment with module in it
+            module old_style (aclk, aresetn, awaddr);
+              /* block comment */
+              input aclk;
+              input aresetn;
+              input [7:0] awaddr;
+            endmodule";
+        let m = parse_module(src, Some("old_style")).unwrap();
+        assert_eq!(
+            m.ports,
+            vec![
+                Port {
+                    name: "aclk".into(),
+                    dir: Dir::In,
+                    width: 1
+                },
+                Port {
+                    name: "aresetn".into(),
+                    dir: Dir::In,
+                    width: 1
+                },
+                Port {
+                    name: "awaddr".into(),
+                    dir: Dir::In,
+                    width: 8
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn unsuitable_modules_are_rejected_with_a_reason() {
+        let no_axi = "module m (input clk, input [7:0] d, output [7:0] q); endmodule";
+        let m = parse_module(no_axi, None).unwrap();
+        assert!(detect_axi_lite(&m).unwrap_err().contains("AXI4-Lite"));
+
+        // 64-bit data.
+        let wide = fixture("math/my_math_ip.v")
+            .replace("C_S_AXI_DATA_WIDTH = 32", "C_S_AXI_DATA_WIDTH = 64");
+        let m = parse_module(&wide, None).unwrap();
+        assert!(detect_axi_lite(&m).unwrap_err().contains("32"));
+
+        assert!(parse_module("wire x;", None).is_err());
+        assert!(
+            parse_module("module a (input clk); endmodule", Some("b"))
+                .unwrap_err()
+                .contains("`b`")
+        );
+    }
+
+    #[test]
+    fn the_second_module_in_a_file_can_be_chosen() {
+        let src = "module first (input a); endmodule\nmodule second (input b, output c); endmodule";
+        assert_eq!(parse_module(src, None).unwrap().name, "first");
+        let m = parse_module(src, Some("second")).unwrap();
+        assert_eq!(m.ports.len(), 2);
+    }
+
+    #[test]
+    fn windows_paths_do_not_break_the_project_file() {
+        let toml = generate_project(
+            &["C:\\ip dir\\my_ip.v".to_string()],
+            "tb/cosim_top.sv",
+            "C:\\fw\\app.elf",
+            "my_ip",
+            0x43C0_0000,
+        );
+        let p = crate::Project::from_toml(&toml).expect("valid TOML and schema");
+        assert_eq!(p.cpu0.unwrap().elf, "C:/fw/app.elf");
+        assert_eq!(p.rtl.unwrap().files[0], "C:/ip dir/my_ip.v");
+    }
+
+    #[test]
+    fn parameter_expressions_evaluate() {
+        let mut v = HashMap::new();
+        v.insert("W".to_string(), 32);
+        assert_eq!(eval("W/8-1", &v), Ok(3));
+        assert_eq!(eval("$clog2(1024)", &v), Ok(10));
+        assert_eq!(eval("(W+4)*2", &v), Ok(72));
+        assert_eq!(eval("32'd16", &v), Ok(16));
+        assert_eq!(eval("8'hFF", &v), Ok(255));
+        assert!(eval("X+1", &v).unwrap_err().contains("unknown parameter"));
+    }
+}
