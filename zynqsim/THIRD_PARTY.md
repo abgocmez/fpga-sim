@@ -33,6 +33,7 @@ linked; they are located at run time and driven as separate processes (see
 | anstyle-parse | 1.0.0 | MIT OR Apache-2.0 |
 | anstyle-query | 1.1.5 | MIT OR Apache-2.0 |
 | anstyle-wincon | 3.0.11 | MIT OR Apache-2.0 |
+| arbitrary | 1.5.0 | MIT OR Apache-2.0 |
 | arbitrary-int | 2.2.0 | MIT |
 | arboard | 3.6.1 | MIT OR Apache-2.0 |
 | arrayref | 0.3.9 | BSD-2-Clause |
@@ -96,6 +97,7 @@ linked; they are located at run time and driven as separate processes (see
 | crunchy | 0.2.4 | MIT |
 | cursor-icon | 1.2.0 | MIT OR Apache-2.0 OR Zlib |
 | dasp_sample | 0.11.0 | MIT OR Apache-2.0 |
+| derive_arbitrary | 1.5.0 | MIT OR Apache-2.0 |
 | dispatch | 0.2.0 | MIT |
 | dispatch2 | 0.3.1 | Zlib OR Apache-2.0 OR MIT |
 | displaydoc | 0.2.7 | MIT OR Apache-2.0 |
@@ -160,7 +162,7 @@ linked; they are located at run time and driven as separate processes (see
 | half | 2.7.1 | MIT OR Apache-2.0 |
 | hash32 | 0.3.1 | MIT OR Apache-2.0 |
 | hashbrown | 0.15.5, 0.17.1 | MIT OR Apache-2.0 |
-| heapless | 0.9.3 | MIT OR Apache-2.0 |
+| heapless | 0.8.0, 0.9.3 | MIT OR Apache-2.0 |
 | heck | 0.5.0 | MIT OR Apache-2.0 |
 | hermit-abi | 0.5.3 | MIT OR Apache-2.0 |
 | hex | 0.4.3 | MIT OR Apache-2.0 |
@@ -198,6 +200,7 @@ linked; they are located at run time and driven as separate processes (see
 | log | 0.4.34 | MIT OR Apache-2.0 |
 | mach2 | 0.6.0 | BSD-2-Clause OR MIT OR Apache-2.0 |
 | malloc_buf | 0.0.6 | MIT |
+| managed | 0.8.0 | 0BSD |
 | memchr | 2.8.3 | Unlicense OR MIT |
 | memmap2 | 0.9.11 | MIT OR Apache-2.0 |
 | memoffset | 0.9.1 | MIT |
@@ -275,6 +278,7 @@ linked; they are located at run time and driven as separate processes (see
 | redox_syscall | 0.4.1, 0.5.18, 0.9.4 | MIT |
 | renderdoc-sys | 1.1.0 | MIT OR Apache-2.0 |
 | rfd | 0.17.2 | MIT |
+| roxmltree | 0.20.0 | MIT OR Apache-2.0 |
 | rustc-hash | 1.1.0, 2.1.3 | Apache-2.0/MIT |
 | rustc_version | 0.4.1 | MIT OR Apache-2.0 |
 | rustix | 0.38.44, 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
@@ -301,6 +305,7 @@ linked; they are located at run time and driven as separate processes (see
 | smithay-client-toolkit | 0.19.2, 0.20.0 | MIT |
 | smithay-clipboard | 0.7.3 | MIT |
 | smol_str | 0.2.2 | MIT OR Apache-2.0 |
+| smoltcp | 0.12.0 | 0BSD |
 | spirv | 0.3.0+sdk-1.3.268.0 | Apache-2.0 |
 | stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 |
 | static_assertions | 1.1.0 | MIT OR Apache-2.0 |
@@ -422,8 +427,10 @@ linked; they are located at run time and driven as separate processes (see
 | zerotrie | 0.2.5 | Unicode-3.0 |
 | zerovec | 0.11.8 | Unicode-3.0 |
 | zerovec-derive | 0.11.6 | Unicode-3.0 |
+| zip | 2.4.2 | MIT |
 | zlib-rs | 0.6.8 | Zlib |
 | zmij | 1.0.23 | MIT |
+| zopfli | 0.8.3 | Apache-2.0 |
 | zune-core | 0.4.12 | MIT OR Apache-2.0 OR Zlib |
 | zune-jpeg | 0.4.21 | MIT OR Apache-2.0 OR Zlib |
 | zvariant | 5.9.2 | MIT |

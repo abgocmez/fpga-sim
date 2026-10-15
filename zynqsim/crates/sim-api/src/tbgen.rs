@@ -893,6 +893,19 @@ pub fn detect_irqs(m: &ModuleInfo, axi: &AxiLite) -> Vec<String> {
 
 /// The testbench text for `m` and its interface `axi`.
 pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
+    generate_testbench_with_irqs(m, axi, None)
+}
+
+/// Like [`generate_testbench`], with the `IRQ_F2P` bit of each interrupt output.
+///
+/// `irq_bits[k]` is the bit of the k-th output [`detect_irqs`] reports (`None` leaves that
+/// output unconnected, as the block design did). `None` for the whole slice numbers them
+/// `0..`, which is what `init --ip` has always done.
+pub fn generate_testbench_with_irqs(
+    m: &ModuleInfo,
+    axi: &AxiLite,
+    irq_bits: Option<&[Option<u32>]>,
+) -> String {
     let irqs = detect_irqs(m, axi);
     let pin_groups = detect_pin_groups(m);
     let master = detect_axi_master(m).ok().flatten();
@@ -1048,7 +1061,12 @@ pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
     // Interrupt outputs go to the PS as IRQ_F2P[i] (level, on change).
     let mut irq_blocks = String::new();
     let mut irq_init = String::new();
-    for (i, n) in irqs.iter().enumerate() {
+    for (k, n) in irqs.iter().enumerate() {
+        let bit = match irq_bits {
+            None => Some(k as u32),
+            Some(b) => b.get(k).copied().flatten(),
+        };
+        let Some(i) = bit else { continue };
         let _ = write!(
             irq_blocks,
             "\n    // {n} -> IRQ_F2P[{i}]\n\

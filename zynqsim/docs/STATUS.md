@@ -68,8 +68,9 @@ control plane drive it). Caveats are listed under *Known limits of the P1 engine
   replace it, which the adapter detects and reports).
   Tests that need it print `SKIPPED:` and pass vacuously when it is absent, so check the output.
 * **The RTL testbench top is user-supplied**, except that `zynqsim init --ip` generates one for an
-  AXI4-Lite slave. Generation from `[connect]`, `[connect]` for RTL ports, XSA/HWH ingestion and
-  globs in `rtl.files` are not implemented (milestone P3).
+  AXI4-Lite slave, or `init --xsa` from a Vivado handoff (see *XSA / HWH ingestion*). Generation
+  from `[connect]`, `[connect]` for RTL ports and globs in `rtl.files` are not implemented
+  (milestone P3).
 * **QEMU sessions cannot** change the quantum, and cannot read registers *at an arbitrary
   time*. A machine that is merely paused sits in QEMU's sync wait holding the global lock, so
   neither the monitor nor the gdb stub can answer (measured: the `-gdb` port accepts the TCP
@@ -275,7 +276,7 @@ front-end table's `unsupported` row.
 | MCP tools needing PL signals/network | stub | `unsupported` naming the missing capability |
 | `zynqsim init --ip FILE`: testbench + `project.toml` generated from the module header of an AXI4-Lite slave IP (32-bit data, any prefix/case, active-low or high reset, extra clocks tied to FCLK0, other inputs tied low) | verified | `sim-api::tbgen::tests::*` (header parsing incl. attributes/comments/parameters/non-ANSI, detection, rejections with reasons), `zynqsim::init_ip_generates_a_project_that_passes_with_the_real_firmware` (generated for `my_math_ip.v`: the real firmware passes with the same 21 bus accesses and 329 trace records as the native model). The parser reads module headers only, it is not a Verilog parser; IPs with AXI masters, interrupts or other bus flavours are refused (use a hand-written testbench). An AXI4 **master** interface (32-bit, `*ARADDR`... `*BREADY`, 25 signals) is bridged to PS memory through S_AXI_HP0 with a modelled 16-clock DDR latency: `zynqsim::init_ip_generates_the_dma_testbench_with_a_memory_bridge` generates the testbench for `dma_xform.v` and the two-core DMA regression gives **the same trace digest and 687 bus accesses** as the hand-written testbench. Other AXI4 slave flavours (full slave, AXI-Stream) are not generated; a master with other than 32-bit data is refused. One-bit outputs named `*irq*`/`*interrupt*`/`*intr*` (up to 16) become `IRQ_F2P[0..]`: `zynqsim::init_ip_forwards_interrupts_to_a_firmware_handler` (a generated testbench for `fixtures/rtl/irq/irq_ip.v`, level-high; the Rust firmware's GIC setup and handler took 3 of 3 events, 0 spurious). Only level-high is exercised; edge-style outputs are forwarded as levels |
 | `pmod_attach` | verified | `mcp::scenario::pmod_oled_through_mcp` (OLED), `pmod_sensors_through_mcp` |
-| `project_create_from_xsa` | stub | milestone P3 |
+| `project_create_from_xsa` | verified | `mcp::xsa::*`: reads a real Vivado 2022.1 XSA, writes `project.toml` + report + testbench, lists the unmodelled IP, `project_open` then refuses to start; see *XSA / HWH ingestion* |
 | CLI: `run` (any engine, `--at` inputs incl. `uartN:`/`swN:`/`btnN:`, `--dump-mem`, `--dump-image`), `inspect`, `init`, `trace`, `test` (exit codes 0/1/2/3, `--json`) | verified | `crates/cli/tests/cli.rs` |
 | CLI: `mcp`, `gui` launchers | implemented-untested | not covered by a test |
 | CLI: `ctl` | stub | needs an IPC listener |
@@ -284,6 +285,26 @@ front-end table's `unsupported` row.
 | GUI start-up flags for automated checks (`--uart`, `--mem`, `--toggle`, `--run-ms`, `--screenshot`) | implemented-untested | used by hand |
 | GUI: 2D/3D board tabs, PL bus-access list | verified (interaction) | `app::tests` (above) and screenshots |
 | GUI: dockable panels, CPU/PL signal/network/timeline panels, waveform/DWARF views | stub | fixed layout; panels that need a backend say so |
+
+## XSA / HWH ingestion (start of milestone P3)
+
+`zynqsim init --xsa design.xsa --out DIR [--rtl FILE...] [--elf FILE]` and MCP
+`project_create_from_xsa` (ADR-015). The fixtures are **real Vivado 2022.1 output**
+(`fixtures/xsa/make_xsa.tcl`: Zybo Z7-20 board preset, `my_math_ip` as a module reference at
+`0x43C00000`, optionally an AXI GPIO with its interrupt on `IRQ_F2P[0]`); they are one design,
+so other Vivado versions and richer designs (SmartConnect, hierarchies, DMA) are `VERIFY:`.
+
+| Feature | Status | Evidence / note |
+|---|---|---|
+| Reader: `.xsa` (zip) and bare `.hwh`; PS7 FCLK0-3 (enable, MHz), enabled `M_AXI_GP`/`S_AXI_GP`/`S_AXI_HP`/ACP, `IRQ_F2P`, PS peripheral enables and IO, MIO use per pin, EMIO GPIO; every PL instance with VLNV, parameters, ports, bus interfaces; PS address map; interrupts to `IRQ_F2P` bits; clock and reset sources | verified | `xsa-import::tests::the_vivado_2022_1_fixture_is_read` (the real XSA: VLNVs, `0x43C00000`/`0x41200000`, ranges, IRQ bit 0 level-high, FCLK0 100 MHz, UART1 on MIO 48..49, 54-pin MIO tree) |
+| `xlconcat` resolution, HP/ACP/GP1, EMIO, third-party/unknown/vendor classification, GIC ID of a bit | verified against a **hand-written** HWH in Vivado's element names (not Vivado output) | `xsa-import::tests::a_synthetic_handoff_covers_concat_hp_acp_emio_and_classes`, `sim-api::xsa_import::irq_bit_and_clock_frequency_reach_the_testbench` |
+| Archive handling: sources and file lists collected, `ps7_init`/bitstream noted, entries with `..`/absolute paths refused, clear message for a zip without a HWH or non-XML input | verified | `xsa-import::tests::{archive_sources_and_filelists_are_collected, zip_entries_with_parent_components_are_refused, a_zip_without_a_hwh_says_how_to_fix_it, bad_inputs_are_explained}` |
+| `export_simulation` `.prj` and `.f` file lists parsed | verified (parser) / implemented-untested (`--filelist` with `--xsa` end to end) | `xsa-import::tests::{archive_sources_and_filelists_are_collected, plain_file_lists_skip_options_and_comments}` |
+| User RTL (module reference or packaged IP, AXI4-Lite slave, source in the archive or `--rtl`) becomes `[rtl]` + generated testbench; address map, IRQ bits and FCLK clocks go into `[connect]`; interrupt outputs are forwarded on the bit the design uses; testbench clock follows the design's frequency | verified | `sim-api::xsa_import::{the_gpio_design_maps_the_user_ip_and_refuses_the_gpio, a_user_rtl_only_design_validates_clean, irq_bit_and_clock_frequency_reach_the_testbench}`. The `[connect]` entries are informational on the RTL path: the generated testbench answers the whole `M_AXI_GP0` window with the one module (ignores upper address bits) |
+| Every IP without a model is recorded in `[xsa.unmodelled]`; each entry is a validation error naming instance, VLNV, address, IRQ bits and reason; `run`/`project_open` stop (never a silent partial run) | verified | `zynqsim::xsa::an_unmodelled_ip_is_reported_and_stops_the_run` (exit 1, diagnostic on stderr), `mcp::xsa::an_xsa_with_an_unmodelled_ip_creates_a_project_that_will_not_open`, `sim-api::xsa_import::a_missing_rtl_source_is_unmodelled_with_the_flag_to_pass_it` |
+| `xsa-report.md`: PS7 table, MIO use, every instance with class/address/IRQ/clock/disposition, address map, mapped files, *Not supported*, *Not applied*; verdict says NOT RUNNABLE when anything is unmodelled and never claims correctness | verified (content) | `zynqsim::xsa`, `sim-api::xsa_import` (strings asserted) |
+| **End to end**: an XSA whose only PL IP is the user's math IP runs on QEMU + XSim with the existing firmware: `RESULT: ALL PASS`, the same 21 bus accesses / 329 trace records as the native-model and `init --ip` routes | verified (Windows, needs QEMU + Vivado + DPI library) | `zynqsim::xsa::a_user_rtl_only_handoff_runs_the_real_firmware` |
+| **Not done** | stub / not-planned | `ps7_init` data is read as file names only and not applied (QEMU boots the ELF; PS clock tree, MIO and peripheral enables change nothing); vendor IP models (`vendor-ip`: AXI GPIO, Timer, UART Lite, DMA, ...) are not built, so such designs are generated but do not run; one user AXI4-Lite slave per project (others are listed unmodelled; no multi-instance testbench or address decode); VHDL sources are listed, not compiled; `BOOT.BIN`; custom boards; GUI import; `--filelist` without `--xsa` |
 
 ## Backends
 

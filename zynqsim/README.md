@@ -133,6 +133,21 @@ zynqsim init mytest --ip rtl/my_ip.v --elf fw/app.elf   # testbench + project.to
 zynqsim run --project mytest/project.toml --for 20ms --json
 ```
 
+### From a Vivado hardware handoff
+
+```
+zynqsim init --xsa design.xsa --out mydesign --rtl rtl/my_ip.v --elf fw/app.elf
+zynqsim run --project mydesign/project.toml --for 20ms
+```
+
+Reads the XSA (or a bare `.hwh`): PS7 clocks and ports, every PL IP with its VLNV, the address
+map, interrupts and clocks. The user's AXI4-Lite RTL becomes `[rtl]` with a generated testbench;
+`xsa-report.md` lists what was found, mapped and **not supported**. IP that has no model yet (AXI
+GPIO, Timer, DMA, ... need the `vendor-ip` library, milestone P3) is recorded in
+`[xsa.unmodelled]` and makes `run` stop with a diagnostic naming it: the project is generated, the
+design is not claimed to run. MCP: `project_create_from_xsa`. Details and limits:
+[docs/adr/015-xsa-import.md](docs/adr/015-xsa-import.md).
+
 [docs/TEST_YOUR_DESIGN.md](docs/TEST_YOUR_DESIGN.md) covers the firmware side, what the generator
 does and does not do, how to turn a run into a test, and how to debug a failure.
 

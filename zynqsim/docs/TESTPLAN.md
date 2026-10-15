@@ -35,6 +35,7 @@ release build). Regenerate golden images: `cargo xtask golden` (review the diff)
 | `sim-api` `storage` | SD image round trip of files and directories, reproducible bytes, FAT16/FAT32 choice, card size and label rules, QSPI packing at an offset, image checks naming the failed rule | the SD and QSPI images are valid and reproducible (host only) |
 | `board-zybo` (3D) | deterministic render, camera clamps, picking at three cameras, state shows in pixels | the 3D view draws and picks what the state says |
 | `backend-qemu` `net::tests` (13) | RFC 1071 checksum vectors, ARP/ICMP/UDP summaries and direction, corrupted checksums reported, malformed/truncated/random frames never panic, Ethernet padding ignored, pcap reader across partial writes and garbage, virtual-time recovery, pcap writer, config validation, QEMU arguments, MAC/CIDR parsers | the Ethernet frame decoder and capture reader are right without QEMU |
+| `xsa-import` (9), `sim-api` `xsa_import` (5), `zynqsim` `xsa` (4), `zynqsim-mcp` `xsa` (2) | real Vivado 2022.1 XSA parsed (VLNV, address map, IRQ, clocks, PS7 and MIO); hand-written HWH for `xlconcat`/HP/ACP/EMIO and the class catalogue; zip safety and message quality; user RTL mapped to a validating project; unmodelled IP stops `run` and `project_open` with a diagnostic; report content; MCP arguments and no-overwrite | XSA/HWH ingestion (§9.1, §12, start of P3) is right on the one design Vivado produced here and honest about everything else |
 | `sim-api` `netlog::tests` (3), `project::tests::network_*` (3) | counters, direction, paging, bounded retention, digest depends on the payload; `[network]` defaults/overrides, every problem with its field, needs a CPU backend | the engine's capture record and the `[network]` section behave as documented |
 
 ## Tests that need external engines (P1)
@@ -54,6 +55,8 @@ release build). Regenerate golden images: `cargo xtask golden` (review the diff)
 | `zynqsim-gui` `model` e2e (2: project load + audio, HDMI frame) | Xilinx QEMU + Vivado XSim + the DPI library | same |
 | `backend-qemu` `net` (6: ping + every frame captured, two-run determinism, frame times independent of run slicing, custom subnet/MAC, unplugged NIC, open network) | Xilinx QEMU + co-sim DTB (no PL, no XSim) | prints `SKIPPED:` and returns |
 | `zynqsim` `net` (6: ping + pcap pair check, two-process determinism of digest/UART/pcap bytes, record/replay, trace/VCD, `--pcap` refusal, bad `[network]`), `mcp` `net` (2: capability gate; capture, paging, snapshot/restore/replay), `zynqsim-gui` `ethernet_counters_*` | Xilinx QEMU (the bad-section and gate tests need nothing) | same |
+
+| `zynqsim` `xsa::a_user_rtl_only_handoff_runs_the_real_firmware` | Xilinx QEMU + Vivado XSim + the DPI library (the other three `xsa` tests, `sim-api` `xsa_import`, `xsa-import` and `mcp` `xsa` need nothing) | prints `SKIPPED:` and returns |
 
 ### §14.2 peripheral conformance: Ethernet
 

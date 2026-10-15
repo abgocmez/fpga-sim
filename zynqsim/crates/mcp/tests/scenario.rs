@@ -179,11 +179,6 @@ fn unsupported_tools_say_why_instead_of_guessing() {
         "`Pmod` capability",
     );
     assert_eq!(code, "unsupported");
-    h.err(
-        "project_create_from_xsa",
-        json!({ "xsa_path": "x.xsa" }),
-        "milestone P3",
-    );
     // The message names the backend and fidelity so the caller knows the scope.
     let r = h.call("cpu_regs", json!({}));
     let msg = r["structuredContent"]["error"]["message"].as_str().unwrap();

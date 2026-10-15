@@ -101,10 +101,21 @@ enum Cmd {
         /// Directory to create the project in.
         #[arg(default_value = ".")]
         dir: PathBuf,
-        /// Import a Vivado XSA (not available yet).
+        /// Create the project from a Vivado hardware handoff (.xsa or .hwh): PS7
+        /// configuration, address map, interrupts, clocks, user RTL. IP without a
+        /// model is listed and makes the project refuse to run.
         #[arg(long)]
         xsa: Option<PathBuf>,
-        /// Import a Vivado simulation file list (not available yet).
+        /// With --xsa: the project directory (same as the positional DIR).
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// With --xsa: user RTL (Verilog/SystemVerilog) the handoff does not carry;
+        /// repeat for further files.
+        #[arg(long = "rtl")]
+        rtl: Vec<PathBuf>,
+        /// With --xsa: a Vivado file list (`.prj` from export_simulation, or `.f`)
+        /// whose Verilog/SystemVerilog files are added to the RTL. On its own it is
+        /// not available yet.
         #[arg(long)]
         filelist: Option<PathBuf>,
         /// Generate a testbench and project for the AXI4-Lite slave IP in this
@@ -283,6 +294,8 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
         Cmd::Init {
             dir,
             xsa,
+            out,
+            rtl,
             filelist,
             ip,
             module,
@@ -291,8 +304,9 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
             base,
         } => cmd_init(
             json,
-            &dir,
+            &out.unwrap_or(dir),
             xsa,
+            rtl,
             filelist,
             InitIp {
                 ip,
@@ -1073,23 +1087,123 @@ fn init_from_ip(json: bool, dir: &Path, o: InitIp) -> Result<u8, Failure> {
     Ok(0)
 }
 
+/// `init --xsa`: a project from a Vivado hardware handoff.
+fn init_from_xsa(
+    json: bool,
+    dir: &Path,
+    xsa: &Path,
+    rtl: Vec<PathBuf>,
+    filelist: Option<PathBuf>,
+    o: InitIp,
+) -> Result<u8, Failure> {
+    use sim_api::xsa;
+    let opts = xsa::ImportOptions {
+        rtl,
+        elf: o.elf,
+        elf1: o.elf1,
+        filelist,
+    };
+    let plan = xsa::plan(xsa, dir, &opts).map_err(|e| fail(2, e.message))?;
+    let created = plan.write(dir).map_err(|e| fail(2, e.message))?;
+    // Validate what was written, exactly as `run` will.
+    let file = dir.join("project.toml");
+    let diagnostics = Project::load(&file)
+        .map(|p| p.validate(dir))
+        .map_err(|e| fail(2, e.message))?;
+    let errors = diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .count();
+    let runnable = errors == 0;
+    if json {
+        println!(
+            "{}",
+            json!({
+                "created": created.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+                "project": file.display().to_string(),
+                "report": dir.join("xsa-report.md").display().to_string(),
+                "design": plan.handoff.design.name,
+                "testbench_module": plan.testbench_module,
+                "unmodelled": plan.unmodelled,
+                "warnings": plan.warnings,
+                "diagnostics": diagnostics,
+                "runnable": runnable,
+            })
+        );
+    } else {
+        let d = &plan.handoff.design;
+        println!(
+            "design    : {} (Vivado {}, {} PL instance(s))",
+            d.name,
+            d.vivado_version.as_deref().unwrap_or("?"),
+            d.ips.len()
+        );
+        if let Some(m) = &plan.testbench_module {
+            println!("rtl       : testbench drives module `{m}`");
+        }
+        for u in &plan.unmodelled {
+            println!("unmodelled: {}", u.message());
+        }
+        for w in &plan.warnings {
+            println!("note      : {w}");
+        }
+        println!("created   : {}", file.display());
+        println!("report    : {}", dir.join("xsa-report.md").display());
+        for dg in &diagnostics {
+            println!(
+                "{:9} : {}: {}",
+                match dg.severity {
+                    Severity::Error => "error",
+                    Severity::Warning => "warning",
+                },
+                dg.field,
+                dg.message
+            );
+        }
+        if runnable {
+            println!(
+                "run       : zynqsim run --project {} --for 20ms",
+                file.display()
+            );
+        } else {
+            println!(
+                "status    : NOT RUNNABLE until the {errors} error(s) above are resolved (see xsa-report.md)"
+            );
+        }
+    }
+    Ok(0)
+}
+
 fn cmd_init(
     json: bool,
     dir: &Path,
     xsa: Option<PathBuf>,
+    rtl: Vec<PathBuf>,
     filelist: Option<PathBuf>,
     ip: InitIp,
 ) -> Result<u8, Failure> {
+    if let Some(x) = xsa {
+        if !ip.ip.is_empty() {
+            return Err(fail(2, "--ip cannot be combined with --xsa"));
+        }
+        return init_from_xsa(json, dir, &x, rtl, filelist, ip);
+    }
+    if !rtl.is_empty() {
+        return Err(fail(
+            2,
+            "--rtl is only used with --xsa (use --ip FILE for a single IP)",
+        ));
+    }
     if !ip.ip.is_empty() {
-        if xsa.is_some() || filelist.is_some() {
-            return Err(fail(2, "--ip cannot be combined with --xsa or --filelist"));
+        if filelist.is_some() {
+            return Err(fail(2, "--ip cannot be combined with --filelist"));
         }
         return init_from_ip(json, dir, ip);
     }
-    if xsa.is_some() || filelist.is_some() {
+    if filelist.is_some() {
         return Err(fail(
             3,
-            "--xsa and --filelist ingestion is not implemented in this build (milestone P3)",
+            "--filelist on its own is not implemented in this build; combine it with --xsa",
         ));
     }
     std::fs::create_dir_all(dir)

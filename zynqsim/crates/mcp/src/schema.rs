@@ -48,6 +48,11 @@ pub fn boolean(description: &str) -> Value {
     json!({ "type": "boolean", "description": description })
 }
 
+/// An array of strings.
+pub fn string_array(description: &str, examples: &[&str]) -> Value {
+    json!({ "type": "array", "items": { "type": "string" }, "description": description, "examples": [examples] })
+}
+
 /// A string parameter restricted to a fixed set of values.
 pub fn enumeration(description: &str, values: &[&str]) -> Value {
     json!({ "type": "string", "description": description, "enum": values, "examples": [values[0]] })
@@ -121,10 +126,16 @@ fn check_value(name: &str, schema: &Value, v: &Value) -> Result<(), String> {
         "boolean" => v.is_boolean(),
         "integer" => v.as_i64().is_some() || v.as_u64().is_some(),
         "number" => v.is_number(),
+        "array" => v.is_array(),
         _ => true,
     };
     if !ok {
         return Err(format!("`{name}` must be {ty}, got {}", kind(v)));
+    }
+    if let (Some(items), Some(list)) = (schema.get("items"), v.as_array()) {
+        for (i, item) in list.iter().enumerate() {
+            check_value(&format!("{name}[{i}]"), items, item)?;
+        }
     }
     if let Some(allowed) = schema.get("enum").and_then(Value::as_array) {
         if !allowed.contains(v) {
