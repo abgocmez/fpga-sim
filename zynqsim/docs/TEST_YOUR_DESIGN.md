@@ -47,8 +47,14 @@ active-low or high), and writes:
 
 The testbench ignores the upper address bits: the IP sees the offset inside its window.
 
-What it does **not** generate: IPs with an AXI master (DMA), interrupts, other AXI flavours, DDR
-access, board pins, audio/video. For those start from the hand-written testbenches:
+One-bit outputs whose name contains `irq`, `interrupt` or `intr` (up to 16, in declaration order)
+are forwarded to the PS as `IRQ_F2P[0..]` (level, on change): the first one is GIC interrupt ID 61.
+In Rust firmware, `rt::irq` does the GIC setup and vector table
+(`irq::install(); irq::set_handler(61, isr); irq::enable_spi(61); irq::enable();`); see
+`firmware/irq_demo`. Clear the interrupt source in your IP from the handler, or the level stays high.
+
+What it does **not** generate: IPs with an AXI master (DMA), other AXI flavours, DDR access, board
+pins, audio/video. For those start from the hand-written testbenches:
 
 | Need | Start from |
 |---|---|

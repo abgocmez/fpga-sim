@@ -900,3 +900,49 @@ fn init_ip_explains_what_is_wrong_with_an_unsuitable_module() {
     assert_eq!(o.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&o.stderr).contains("`other`"));
 }
+
+/// Interrupt outputs of the IP are forwarded to the PS: a generated testbench
+/// raises IRQ_F2P[0], the Rust firmware's GIC setup and handler take it.
+#[test]
+fn init_ip_forwards_interrupts_to_a_firmware_handler() {
+    if !qemu_available() || !xsim_available() {
+        eprintln!("SKIPPED: needs the Xilinx QEMU and Vivado XSim");
+        return;
+    }
+    ensure_dpi_lib();
+    let d = temp("init-ip-irq");
+    let ip = fixtures().join("rtl/irq/irq_ip.v");
+    let elf = fixtures().join("elf/rust_irq.elf");
+    let o = zynqsim(&[
+        "--json",
+        "init",
+        d.to_str().unwrap(),
+        "--ip",
+        ip.to_str().unwrap(),
+        "--elf",
+        elf.to_str().unwrap(),
+    ]);
+    assert_eq!(o.status.code(), Some(0), "{}", stdout(&o));
+    let v: Value = serde_json::from_str(&stdout(&o)).unwrap();
+    assert_eq!(v["interrupts"], serde_json::json!(["irq"]));
+
+    let o = zynqsim(&[
+        "--json",
+        "run",
+        "--project",
+        d.join("project.toml").to_str().unwrap(),
+        "--for",
+        "4ms",
+    ]);
+    assert_eq!(
+        o.status.code(),
+        Some(0),
+        "{} {}",
+        stdout(&o),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let r: Value = serde_json::from_str(&stdout(&o)).unwrap();
+    let uart = r["uart"]["1"].as_str().unwrap();
+    assert!(uart.contains("events=3 handled=3"), "{uart}");
+    assert!(uart.contains("RESULT: ALL PASS"), "{uart}");
+}

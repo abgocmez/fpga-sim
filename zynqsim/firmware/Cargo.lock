@@ -24,5 +24,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "irq_demo"
+version = "0.1.0"
+dependencies = [
+ "rt",
+]
+
+[[package]]
 name = "rt"
 version = "0.1.0"

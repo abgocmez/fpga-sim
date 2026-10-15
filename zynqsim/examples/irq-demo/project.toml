@@ -1,0 +1,34 @@
+# Interrupts: a PL block (fixtures/rtl/irq/irq_ip.v) raises a level-high interrupt on
+# IRQ_F2P[0] (GIC ID 61); Rust firmware (firmware/irq_demo, using rt::irq) sets up the GIC,
+# takes it in a handler and acknowledges it in the IP. The testbench was generated with
+#   zynqsim init --ip fixtures/rtl/irq/irq_ip.v
+#
+#   zynqsim run --project examples/irq-demo/project.toml --for 4ms
+#   expect: "events=3 handled=3 spurious=0", RESULT: ALL PASS
+#
+# Needs: Xilinx QEMU (Vitis), Vivado XSim, and the DPI library (`cargo xtask dpi`).
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "xsim"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_irq.elf"
+
+[rtl]
+files = [
+    "../../fixtures/rtl/irq/irq_ip.v",
+    "../../fixtures/rtl/irq/cosim_top.sv",
+]
+top = "cosim_top"

@@ -4,6 +4,8 @@
 
 #![no_std]
 
+pub mod irq;
+
 use core::arch::global_asm;
 use core::fmt;
 use core::ptr::{read_volatile, write_volatile};

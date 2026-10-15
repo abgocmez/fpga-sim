@@ -664,6 +664,7 @@ fn init_from_ip(json: bool, dir: &Path, o: InitIp) -> Result<u8, Failure> {
     }
     let m = found.ok_or_else(|| fail(2, last_err))?;
     let axi = sim_api::detect_axi_lite(&m).map_err(|e| fail(2, e))?;
+    let irqs = sim_api::detect_irqs(&m, &axi);
     let base = match o.base.as_deref() {
         Some(b) => parse_addr(b)?,
         None => 0x43C0_0000,
@@ -698,6 +699,7 @@ fn init_from_ip(json: bool, dir: &Path, o: InitIp) -> Result<u8, Failure> {
                 "created": [file.display().to_string(), tb_path.display().to_string()],
                 "module": m.name,
                 "interface": axi.prefix,
+                "interrupts": irqs,
                 "addr_width": axi.addr_width,
                 "clock": axi.clock,
                 "reset": axi.reset.as_ref().map(|r| &r.0),
@@ -719,6 +721,9 @@ fn init_from_ip(json: bool, dir: &Path, o: InitIp) -> Result<u8, Failure> {
                 if r.1 { "low" } else { "high" }
             ))
         );
+        for (i, n) in irqs.iter().enumerate() {
+            println!("interrupt : {n} -> IRQ_F2P[{i}] (GIC ID {})", 61 + i);
+        }
         println!("created   : {}", file.display());
         println!("created   : {}", tb_path.display());
         if !elf_exists {

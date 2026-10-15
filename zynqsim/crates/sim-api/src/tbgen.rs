@@ -659,8 +659,25 @@ fn decl(width: u32) -> String {
     }
 }
 
+/// One-bit outputs that look like interrupt lines (`irq`, `interrupt`,
+/// `intr` in the name), in declaration order. They become `IRQ_F2P[0..]`.
+pub fn detect_irqs(m: &ModuleInfo, axi: &AxiLite) -> Vec<String> {
+    let axi_names: Vec<&String> = axi.signals.values().collect();
+    m.ports
+        .iter()
+        .filter(|p| p.dir == Dir::Out && p.width == 1 && !axi_names.contains(&&p.name))
+        .filter(|p| {
+            let l = p.name.to_ascii_lowercase();
+            l.contains("irq") || l.contains("interrupt") || l.contains("intr")
+        })
+        .map(|p| p.name.clone())
+        .take(16)
+        .collect()
+}
+
 /// The testbench text for `m` and its interface `axi`.
 pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
+    let irqs = detect_irqs(m, axi);
     let sig = |r: &str| axi.signals.get(r).cloned();
     let mut s = String::new();
     let _ = writeln!(
@@ -679,7 +696,8 @@ pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
          \x20   import \"DPI-C\" function void rp_lockstep(input int on);\n\
          \x20   import \"DPI-C\" function longint rp_sync_target();\n\
          \x20   import \"DPI-C\" function void rp_sync_ack(input longint now_ns);\n\
-         \x20   import \"DPI-C\" function longint rp_req_ts();\n",
+         \x20   import \"DPI-C\" function longint rp_req_ts();\n\
+         \x20   import \"DPI-C\" function void rp_irq(input longint now_ns, input int line, input int val);\n",
         m.name, axi.prefix
     );
     let _ = writeln!(
@@ -744,13 +762,31 @@ pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
 
     let g = |r: &str| sig(r).unwrap_or_default();
     let aw = axi.addr_width;
+    // Interrupt outputs go to the PS as IRQ_F2P[i] (level, on change).
+    let mut irq_blocks = String::new();
+    let mut irq_init = String::new();
+    for (i, n) in irqs.iter().enumerate() {
+        let _ = write!(
+            irq_blocks,
+            "\n    // {n} -> IRQ_F2P[{i}]\n\
+             \x20   reg irq{i}_q = 1'b0;\n\
+             \x20   always @(posedge aclk) begin\n\
+             \x20       if (connected && ({n} !== irq{i}_q)) begin\n\
+             \x20           irq{i}_q <= {n};\n\
+             \x20           rp_irq($time, {i}, {n} ? 1 : 0);\n\
+             \x20       end\n\
+             \x20   end\n"
+        );
+        let _ = writeln!(irq_init, "        rp_irq($time, {i}, 0);");
+    }
     let _ = write!(
         s,
         "\
+    reg        connected = 1'b0;
     reg        wr_ok;
     reg        rd_ok;
     reg [31:0] rd_val;
-
+{irq_blocks}
     task lite_write(input [31:0] a, input [31:0] d, input [3:0] st, output ok);
         begin
             @(posedge aclk);
@@ -793,7 +829,8 @@ pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
             $finish;
         end
         $display(\"cosim_top: remote-port connected\");
-
+        connected = 1'b1;
+{irq_init}
         forever begin
             st = rp_next($time, -1, a_i, wd_i, ws_i, iw_i);
             if (st == 0) begin
@@ -826,6 +863,8 @@ pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
     end
 endmodule
 ",
+        irq_blocks = irq_blocks,
+        irq_init = irq_init,
         awaddr = g("awaddr"),
         wdata = g("wdata"),
         wstrb = g("wstrb"),
@@ -1004,6 +1043,23 @@ mod tests {
         );
         assert!(tb.contains("wire [7:0] gpio_in = 0;"));
         assert!(tb.contains("wire [7:0] gpio_out;"));
+    }
+
+    #[test]
+    fn interrupt_outputs_are_forwarded_as_irq_f2p() {
+        let src = fixture("irq/irq_ip.v");
+        let m = parse_module(&src, None).unwrap();
+        let axi = detect_axi_lite(&m).unwrap();
+        assert_eq!(detect_irqs(&m, &axi), vec!["irq".to_string()]);
+        let tb = generate_testbench(&m, &axi);
+        assert!(tb.contains("// irq -> IRQ_F2P[0]"), "{tb}");
+        assert!(tb.contains("rp_irq($time, 0, irq ? 1 : 0);"));
+        assert!(tb.contains("connected = 1'b1;"));
+        // The math IP has none.
+        let m = parse_module(&fixture("math/my_math_ip.v"), None).unwrap();
+        let axi = detect_axi_lite(&m).unwrap();
+        assert!(detect_irqs(&m, &axi).is_empty());
+        assert!(!generate_testbench(&m, &axi).contains("IRQ_F2P"));
     }
 
     #[test]
