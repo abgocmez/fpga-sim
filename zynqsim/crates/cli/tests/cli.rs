@@ -1129,3 +1129,163 @@ fn rgb_demo_averages_the_pwm_pins_into_colours() {
         }
     }
 }
+
+// ----------------------------------------------------- Pmod sensors (I2C, SPI)
+
+/// Runs a sensor example and returns the parsed `--json` summary.
+fn run_sensor(example_name: &str, duration: &str, extra: &[&str]) -> Value {
+    let project = example(example_name);
+    let mut args = vec!["--json", "run", "--project", &project, "--for", duration];
+    args.extend_from_slice(extra);
+    let o = zynqsim(&args);
+    assert_eq!(
+        o.status.code(),
+        Some(0),
+        "{} {}",
+        stdout(&o),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    serde_json::from_str(&stdout(&o)).unwrap()
+}
+
+/// The UART text of a run summary.
+fn uart1(v: &Value) -> &str {
+    v["uart"]["1"].as_str().unwrap()
+}
+
+/// The `values[name]` of the device on the first port in a run summary.
+fn device_value(v: &Value, name: &str) -> f64 {
+    v["device_state"][0]["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|q| q["name"] == name)
+        .unwrap_or_else(|| panic!("no quantity {name} in {v}"))["value"]
+        .as_f64()
+        .unwrap()
+}
+
+/// Firmware -> AXI-Lite -> I2C master RTL -> JA pins -> host ADT7420 model and
+/// back: what the firmware read is what the host set, in both resolutions and
+/// at three bus clocks; the run is deterministic.
+#[test]
+fn tmp2_demo_reads_the_host_set_temperature_over_i2c() {
+    if !qemu_available() || !xsim_available() {
+        eprintln!("SKIPPED: needs the Xilinx QEMU and Vivado XSim");
+        return;
+    }
+    ensure_dpi_lib();
+
+    // 23.5 degC from project.toml, changed to 80 degC at 6 ms by the host.
+    let args = ["--device-set", "6ms@JA.temperature=80"];
+    let a = run_sensor("tmp2-demo", "12ms", &args);
+    let text = uart1(&a);
+    assert!(text.contains("ID 0xCB\r\n"), "{text}");
+    for div in [250, 25, 2] {
+        assert!(
+            text.contains(&format!("BUS div={div} id=0xCB raw=0x0BC0\r\n")),
+            "{text}"
+        );
+    }
+    assert!(text.contains("T13 raw=0x0BC0 mC=23500\r\n"), "{text}");
+    assert!(text.contains("T16 raw=0x0BC0 mC=23500\r\n"), "{text}");
+    assert!(
+        text.contains("T16 raw=0x2800 mC=80000\r\n"),
+        "the value set at run time reaches the firmware: {text}"
+    );
+    assert_eq!(device_value(&a, "temperature"), 80.0);
+    let regs = a["device_state"][0]["registers"].as_array().unwrap();
+    let reg = |n: &str| regs.iter().find(|r| r["name"] == n).unwrap()["value"].as_u64();
+    assert_eq!(reg("TEMP"), Some(0x2800));
+    assert_eq!(
+        reg("CONFIG"),
+        Some(0x80),
+        "the firmware selected 16-bit mode"
+    );
+    assert_eq!(reg("ID"), Some(0xCB));
+
+    // Same inputs, same outputs: the whole trace has the same digest.
+    let b = run_sensor("tmp2-demo", "12ms", &args);
+    assert_eq!(a["trace_hash"], b["trace_hash"]);
+    assert_eq!(a["trace_len"], b["trace_len"]);
+    assert_eq!(uart1(&a), uart1(&b));
+
+    // A negative start value from the command line (two's complement).
+    let c = run_sensor(
+        "tmp2-demo",
+        "8ms",
+        &["--device-set", "JA.temperature=-12.25"],
+    );
+    let text = uart1(&c);
+    assert!(text.contains("T13 raw=0xF9E0 mC=-12250\r\n"), "{text}");
+    assert!(text.contains("T16 raw=0xF9E0 mC=-12250\r\n"), "{text}");
+}
+
+/// SPI mode 0, MISO only: the 16-bit frame is `code << 4`.
+#[test]
+fn als_demo_reads_the_host_set_light_over_spi() {
+    if !qemu_available() || !xsim_available() {
+        eprintln!("SKIPPED: needs the Xilinx QEMU and Vivado XSim");
+        return;
+    }
+    ensure_dpi_lib();
+    let v = run_sensor("als-demo", "4ms", &["--device-set", "2ms@JA.light=20"]);
+    let text = uart1(&v);
+    for div in [50, 5, 1] {
+        assert!(
+            text.contains(&format!("SPI div={div} frame=0x0AD0\r\n")),
+            "{text}"
+        );
+    }
+    assert!(text.contains("LIGHT frame=0x0AD0 code=173\r\n"), "{text}");
+    assert!(
+        text.contains("LIGHT frame=0x0140 code=20\r\n"),
+        "the value set at run time reaches the firmware: {text}"
+    );
+    assert_eq!(device_value(&v, "light"), 20.0);
+    assert_eq!(v["devices"][0]["kind"], "als");
+}
+
+/// SPI mode 3 with register read/write and a multi-byte burst.
+#[test]
+fn acl_demo_reads_the_host_set_acceleration_over_spi() {
+    if !qemu_available() || !xsim_available() {
+        eprintln!("SKIPPED: needs the Xilinx QEMU and Vivado XSim");
+        return;
+    }
+    ensure_dpi_lib();
+    let v = run_sensor("acl-demo", "4ms", &["--device-set", "2ms@JA.accel_z=-1"]);
+    let text = uart1(&v);
+    assert!(text.contains("ID 0xE5\r\n"), "{text}");
+    assert!(
+        text.contains("CFG power=0x08 format=0x08 rate=0x0A\r\n"),
+        "{text}"
+    );
+    assert!(text.contains("ACC x=500 y=-250 z=1000 mg\r\n"), "{text}");
+    assert!(
+        text.contains("ACC x=500 y=-250 z=-1000 mg\r\n"),
+        "the value set at run time reaches the firmware: {text}"
+    );
+    assert_eq!(device_value(&v, "accel_x"), 0.5);
+    assert_eq!(device_value(&v, "accel_z"), -1.0);
+}
+
+/// Bad `--device-set` values are rejected before anything starts.
+#[test]
+fn device_set_arguments_are_checked() {
+    for (spec, want) in [
+        ("temperature=1", "expected PORT.NAME"),
+        ("JA.temperature", "expected [TIME@]PORT.NAME=VALUE"),
+        ("JZ.temperature=1", "not a Pmod port"),
+        ("JA.temperature=warm", "not a number"),
+    ] {
+        let o = zynqsim(&["run", "--for", "1ms", "--device-set", spec]);
+        assert_eq!(o.status.code(), Some(2), "{spec}");
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert!(err.contains(want), "{spec}: {err}");
+    }
+    // A device that is not there (the demo engine has no PL pins) is refused
+    // with the backend's explanation, not ignored.
+    let o = zynqsim(&["run", "--for", "1ms", "--device-set", "JA.temperature=1"]);
+    assert_eq!(o.status.code(), Some(3));
+}

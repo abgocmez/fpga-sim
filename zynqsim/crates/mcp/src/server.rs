@@ -532,6 +532,21 @@ impl McpServer {
                     r => Err(unexpected(&r)),
                 }
             }
+            "pmod_set" => {
+                let port = pmod_index(str_arg(a, "port")?)?;
+                let name = str_arg(a, "name")?.to_string();
+                let value = a
+                    .get("value")
+                    .and_then(Value::as_f64)
+                    .ok_or_else(|| ApiError::invalid_argument("`value` must be a number"))?;
+                self.client
+                    .command(Command::SetDeviceValue { port, name, value })?;
+                device_state(&mut self.client, port, &a["port"])
+            }
+            "pmod_state" => {
+                let port = pmod_index(str_arg(a, "port")?)?;
+                device_state(&mut self.client, port, &a["port"])
+            }
             "breakpoint_list" => match self.client.query(Query::Breakpoints)? {
                 Response::Breakpoints(list) => Ok(Out::json(json!({ "breakpoints": list }))),
                 r => Err(unexpected(&r)),
@@ -1030,6 +1045,26 @@ fn pmod_index(s: &str) -> Result<u8, ApiError> {
         other => Err(ApiError::invalid_argument(format!(
             "`{other}` is not a Pmod port with PL pins (JA..JE)"
         ))),
+    }
+}
+
+/// The state of the device on `port` as a tool result.
+fn device_state(client: &mut SimClient, port: u8, port_arg: &Value) -> Result<Out, ApiError> {
+    match client.query(Query::DeviceState { port })? {
+        Response::DeviceState {
+            kind,
+            description,
+            values,
+            registers,
+            ..
+        } => Ok(Out::json(json!({
+            "port": port_arg,
+            "module": kind,
+            "state": description,
+            "values": values,
+            "registers": registers,
+        }))),
+        r => Err(unexpected(&r)),
     }
 }
 

@@ -956,3 +956,134 @@ fn pmod_oled_through_mcp() {
     let r = call("pmod_attach", json!({ "port": "JC", "module": "toaster" }));
     assert_eq!(r["isError"], true, "{r}");
 }
+
+/// Pmod sensors through MCP: `pmod_set` changes what a sensor measures while
+/// the firmware keeps sampling; `pmod_state` reads the model back. Errors say
+/// what is accepted.
+#[test]
+fn pmod_sensors_through_mcp() {
+    let ws = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut server = zynqsim_mcp::McpServer::new(vec![ws.clone()]).unwrap();
+    let mut call = |name: &str, args: serde_json::Value| -> serde_json::Value {
+        server
+            .handle(
+                json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                        "params": { "name": name, "arguments": args } }),
+                &mut zynqsim_mcp::NoControl,
+            )
+            .unwrap()["result"]
+            .clone()
+    };
+    let backends = call("backend_list", json!({}))["structuredContent"]["backends"].clone();
+    let found = |n: &str| {
+        backends
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|b| b["name"] == n && b["found"] == true)
+    };
+    if !found("qemu") || !found("xsim") {
+        eprintln!("SKIPPED: needs the Xilinx QEMU and Vivado XSim");
+        return;
+    }
+    assert!(ws.join("target/dpi/release/libxsim_dpi.a").is_file());
+
+    // Without a design that reports Pmod pins there is nothing to set.
+    let open = call("project_open", json!({ "path": "examples/math-qemu" }));
+    assert_eq!(open["isError"], false, "{open}");
+    let r = call(
+        "pmod_set",
+        json!({ "port": "JA", "name": "temperature", "value": 1.0 }),
+    );
+    assert_eq!(r["isError"], true, "{r}");
+    let r = call("pmod_state", json!({ "port": "JA" }));
+    assert_eq!(r["isError"], true, "{r}");
+
+    // The temperature sensor on I2C.
+    let open = call("project_open", json!({ "path": "examples/tmp2-demo" }));
+    assert_eq!(open["isError"], false, "{open}");
+    let run = call("sim_run", json!({ "duration": "6ms" }));
+    assert_eq!(run["isError"], false, "{run}");
+    let uart = call("uart_read", json!({ "port": 1 }));
+    let text = uart["structuredContent"]["text"].as_str().unwrap();
+    assert!(text.contains("T16 raw=0x0BC0 mC=23500"), "{text}");
+
+    let st = call("pmod_state", json!({ "port": "JA" }));
+    assert_eq!(st["isError"], false, "{st}");
+    let sc = &st["structuredContent"];
+    assert_eq!(sc["module"], "tmp2");
+    assert_eq!(sc["values"][0]["name"], "temperature");
+    assert_eq!(sc["values"][0]["value"], 23.5);
+    assert_eq!(sc["values"][0]["unit"], "degC");
+    assert!(
+        sc["registers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["name"] == "ID" && r["value"] == 0xCB),
+        "{sc}"
+    );
+
+    let set = call(
+        "pmod_set",
+        json!({ "port": "JA", "name": "temperature", "value": 31.25 }),
+    );
+    assert_eq!(set["isError"], false, "{set}");
+    assert_eq!(set["structuredContent"]["values"][0]["value"], 31.25);
+    let run = call("sim_run", json!({ "duration": "4ms" }));
+    assert_eq!(run["isError"], false, "{run}");
+    let uart = call("uart_read", json!({ "port": 1 }));
+    let text = uart["structuredContent"]["text"].as_str().unwrap();
+    assert!(
+        text.contains("T16 raw=0x0FA0 mC=31250"),
+        "31.25 degC read back by the firmware: {text}"
+    );
+
+    // Out-of-range values are clamped, unknown quantities and empty ports are
+    // errors that say what is accepted.
+    let r = call(
+        "pmod_set",
+        json!({ "port": "JA", "name": "temperature", "value": 900.0 }),
+    );
+    assert_eq!(r["isError"], false, "{r}");
+    assert_eq!(r["structuredContent"]["values"][0]["value"], 150.0);
+    let r = call(
+        "pmod_set",
+        json!({ "port": "JA", "name": "humidity", "value": 1.0 }),
+    );
+    assert_eq!(r["isError"], true, "{r}");
+    assert!(r.to_string().contains("temperature"), "{r}");
+    let r = call(
+        "pmod_set",
+        json!({ "port": "JB", "name": "temperature", "value": 1.0 }),
+    );
+    assert_eq!(r["isError"], true, "{r}");
+    let r = call(
+        "pmod_set",
+        json!({ "port": "JA", "name": "temperature", "value": "hot" }),
+    );
+    assert_eq!(r["isError"], true, "{r}");
+
+    // The accelerometer on SPI mode 3.
+    let open = call("project_open", json!({ "path": "examples/acl-demo" }));
+    assert_eq!(open["isError"], false, "{open}");
+    call("sim_run", json!({ "duration": "2ms" }));
+    let set = call(
+        "pmod_set",
+        json!({ "port": "JA", "name": "accel_y", "value": 0.75 }),
+    );
+    assert_eq!(set["isError"], false, "{set}");
+    call("sim_run", json!({ "duration": "2ms" }));
+    let uart = call("uart_read", json!({ "port": 1 }));
+    let text = uart["structuredContent"]["text"].as_str().unwrap();
+    assert!(text.contains("ACC x=500 y=-250 z=1000 mg"), "{text}");
+    assert!(text.contains("ACC x=500 y=750 z=1000 mg"), "{text}");
+    let st = call("pmod_state", json!({ "port": "JA" }));
+    let names: Vec<&str> = st["structuredContent"]["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["accel_x", "accel_y", "accel_z"]);
+}

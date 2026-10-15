@@ -1355,6 +1355,26 @@ mod tests {
         let _ = t.join().unwrap();
     }
 
+    #[test]
+    fn pin_exchanges_stay_in_order_in_bulk() {
+        let (mut dpi, mut host) = pair();
+        const N: u32 = 2000;
+        let t = std::thread::spawn(move || {
+            for _ in 0..N {
+                serve_read(&mut host, DEV_PIN_OUT, |addr, _, _| {
+                    // Answer with the levels sent, inverted.
+                    vec![!((addr >> 8) as u8)]
+                });
+            }
+            host
+        });
+        for i in 0..N {
+            let lv = (i % 251) as u32;
+            assert_eq!(dpi.pin_xchg(1, lv, u64::from(i)), !(lv as u8));
+        }
+        let _ = t.join().unwrap();
+    }
+
     /// Answers one host-side read with `data` produced by `f(addr, len)`.
     fn serve_read(host: &mut Session, dev: u32, f: impl Fn(u64, u32, u32) -> Vec<u8>) {
         match host.recv().unwrap() {

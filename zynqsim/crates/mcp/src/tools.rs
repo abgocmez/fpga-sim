@@ -412,9 +412,13 @@ pub fn tool_defs() -> Vec<ToolDef> {
             "pmod_attach",
             "Attach a Pmod module to a port JA..JE so its display and state follow the pins the \
              PL design drives. Available: `oled` (128x32 SSD1306 SPI, Digilent Pmod OLED pinout: \
-             1 CS, 2 SDIN, 4 SCLK, 7 D/C, 8 RES). Only RTL designs that report their Pmod pins \
-             (the `zs_pin_out` DPI, see fixtures/rtl/pmod) have a module to talk to. Modules can \
-             also be declared in project.toml (`[devices] pmod_ja = \"oled\"`).",
+             1 CS, 2 SDIN, 4 SCLK, 7 D/C, 8 RES); `tmp2` (Pmod TMP2, ADT7420 temperature sensor, \
+             I2C 0x4B: 3 SCL, 4 SDA); `als` (Pmod ALS, ADC081S021 light sensor, SPI mode 0: \
+             1 CS, 3 SDO, 4 SCLK); `acl` (Pmod ACL, ADXL345 accelerometer, SPI mode 3: 1 CS, \
+             2 SDI, 3 SDO, 4 SCLK). Only RTL designs that report their Pmod pins (the \
+             `zs_pin_out` / `zs_pin_xchg` DPI, see fixtures/rtl/pmod) have a module to talk to. \
+             Modules can also be declared in project.toml (`[devices] pmod_ja = \"oled\"`). Set \
+             what a sensor measures with `pmod_set`.",
             Needs(C::Pmod),
             object(
                 vec![
@@ -422,7 +426,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
                         "port",
                         enumeration("Pmod port.", &["JA", "JB", "JC", "JD", "JE"]),
                     ),
-                    ("module", enumeration("Module kind.", &["oled"])),
+                    ("module", enumeration("Module kind.", sim_api::DEVICE_KINDS)),
                 ],
                 &["port", "module"],
             ),
@@ -431,6 +435,49 @@ pub fn tool_defs() -> Vec<ToolDef> {
             "pmod_frame",
             "The picture the module on a Pmod port shows, as a PNG (the OLED's 128x32 display), \
              with its state line.",
+            Needs(C::Pmod),
+            object(
+                vec![(
+                    "port",
+                    enumeration("Pmod port.", &["JA", "JB", "JC", "JD", "JE"]),
+                )],
+                &["port"],
+            ),
+        ),
+        t(
+            "pmod_set",
+            "Set a physical quantity a Pmod sensor measures: `temperature` in degC for `tmp2` \
+             (-55..150), `light` as the 8-bit ADC code 0..255 for `als`, `accel_x`, `accel_y`, \
+             `accel_z` in g for `acl` (+-16). The value is clamped to the model's range and \
+             reaches the PL at the next time the firmware reads the sensor, so the result is \
+             deterministic. Returns the stored value and the model state. `pmod_state` lists \
+             what a module accepts.",
+            Needs(C::Pmod),
+            object(
+                vec![
+                    (
+                        "port",
+                        enumeration("Pmod port.", &["JA", "JB", "JC", "JD", "JE"]),
+                    ),
+                    (
+                        "name",
+                        string(
+                            "Quantity name (see pmod_state).",
+                            &["temperature", "light", "accel_z"],
+                        ),
+                    ),
+                    (
+                        "value",
+                        number("New value, in the quantity's unit.", None, None, &[23.5]),
+                    ),
+                ],
+                &["port", "name", "value"],
+            ),
+        ),
+        t(
+            "pmod_state",
+            "The state of the module on a Pmod port: its settable quantities (name, value, unit, \
+             range), its registers and a one-line description.",
             Needs(C::Pmod),
             object(
                 vec![(
@@ -712,7 +759,13 @@ mod tests {
         extra.sort();
         assert_eq!(
             extra,
-            vec![&"media_source_set", &"pmod_frame", &"trace_get"],
+            vec![
+                &"media_source_set",
+                &"pmod_frame",
+                &"pmod_set",
+                &"pmod_state",
+                &"trace_get"
+            ],
             "undocumented extensions"
         );
     }
