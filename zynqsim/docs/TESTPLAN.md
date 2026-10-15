@@ -31,7 +31,7 @@ release build). Regenerate golden images: `cargo xtask golden` (review the diff)
 | `sim-api` | UART timing, switch/LED/RGB mapping, button text, echo, heartbeat and seed, input validation, snapshot rewind and equivalence, replay and tamper detection, offset reads, project validation (every field), backend inventory, server round trip, events, play/pause, restore | the control plane and the demo model behave as documented |
 | `zynqsim-mcp` | handshake and version negotiation, tool/resource/prompt listing, full scenario, gating messages, argument validation, path confinement, diagnostics, parse errors, progress and cancellation, real binary over pipes, 1500 random tool calls + 500 garbage messages | the MCP surface is safe, bounded and honest |
 | `zynqsim` (CLI) | run output and JSON, fidelity statement, record/test/trace round trip and tamper (exit 1), init, unsupported (exit 3), usage errors (exit 2), inspect, 5-process determinism, `--at` grammar | the CLI is scriptable with stable exit codes |
-| `zynqsim-gui` | model actions reach the simulation, console accumulation and restore, error surfacing, reset seed, key bindings, trace line formatting; project draft round trip, PS-only and PL-only edits, validation messages; speaker queue and resampler | GUI behaviour is correct without a window or a sound card |
+| `zynqsim-gui` | model actions reach the simulation, console accumulation and restore, error surfacing, reset seed, key bindings, trace line formatting; project draft round trip, PS-only and PL-only edits, validation messages; speaker queue, resampler and (with a device) real-time drain; synthetic-input tests of clicks, holds, keys, 3D orbit/zoom/pick and the project window | GUI behaviour is correct without a window; the sound device is exercised when present |
 | `board-zybo` (3D) | deterministic render, camera clamps, picking at three cameras, state shows in pixels | the 3D view draws and picks what the state says |
 
 ## Tests that need external engines (P1)
@@ -53,12 +53,12 @@ Rust has no stable runtime-skip, so a skipped test is reported as passed. Run wi
 
 ## Not covered (be aware)
 
-* **GUI window behaviour**: layout, pointer click/hold, orbit/zoom in the 3D view, keyboard
-  shortcuts, tooltips, file dialogs and the project window are implemented but not covered by
-  automated tests. Window smoke runs with `zynqsim-gui --screenshot out.png` (also
-  `--view3d`, `--project-window`) were inspected by hand on Windows only.
-* **Sound output**: no test opens a sound device; the queue and resampler are tested, the device
-  stream is not.
+* **GUI appearance and native dialogs**: pointer click/hold, orbit/zoom, keyboard shortcuts and
+  the project window logic are driven by synthetic input in `app::tests`; how it *looks*
+  (layout, fonts, colours) is judged only from `zynqsim-gui --screenshot out.png` (also
+  `--view3d`, `--project-window`) on Windows, and the native file dialogs are never opened by a test.
+* **Sound output**: a test opens the real output device and checks the queue drains in real time;
+  nobody has verified by ear that the sound is right.
 * **Linux and macOS**: CI passes there, but without QEMU/Vivado, so the engine tests skip; they are only exercised on the Windows development machine. macOS has no run of the XSim crates at all (Windows-only).
 * **Coverage-guided fuzzing**: `cargo fuzz` targets do not exist yet.
 * **Third-party viewers**: VCD was not opened in GTKWave and Perfetto JSON was not loaded in the

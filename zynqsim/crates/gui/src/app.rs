@@ -73,6 +73,11 @@ pub struct App {
     tex3d: Option<TextureHandle>,
     drawn3d: Option<view3d::Rendered>,
     scene: view3d::SceneCache,
+    /// Where the board picture was drawn last frame (screen points), and the
+    /// scale from layout units to points in the 2D view. Used by tests to aim
+    /// synthetic pointer input.
+    board_rect: Option<Rect>,
+    board_fit: f32,
     orbiting: bool,
     // project window
     project_open: bool,
@@ -134,6 +139,8 @@ impl App {
             tex3d: None,
             drawn3d: None,
             scene: None,
+            board_rect: None,
+            board_fit: 1.0,
             orbiting: false,
             project_open: opts_project_window,
             draft,
@@ -537,6 +544,8 @@ impl App {
 
         let (rect, resp) =
             ui.allocate_exact_size(vec2(lw * fit, lh * fit), Sense::click_and_drag());
+        self.board_rect = Some(rect);
+        self.board_fit = fit;
         let painter = ui.painter_at(rect);
         painter.image(
             tex.id(),
@@ -784,6 +793,14 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.ui(ctx);
+    }
+}
+
+impl App {
+    /// One frame of the whole UI. Separate from `eframe::App::update` so tests
+    /// can drive it with synthetic input and no window.
+    fn ui(&mut self, ctx: &egui::Context) {
         self.model.refresh();
         if self.model.generation != self.seen_generation {
             self.engine_changed();
@@ -922,6 +939,241 @@ mod tests {
         {
             assert!(key_from_label(k).is_some(), "key {k} has no egui binding");
         }
+    }
+
+    // ---- driving the whole UI with synthetic input, no window ----
+
+    use eframe::egui::{Event, Modifiers, MouseWheelUnit, PointerButton};
+    use sim_api::SimClient;
+    use sim_api::SimConfig;
+
+    struct Harness {
+        ctx: egui::Context,
+        app: App,
+        time: f64,
+    }
+
+    impl Harness {
+        fn new() -> Harness {
+            let model = Model::new(SimClient::spawn(SimConfig::default()).unwrap()).unwrap();
+            let mut h = Harness {
+                ctx: egui::Context::default(),
+                app: App::new(model, Opts::default()),
+                time: 0.0,
+            };
+            // Two frames: the first lays everything out.
+            h.frame(vec![]);
+            h.frame(vec![]);
+            h
+        }
+
+        fn frame(&mut self, events: Vec<Event>) {
+            self.time += 0.05;
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 820.0))),
+                events,
+                time: Some(self.time),
+                ..Default::default()
+            };
+            let app = &mut self.app;
+            let _ = self.ctx.run(input, |ctx| app.ui(ctx));
+        }
+
+        fn click(&mut self, p: egui::Pos2) {
+            self.frame(vec![Event::PointerMoved(p)]);
+            self.press(p);
+            self.release(p);
+        }
+
+        fn press(&mut self, p: egui::Pos2) {
+            self.frame(vec![Event::PointerButton {
+                pos: p,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            }]);
+        }
+
+        fn release(&mut self, p: egui::Pos2) {
+            self.frame(vec![Event::PointerButton {
+                pos: p,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            }]);
+        }
+
+        fn key(&mut self, key: Key, pressed: bool) {
+            self.frame(vec![Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }]);
+        }
+
+        /// Screen position of a point given in 2D layout units.
+        fn at_layout(&self, x: f32, y: f32) -> egui::Pos2 {
+            let r = self.app.board_rect.expect("the board was drawn");
+            r.min + vec2(x * self.app.board_fit, y * self.app.board_fit)
+        }
+    }
+
+    #[test]
+    fn clicking_a_switch_in_the_2d_view_toggles_it() {
+        let mut h = Harness::new();
+        let s = h.app.model.def.switches[1].clone();
+        assert!(!h.app.model.state.switches[1]);
+        h.click(h.at_layout(s.x, s.y));
+        h.frame(vec![]);
+        assert!(
+            h.app.model.state.switches[1],
+            "switch 1 is on after a click"
+        );
+        assert_eq!(h.app.model.state.leds[1], 255, "and the demo drove LED1");
+        h.click(h.at_layout(s.x, s.y));
+        h.frame(vec![]);
+        assert!(
+            !h.app.model.state.switches[1],
+            "a second click turns it off"
+        );
+        // A click on empty PCB does nothing.
+        h.click(h.at_layout(500.0, 40.0));
+        assert!(h.app.model.state.switches.iter().all(|&s| !s));
+    }
+
+    #[test]
+    fn a_button_is_held_while_the_pointer_is_down() {
+        let mut h = Harness::new();
+        let b = h.app.model.def.buttons[2].clone();
+        let p = h.at_layout(b.x, b.y);
+        h.frame(vec![Event::PointerMoved(p)]);
+        h.press(p);
+        h.frame(vec![]);
+        assert!(h.app.model.state.buttons[2], "pressed while held");
+        h.release(p);
+        h.frame(vec![]);
+        assert!(!h.app.model.state.buttons[2], "released with the pointer");
+    }
+
+    #[test]
+    fn keyboard_shortcuts_toggle_switches_and_hold_buttons() {
+        let mut h = Harness::new();
+        h.key(Key::Num1, true);
+        h.key(Key::Num1, false);
+        h.frame(vec![]);
+        assert!(h.app.model.state.switches[0], "key 1 toggles switch 0");
+        h.key(Key::Q, true);
+        h.frame(vec![]);
+        assert!(h.app.model.state.buttons[0], "Q holds button 0");
+        h.key(Key::Q, false);
+        h.frame(vec![]);
+        assert!(!h.app.model.state.buttons[0]);
+    }
+
+    #[test]
+    fn the_3d_view_orbits_zooms_and_picks() {
+        let mut h = Harness::new();
+        h.app.view_3d = true;
+        h.frame(vec![]);
+        h.frame(vec![]);
+        let rect = h.app.board_rect.expect("3D view drawn");
+        let scene_pt = |h: &Harness, hit| {
+            let sc = h.app.scene.as_ref().unwrap();
+            let (x, y) = sc.centre_of(hit).expect("control visible");
+            let r = h.app.board_rect.unwrap();
+            pos2(
+                r.min.x + x / sc.image.width as f32 * r.width(),
+                r.min.y + y / sc.image.height as f32 * r.height(),
+            )
+        };
+
+        // A click on a drawn switch toggles that switch.
+        let p = scene_pt(&h, Hit::Switch(2));
+        h.click(p);
+        h.frame(vec![]);
+        assert!(h.app.model.state.switches[2], "3D click reaches the switch");
+
+        // Dragging empty background rotates the camera.
+        let before = h.app.cam;
+        let from = rect.min + vec2(12.0, 12.0);
+        h.frame(vec![Event::PointerMoved(from)]);
+        h.press(from);
+        h.frame(vec![Event::PointerMoved(from + vec2(40.0, 25.0))]);
+        h.frame(vec![Event::PointerMoved(from + vec2(90.0, 50.0))]);
+        h.release(from + vec2(90.0, 50.0));
+        assert_ne!(h.app.cam.yaw, before.yaw, "yaw changed by the drag");
+        assert_ne!(h.app.cam.pitch, before.pitch, "pitch changed by the drag");
+        assert!(
+            h.app.model.state.switches[2],
+            "the drag did not click anything"
+        );
+
+        // Scrolling zooms.
+        let z0 = h.app.cam.zoom;
+        let centre = rect.center();
+        h.frame(vec![Event::PointerMoved(centre)]);
+        for _ in 0..4 {
+            h.frame(vec![Event::MouseWheel {
+                unit: MouseWheelUnit::Point,
+                delta: vec2(0.0, 80.0),
+                modifiers: Modifiers::NONE,
+            }]);
+        }
+        for _ in 0..6 {
+            h.frame(vec![]);
+        }
+        assert!(h.app.cam.zoom > z0, "zoom {} -> {}", z0, h.app.cam.zoom);
+    }
+
+    #[test]
+    fn the_project_window_builds_and_swaps_the_simulation() {
+        let mut h = Harness::new();
+        h.app.project_open = true;
+        h.frame(vec![]);
+        assert_eq!(h.app.model.generation, 0);
+
+        // A valid draft builds in the background and replaces the engine.
+        h.app.draft.quantum_ns = "2000".to_string();
+        h.app.build_draft("test");
+        assert!(h.app.model.loading().is_some(), "a build was started");
+        let start = Instant::now();
+        while h.app.model.generation == 0 {
+            h.frame(vec![]);
+            assert!(start.elapsed() < Duration::from_secs(20), "build finished");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(h.app.model.loading().is_none());
+        assert_eq!(
+            h.app.model.status.quantum_ps, 2_000_000,
+            "new settings apply"
+        );
+        assert!(h.app.model.load_error.is_none());
+
+        // An invalid draft is refused with a message and starts nothing.
+        h.app.draft.use_qemu = true;
+        h.app.draft.cpu0.clear();
+        h.app.build_draft("bad");
+        assert!(h.app.draft_msg.is_some());
+        assert!(h.app.model.loading().is_none());
+
+        // Opening a project file by path works the same way.
+        let file = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/demo/project.toml");
+        let g = h.app.model.generation;
+        h.app.open_project_file(file);
+        let start = Instant::now();
+        while h.app.model.generation == g {
+            h.frame(vec![]);
+            assert!(start.elapsed() < Duration::from_secs(20), "open finished");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(h.app.model.status.ps_backend, "demo");
+        // Opening a file that is not a project reports why.
+        h.app
+            .open_project_file(std::path::PathBuf::from("no/such/project.toml"));
+        assert!(h.app.draft_msg.is_some());
     }
 
     #[test]

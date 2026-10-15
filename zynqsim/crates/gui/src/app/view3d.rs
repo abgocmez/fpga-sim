@@ -57,6 +57,7 @@ impl App {
         };
 
         let (rect, resp) = ui.allocate_exact_size(avail, Sense::click_and_drag());
+        self.board_rect = Some(rect);
         ui.painter_at(rect).image(
             tex.id(),
             rect,

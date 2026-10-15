@@ -72,7 +72,9 @@ control plane drive it). Caveats are listed under *Known limits of the P1 engine
 * **QEMU sessions cannot** read CPU registers (`cpu_regs`), set breakpoints or change the
   quantum. Registers are not observable while paused: with `-icount` QEMU's sync wait holds the
   global lock, so neither the monitor nor the gdb stub can answer until the machine runs again,
-  and asking while it runs would sample at a non-deterministic point. Fixing this needs a change
+  and asking while it runs would sample at a non-deterministic point. Measured: with the machine
+  held at a sync, QEMU's `-gdb` port accepts the TCP connection and never answers `qSupported`
+  (5 s timeout). Fixing this needs a change
   inside QEMU's remote-port device (release the lock while waiting) or the native PS backend (P5).
   (Memory works because it uses the remote-port path.)
 * **Snapshots and replays re-execute**, so they cost wall time proportional to the simulated time
@@ -128,7 +130,7 @@ missing. See ADR-006.
 | Polling firmware paced with `rt::delay_us` | verified | needed: back-to-back register polls advance simulated time by ~10 ns per ~100 us of wall time |
 | GUI: project window (PS ELF cpu0/cpu1, PL RTL files and top, UART mode, media, quantum), *Load PS firmware…* / *Load PL design…*, *Open project…*, *Save project.toml…*, background build with banner | verified (model) / implemented-untested (window) | `gui::loader::tests::*`, `gui::model::tests::a_project_loads_in_the_background_and_its_audio_reaches_the_model`; window inspected by screenshot only |
 | GUI: HDMI TX picture, RX source picker, audio level, LINE IN source picker | verified (model) / implemented-untested (panels) | `gui::model::tests::hdmi_frames_reach_the_model_as_rgba`; panels inspected by screenshot |
-| GUI: speaker output (cpal), 48 kHz queue with linear resampling and a 0.5 s latency cap | queue and resampler verified; **device output implemented-untested** | `gui::audio_out::tests::*`. No automated test opens a sound device: nobody has listened to it |
+| GUI: speaker output (cpal), 48 kHz queue with linear resampling and a 0.5 s latency cap | verified up to the device; **audibility not verified** | `gui::audio_out::tests::*`, including `the_sound_device_consumes_frames_in_real_time` (opens the default output device, 0.25 s of frames drain in 0.15-2 s, nothing dropped; skips without a device, so hosted CI skips it). Whether a person hears the right sound has not been checked |
 | Scratch directories live in the system temp directory (`ZYNQSIM_WORK_DIR`), stale ones are removed after a day | verified | examples no longer grow a `.zynqsim/` folder |
 
 ### Known limits of the media models
@@ -181,9 +183,9 @@ missing. See ADR-006.
 | CLI: `mcp`, `gui` launchers | implemented-untested | not covered by a test |
 | CLI: `ctl` | stub | needs an IPC listener |
 | GUI behaviour layer (`Model`) incl. engine faults | verified | `zynqsim-gui::model::tests::*`, `app::tests::*` |
-| GUI window incl. Memory / image viewer | implemented-untested | smoke-run on Windows with `--screenshot` against the demo engine, the DMA project and the board demo (shell commands, RTL-driven LEDs, filtered image shown), inspected by eye; pointer/keyboard handling not covered by tests |
+| GUI window incl. Memory / image viewer | verified (input handling) / implemented-untested (appearance) | `zynqsim-gui::app::tests`: the whole UI is driven frame by frame with synthetic egui input and no window: 2D click toggles a switch, a button is held while the pointer is down, keyboard shortcuts, 3D click picks the switch, drag orbits, wheel zooms, the project window builds and swaps the simulation and refuses invalid drafts. Appearance is still judged only from `--screenshot` images; native file dialogs cannot be driven by tests |
 | GUI start-up flags for automated checks (`--uart`, `--mem`, `--toggle`, `--run-ms`, `--screenshot`) | implemented-untested | used by hand |
-| GUI: 2D/3D board tabs, PL bus-access list | implemented-untested | screenshots |
+| GUI: 2D/3D board tabs, PL bus-access list | verified (interaction) | `app::tests` (above) and screenshots |
 | GUI: dockable panels, CPU/PL signal/network/timeline panels, waveform/DWARF views | stub | fixed layout; panels that need a backend say so |
 
 ## Backends

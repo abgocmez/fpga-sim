@@ -295,6 +295,37 @@ mod tests {
         assert!(out.iter().any(|&s| s != 0.0), "audio resumes");
     }
 
+    /// The real sound device pulls our frames at real time. This proves the
+    /// stream runs and drains the queue at the right pace; it cannot prove
+    /// that anything is audible.
+    #[cfg(feature = "audio")]
+    #[test]
+    fn the_sound_device_consumes_frames_in_real_time() {
+        let spk = match Speaker::open() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("SKIPPED: no usable sound device: {e}");
+                return;
+            }
+        };
+        let tone = sine(440.0, 12_000); // 0.25 s
+        let t0 = std::time::Instant::now();
+        spk.push(&tone);
+        assert!(spk.queued() > 11_000, "queued {}", spk.queued());
+        let deadline = t0 + std::time::Duration::from_secs(3);
+        while spk.queued() > 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let took = t0.elapsed();
+        assert_eq!(spk.queued(), 0, "the device never drained the queue");
+        // 0.25 s of audio takes about 0.25 s to play (device buffers add a bit).
+        assert!(
+            took.as_millis() >= 150 && took.as_millis() < 2000,
+            "drained in {took:?}"
+        );
+        assert_eq!(spk.dropped(), 0);
+    }
+
     #[test]
     fn extra_channels_repeat_the_left_channel() {
         let mut q = Queue::default();
