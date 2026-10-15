@@ -15,6 +15,8 @@
 //! Fidelity is F0 plus instruction-count timing (prompt §2.4/§5): QEMU is a
 //! functional model, not a cycle-accurate Cortex-A9.
 
+pub mod net;
+
 use interop::{
     BusAccess, BusCmd, Interrupt, Packet, Session, SessionError, Sync, cap, flags, resp,
 };
@@ -68,6 +70,9 @@ pub struct QemuConfig {
     pub uart: UartMode,
     /// How long to wait for QEMU to open its sockets.
     pub connect_timeout: Duration,
+    /// Attach GEM0 to a user-mode network and capture its frames
+    /// (`work_dir/net.pcap`); see [`net`].
+    pub net: Option<net::NetConfig>,
 }
 
 impl QemuConfig {
@@ -83,6 +88,7 @@ impl QemuConfig {
             work_dir,
             uart: UartMode::File,
             connect_timeout: Duration::from_secs(20),
+            net: None,
         }
     }
 
@@ -201,6 +207,7 @@ pub struct QemuMachine {
     child: Child,
     rp: Session,
     uart: Uart,
+    net: Option<net::PcapTail>,
     pending: VecDeque<Packet>,
     held_sync: Option<Sync>,
     now_ns: u64,
@@ -267,6 +274,11 @@ impl QemuMachine {
         if let Some(e) = &cfg.elf1 {
             args.push("-device".into());
             args.push(format!("loader,file={},cpu-num=1", e.display()));
+        }
+        let net_log = cfg.work_dir.join("net.pcap");
+        let _ = std::fs::remove_file(&net_log);
+        if let Some(n) = &cfg.net {
+            args.extend(n.qemu_args(&net_log));
         }
 
         let out_log = cfg.work_dir.join("qemu.out.log");
@@ -350,6 +362,7 @@ impl QemuMachine {
             child,
             rp,
             uart,
+            net: cfg.net.is_some().then(|| net::PcapTail::new(net_log)),
             pending: VecDeque::new(),
             held_sync: None,
             now_ns: 0,
@@ -396,6 +409,16 @@ impl QemuMachine {
                 .map(|mut v| std::mem::take(&mut *v))
                 .unwrap_or_default(),
         }
+    }
+
+    /// Frames GEM0 sent or received since the last call, in order. Empty
+    /// without [`QemuConfig::net`]. Complete at every sync boundary: QEMU's
+    /// network stack runs in the vCPU thread, which is stopped there.
+    pub fn net_take(&mut self) -> Vec<net::RawFrame> {
+        self.net
+            .as_mut()
+            .map(net::PcapTail::poll)
+            .unwrap_or_default()
     }
 
     /// Sends bytes to UART1. Only available in [`UartMode::Tcp`].
