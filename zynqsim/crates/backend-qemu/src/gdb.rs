@@ -107,7 +107,21 @@ impl GdbClient {
     /// Connects to `127.0.0.1:port` and selects thread 1, which also proves
     /// the stub answers (it does while the CPUs are stopped with `-S`).
     pub fn connect(port: u16) -> Result<GdbClient, GdbError> {
-        let s = TcpStream::connect(("127.0.0.1", port))?;
+        // QEMU opens the stub while it initialises; on a loaded machine the
+        // first attempt can come before that.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let s = loop {
+            match TcpStream::connect(("127.0.0.1", port)) {
+                Ok(s) => break s,
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::ConnectionRefused
+                        && std::time::Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(e) => return Err(e.into()),
+            }
+        };
         s.set_nodelay(true)?;
         let mut c = GdbClient {
             s,
