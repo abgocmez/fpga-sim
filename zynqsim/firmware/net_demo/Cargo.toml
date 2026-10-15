@@ -1,0 +1,17 @@
+[package]
+name = "net_demo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rt = { path = "../rt" }
+# smoltcp: the Rust TCP/IP stack, standing in for the Xilinx BSP's lwIP (which is
+# C). Only what the demo needs: Ethernet, IPv4, ARP, ICMP echo, DHCP client.
+smoltcp = { version = "0.12", default-features = false, features = [
+    "proto-ipv4",
+    "proto-dhcpv4",
+    "medium-ethernet",
+    "socket-icmp",
+    "socket-dhcpv4",
+] }

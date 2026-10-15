@@ -71,6 +71,8 @@ pub struct Model {
     pub audio_level: f32,
     /// Keep audio for the speaker ([`Model::take_audio`]).
     pub audio_wanted: bool,
+    /// Ethernet counters and configuration, when the board has a network.
+    pub net: Option<sim_api::NetStatus>,
     /// Counts engine swaps, so views can drop what they cached.
     pub generation: u32,
     /// Registers of each core while the guest is stopped under the debugger.
@@ -115,6 +117,7 @@ impl Model {
             video: None,
             audio_level: 0.0,
             audio_wanted: false,
+            net: None,
             generation: 0,
             cpu_regs: [None, None],
             device_images: Vec::new(),
@@ -388,6 +391,14 @@ impl Model {
         self.refresh_media();
         self.refresh_cpu();
         self.refresh_devices();
+        self.net = if self.status.capabilities.contains(&Capability::Network) {
+            match self.client.query(Query::NetStats) {
+                Ok(Response::NetStats(n)) => Some(n),
+                _ => self.net.take(),
+            }
+        } else {
+            None
+        };
         let total = self.status.trace_len;
         let from = total.saturating_sub(TRACE_TAIL);
         if let Ok(Response::Trace { records, .. }) = self.client.query(Query::Trace {
@@ -670,6 +681,47 @@ mod tests {
         assert!(m.take_audio().is_empty(), "taken once");
         assert!(
             m.console[1].contains("RESULT: ALL PASS"),
+            "{}",
+            m.console[1]
+        );
+    }
+
+    /// A project with a `[network]` section: its Ethernet counters reach the
+    /// model (and so the side panel); the demo engine has none.
+    #[test]
+    fn ethernet_counters_reach_the_model_for_a_network_project() {
+        if sim_api::locate_binary("qemu-system-aarch64").is_none()
+            && std::env::var_os("ZYNQSIM_QEMU").is_none()
+        {
+            eprintln!("SKIPPED: needs the Xilinx QEMU");
+            return;
+        }
+        let file = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/net-demo/project.toml");
+        let draft = crate::loader::ProjectDraft::load(&file).unwrap();
+        let mut m = model();
+        assert!(m.net.is_none(), "the demo engine has no Ethernet");
+        m.start_load(
+            draft.to_project().unwrap(),
+            draft.dir.clone(),
+            "net demo".to_string(),
+        );
+        let start = std::time::Instant::now();
+        while m.generation == 0 {
+            m.refresh();
+            assert!(m.load_error.is_none(), "{:?}", m.load_error);
+            assert!(start.elapsed().as_secs() < 120, "load did not finish");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        m.run_for(10 * Ps::PER_MS);
+        m.refresh();
+        let n = m.net.clone().expect("network status");
+        assert_eq!((n.frames_tx, n.frames_rx), (7, 7), "{n:?}");
+        assert_eq!((n.arp, n.icmp, n.udp), (2, 8, 4), "{n:?}");
+        assert_eq!(n.mac, "00:0a:35:00:1e:53");
+        assert!(n.restricted);
+        assert!(
+            m.console[1].contains("ping reply seq=3 bytes=32"),
             "{}",
             m.console[1]
         );

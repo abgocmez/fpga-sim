@@ -208,6 +208,12 @@ JSON-RPC 2.0 over newline-delimited stdio (ADR-003). One tool per row of prompt 
 * **3D view.** `board-zybo::scene3d` extrudes the 2D layout into boxes, projects them through an
   orbit camera and rasterises them with the same software renderer, keeping the drawn quads for
   picking. It is an illustration for orientation and interaction, not a mechanical model.
+* **Ethernet.** A `[network]` section gives QEMU `-netdev user` + `-net nic` (bound to GEM0 by
+  the generic-FDT machine) and a `filter-dump` capture; without it QEMU gets `-net none`.
+  slirp answers inside the transmitting vCPU instruction, so frames are reproducible in content,
+  order and virtual time. `backend-qemu::net` follows the capture file at each sync, decodes the
+  frames and writes the host's own `.pcap`; `QemuEngine` keeps them (`netlog`), logs each as a
+  trace marker and answers `Query::{NetStats, NetCapture, NetPcap}` (ADR-011).
 
 ## 11. Snapshots, reset and replay of QEMU sessions
 

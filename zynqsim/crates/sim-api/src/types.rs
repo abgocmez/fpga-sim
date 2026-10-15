@@ -45,7 +45,8 @@ pub enum Capability {
     Video,
     /// Audio capture.
     Audio,
-    /// Network capture and injection.
+    /// Network capture (the board's Ethernet on a simulated LAN). Frame
+    /// injection is not offered by the user-mode network backend (ADR-011).
     Network,
     /// Pmod ports and the RGB LEDs driven by the PL design, and the devices
     /// attached to them.
@@ -469,6 +470,81 @@ pub enum Query {
         /// Hierarchical signal name.
         name: String,
     },
+    /// Frames of the board's Ethernet, oldest first, from an absolute index.
+    /// Needs [`Capability::Network`].
+    NetCapture {
+        /// Index of the first wanted frame, counted from the start of the run.
+        from: u64,
+        /// At most this many frames.
+        max: usize,
+    },
+    /// Frame counters of the board's Ethernet. Needs [`Capability::Network`].
+    NetStats,
+    /// Every retained frame as a classic `.pcap` file with virtual-time stamps.
+    /// Needs [`Capability::Network`].
+    NetPcap,
+}
+
+/// Which way a network frame travelled, from the board's point of view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NetDirection {
+    /// Sent by the board's GEM.
+    Tx,
+    /// Delivered to the board's GEM.
+    Rx,
+}
+
+/// One captured Ethernet frame.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetFrame {
+    /// Position in the capture, counted from the start of the run.
+    pub index: u64,
+    /// Virtual time the frame crossed the wire, in nanoseconds.
+    pub t_ns: u64,
+    /// Direction.
+    pub dir: NetDirection,
+    /// `arp`, `icmp`, `udp`, `tcp`, `ipv4`, `ipv6` or `other`.
+    pub kind: String,
+    /// One-line summary.
+    pub summary: String,
+    /// False when an IPv4 header or ICMP checksum does not verify.
+    pub checksums_ok: bool,
+    /// The frame bytes (no FCS).
+    pub data: Vec<u8>,
+}
+
+/// Frame counters and the network's configuration.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetStatus {
+    /// MAC address given to GEM0.
+    pub mac: String,
+    /// The simulated LAN, `a.b.c.d/len`.
+    pub subnet: String,
+    /// The LAN's router/host/DHCP address.
+    pub gateway: String,
+    /// True when the guest is isolated from the machine's real network.
+    pub restricted: bool,
+    /// Frames the board sent.
+    pub frames_tx: u64,
+    /// Frames delivered to the board.
+    pub frames_rx: u64,
+    /// Bytes the board sent.
+    pub bytes_tx: u64,
+    /// Bytes delivered to the board.
+    pub bytes_rx: u64,
+    /// ARP frames, both directions.
+    pub arp: u64,
+    /// ICMP frames, both directions.
+    pub icmp: u64,
+    /// UDP frames, both directions.
+    pub udp: u64,
+    /// TCP frames, both directions.
+    pub tcp: u64,
+    /// Everything else.
+    pub other: u64,
+    /// Frames whose IPv4 header or ICMP checksum did not verify.
+    pub bad_checksums: u64,
 }
 
 /// Simulation status.
@@ -652,6 +728,21 @@ pub enum Response {
         /// The bytes.
         data: Vec<u8>,
     },
+    /// A page of captured Ethernet frames.
+    Net {
+        /// The frames.
+        frames: Vec<NetFrame>,
+        /// Index to pass as `from` next time.
+        next: u64,
+        /// Frames captured so far.
+        total: u64,
+        /// Index of the oldest frame still retained.
+        oldest: u64,
+    },
+    /// Ethernet counters.
+    NetStats(NetStatus),
+    /// A `.pcap` file.
+    Pcap(Vec<u8>),
 }
 
 /// A notification from the simulation thread.

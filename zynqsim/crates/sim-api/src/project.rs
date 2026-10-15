@@ -136,6 +136,96 @@ pub struct DebugSection {
     pub breakpoints: Vec<String>,
 }
 
+/// `[network]` section: the board's PS Gigabit Ethernet (GEM0) and the
+/// simulated LAN it is plugged into (ADR-011).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkSection {
+    /// Attach the NIC. `false` keeps the section but leaves GEM0 unconnected.
+    #[serde(default = "yes")]
+    pub enable: bool,
+    /// MAC address given to GEM0 (its address register's reset value).
+    /// Default `00:0a:35:00:1e:53`.
+    #[serde(default)]
+    pub mac: Option<String>,
+    /// The simulated LAN, `a.b.c.d/len` with a prefix of 8 to 27.
+    /// Default `10.0.2.0/24`.
+    #[serde(default)]
+    pub subnet: Option<String>,
+    /// The LAN's router/host/DHCP-server address, which answers ARP and ping.
+    /// Default: the subnet's address plus 2.
+    #[serde(default)]
+    pub gateway: Option<String>,
+    /// Isolate the guest from the machine's real network (default). `false`
+    /// lets it reach hosts the machine can reach, which is not deterministic.
+    #[serde(default = "yes")]
+    pub restrict: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl NetworkSection {
+    /// The network configuration this section asks for, or every problem
+    /// found as `(field, message)` pairs.
+    pub fn config(&self) -> Result<backend_qemu::net::NetConfig, Vec<(String, String)>> {
+        use backend_qemu::net::{NetConfig, parse_cidr, parse_mac};
+        use std::net::Ipv4Addr;
+        let mut problems: Vec<(String, String)> = Vec::new();
+        let mut cfg = NetConfig {
+            restrict: self.restrict,
+            ..NetConfig::default()
+        };
+        if let Some(m) = &self.mac {
+            match parse_mac(m) {
+                Ok(v) => cfg.mac = v,
+                Err(e) => problems.push(("network.mac".into(), e)),
+            }
+        }
+        if let Some(s) = &self.subnet {
+            match parse_cidr(s) {
+                Ok((net, len)) => {
+                    cfg.subnet = net;
+                    cfg.prefix = len;
+                    if (8..=27).contains(&len) {
+                        let mask = u32::MAX << (32 - u32::from(len));
+                        cfg.gateway = Ipv4Addr::from((u32::from(net) & mask).wrapping_add(2));
+                    }
+                }
+                Err(e) => problems.push(("network.subnet".into(), e)),
+            }
+        }
+        if let Some(g) = &self.gateway {
+            match g.trim().parse::<Ipv4Addr>() {
+                Ok(a) => cfg.gateway = a,
+                Err(_) => problems.push((
+                    "network.gateway".into(),
+                    format!("`{g}` is not an IPv4 address like 10.0.2.2"),
+                )),
+            }
+        }
+        // Consistency checks use the defaults for fields that failed to
+        // parse, so skip a finding whose own input was already rejected, and
+        // the address checks when the network itself is unusable.
+        let rejected = |problems: &[(String, String)], f: &str| {
+            problems.iter().any(|(p, _)| p == &format!("network.{f}"))
+        };
+        let subnet_unusable = rejected(&problems, "subnet");
+        for (f, m) in cfg.problems() {
+            if rejected(&problems, f) || (subnet_unusable && f == "gateway") {
+                continue;
+            }
+            problems.push((format!("network.{f}"), m));
+        }
+        if problems.is_empty() {
+            Ok(cfg)
+        } else {
+            Err(problems)
+        }
+    }
+}
+
 /// A `project.toml` (prompt §12).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -184,6 +274,9 @@ pub struct Project {
     /// Debugger.
     #[serde(default)]
     pub debug: Option<DebugSection>,
+    /// The board's Ethernet and its simulated LAN.
+    #[serde(default)]
+    pub network: Option<NetworkSection>,
 }
 
 /// Parses a video source description (see [`MediaSection::video_in`]).
@@ -482,6 +575,17 @@ impl Project {
                     } else {
                         "native".to_string()
                     },
+                    net: match &self.network {
+                        Some(n) if n.enable => Some(n.config().map_err(|p| {
+                            ApiError::invalid_argument(
+                                p.iter()
+                                    .map(|(f, m)| format!("{f}: {m}"))
+                                    .collect::<Vec<_>>()
+                                    .join("; "),
+                            )
+                        })?),
+                        _ => None,
+                    },
                 };
                 let mut engine = crate::QemuEngine::new(&spec)?;
                 if let Some(m) = &self.media {
@@ -651,6 +755,34 @@ impl Project {
 
         if self.sim.quantum_ns == 0 {
             d.push(err("sim.quantum_ns", "must be non-zero"));
+        }
+
+        if let Some(n) = &self.network {
+            if n.enable {
+                if self.backends.ps != "qemu" {
+                    d.push(err(
+                        "network",
+                        "the board's Ethernet is a PS peripheral and needs `backends.ps = \"qemu\"`",
+                    ));
+                }
+                if let Err(problems) = n.config() {
+                    for (field, message) in problems {
+                        d.push(err(&field, message));
+                    }
+                }
+                if !n.restrict {
+                    d.push(warn(
+                        "network.restrict",
+                        "the guest can reach the real network: traffic and timing then depend \
+                         on the host, and runs are not reproducible",
+                    ));
+                }
+            } else if n.mac.is_some() || n.subnet.is_some() || n.gateway.is_some() {
+                d.push(warn(
+                    "network",
+                    "ignored: `enable = false` leaves GEM0 unconnected",
+                ));
+            }
         }
 
         if let Some(boot) = &self.boot {
@@ -1159,6 +1291,74 @@ files = ["rtl/*.v"]
         assert!(
             d.iter()
                 .any(|x| x.field == "cpu0.elf" && x.severity == Severity::Warning)
+        );
+    }
+
+    const NET_BASE: &str = "schema_version = 1\n[board]\nname = \"zybo-z7-20\"\n\
+        [backends]\nps = \"qemu\"\n[cpu0]\nelf = \"fw.elf\"\n";
+
+    fn net_findings(extra: &str) -> Vec<(String, Severity)> {
+        let dir = std::env::temp_dir().join(format!("zs-netproj-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("fw.elf"), b"x").unwrap();
+        let p = Project::from_toml(&format!("{NET_BASE}{extra}")).unwrap();
+        p.validate(&dir)
+            .into_iter()
+            .map(|d| (d.field, d.severity))
+            .collect()
+    }
+
+    #[test]
+    fn network_section_defaults_and_overrides_become_a_configuration() {
+        let p = Project::from_toml(&format!("{NET_BASE}[network]\n")).unwrap();
+        let n = p.network.unwrap();
+        assert!(n.enable && n.restrict);
+        let c = n.config().unwrap();
+        assert_eq!(c, backend_qemu::net::NetConfig::default());
+
+        // A subnet alone moves the gateway with it (network address + 2).
+        let n: NetworkSection =
+            toml::from_str("subnet = \"192.168.50.0/24\"\nmac = \"02:aa:bb:cc:dd:ee\"").unwrap();
+        let c = n.config().unwrap();
+        assert_eq!(c.gateway.to_string(), "192.168.50.2");
+        assert_eq!(c.mac, [0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+        assert!(c.restrict);
+    }
+
+    #[test]
+    fn network_section_problems_are_reported_with_their_fields() {
+        assert!(net_findings("[network]\n").is_empty());
+        let f =
+            net_findings("[network]\nmac = \"nope\"\nsubnet = \"10.0.2.0/33\"\ngateway = \"x\"\n");
+        for want in ["network.mac", "network.subnet", "network.gateway"] {
+            assert!(
+                f.iter().any(|(n, s)| n == want && *s == Severity::Error),
+                "{f:?}"
+            );
+        }
+        // Consistency between the fields is checked once each parses.
+        let f = net_findings("[network]\nsubnet = \"10.0.2.0/24\"\ngateway = \"10.0.9.2\"\n");
+        assert!(f.iter().any(|(n, _)| n == "network.gateway"), "{f:?}");
+        // Open networking is allowed but flagged.
+        let f = net_findings("[network]\nrestrict = false\n");
+        assert_eq!(f, vec![("network.restrict".to_string(), Severity::Warning)]);
+        // Disabled sections ignore their settings, with a note.
+        let f = net_findings("[network]\nenable = false\nmac = \"zz\"\n");
+        assert_eq!(f, vec![("network".to_string(), Severity::Warning)]);
+        // Unknown keys are rejected like everywhere else.
+        assert!(Project::from_toml(&format!("{NET_BASE}[network]\nspeed = 100\n")).is_err());
+    }
+
+    #[test]
+    fn the_nic_needs_a_cpu_backend() {
+        let p =
+            Project::from_toml("schema_version = 1\n[board]\nname = \"zybo-z7-20\"\n[network]\n")
+                .unwrap();
+        let d = p.validate(Path::new("."));
+        assert!(
+            d.iter()
+                .any(|x| x.field == "network" && x.severity == Severity::Error),
+            "{d:?}"
         );
     }
 }

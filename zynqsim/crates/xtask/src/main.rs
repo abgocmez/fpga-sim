@@ -142,6 +142,7 @@ const FIRMWARE: &[(&str, &str)] = &[
     ("als_demo", "rust_als.elf"),
     ("acl_demo", "rust_acl.elf"),
     ("pcam_demo", "rust_pcam.elf"),
+    ("net_demo", "rust_net.elf"),
 ];
 
 /// Builds `firmware/` (its own workspace) and copies the ELFs into `fixtures/elf`.

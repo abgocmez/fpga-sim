@@ -13,6 +13,7 @@ mod duration;
 mod elf;
 mod engine;
 mod error;
+mod netlog;
 mod project;
 mod qemu_engine;
 mod recording;
@@ -27,7 +28,7 @@ pub use engine::Engine;
 pub use error::{ApiError, ErrorCode};
 pub use project::{
     BackendsSection, BoardSection, BootSection, CpuSection, DebugSection, Diagnostic, MediaSection,
-    Project, RtlSection, Severity, SimSection, parse_audio_spec, parse_video_spec,
+    NetworkSection, Project, RtlSection, Severity, SimSection, parse_audio_spec, parse_video_spec,
     starter_project_toml,
 };
 pub use qemu_engine::{NATIVE_MODELS, NativeInstance, QemuEngine, QemuSpec, RtlSpec};
@@ -48,7 +49,8 @@ pub use tools::{
 pub use types::{
     AudioSpec, BreakKind, BreakpointInfo, Capability, Command, CpuRegs, DebugStatus,
     DeviceRegisterInfo, DeviceStatus, DeviceValueInfo, DisasmLine, Event, Fidelity, Input,
-    MediaStatus, Query, Response, Status, SymbolInfo, TraceFormat, VideoSpec,
+    MediaStatus, NetDirection, NetFrame, NetStatus, Query, Response, Status, SymbolInfo,
+    TraceFormat, VideoSpec,
 };
 
 /// Board definition, state, rendering and hit-testing.

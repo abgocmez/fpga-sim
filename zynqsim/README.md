@@ -79,6 +79,21 @@ in DDR that the PL scans out to HDMI while capturing the picture you supply. In 
 same projects: the **HDMI** and **Audio codec** panels show the picture and level, *listen on the
 speakers* plays the codec output, and the source pickers change what the board receives.
 
+### Ethernet (ping)
+
+```
+zynqsim run --project examples/net-demo/project.toml --for 10ms --pcap net.pcap
+```
+
+Rust firmware (`firmware/net_demo`: a Cadence GEM driver under smoltcp, the Rust counterpart of
+lwIP) gets an address by DHCP and pings the simulated network's gateway four times; expect
+`ping reply seq=0 bytes=32 ...` ... `RESULT: ALL PASS`, and a `net.pcap` (open it in Wireshark)
+with the 14 frames and their virtual-time stamps. A project gets a NIC only with a `[network]`
+section (`mac`, `subnet`, `gateway`, `restrict`); the network is QEMU's user-mode stack, so it
+answers ARP, ping and DHCP itself and every run produces the same frames. In the GUI the
+**Ethernet (GEM0)** panel shows the counters; in MCP `net_capture` returns the frames.
+Design and limits: [docs/adr/011-ethernet.md](docs/adr/011-ethernet.md).
+
 ### Load your own PS firmware and PL design
 
 In the GUI use **Open project…**, or **Project…** to set the Cortex-A9 ELF and the RTL files
@@ -140,8 +155,8 @@ what the board receives.
 | `crates/` | `sim-core`, `trace`, `board-zybo`, `devices`, `sim-api`, `mcp`, `cli`, `gui`, `xtask`, `interop`, `pl-api`, `pl-native`, `backend-qemu`, `backend-rtl-xsim`, `xsim-dpi` |
 | `boards/` | board descriptions (TOML) |
 | `docs/` | `DESIGN.md`, `STATUS.md`, `TESTPLAN.md`, `adr/` |
-| `examples/` | `demo`, `math-qemu`, `math-debug`, `dma-regression`, `board-demo`, `audio-demo`, `hdmi-demo`, `irq-demo`, `oled-demo`, `rgb-demo`, `rust-hello` projects |
-| `firmware/` | Rust `no_std` Cortex-A9 firmware (`hello`, `audio_demo`, `hdmi_demo`, `irq_demo`, `oled_demo`, `rgb_demo`); its own workspace, built by `cargo xtask firmware` |
+| `examples/` | `demo`, `math-qemu`, `math-debug`, `dma-regression`, `board-demo`, `audio-demo`, `hdmi-demo`, `irq-demo`, `oled-demo`, `rgb-demo`, `rust-hello`, `net-demo` projects |
+| `firmware/` | Rust `no_std` Cortex-A9 firmware (`hello`, `audio_demo`, `hdmi_demo`, `irq_demo`, `oled_demo`, `rgb_demo`, `net_demo`); its own workspace, built by `cargo xtask firmware` |
 | `fixtures/` | prototype firmware ELFs, the prebuilt Rust ELFs (`rust_*.elf`) and the RTL used by the examples and tests |
 
 Requirements: [../docs/RUST_SOC_SIM_PROMPT.md](../docs/RUST_SOC_SIM_PROMPT.md).

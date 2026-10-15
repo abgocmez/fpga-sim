@@ -76,6 +76,10 @@ enum Cmd {
         /// After the run, save the newest complete HDMI TX frame as PNG.
         #[arg(long = "video-out")]
         video_out: Option<PathBuf>,
+        /// After the run, save the board's Ethernet frames as a `.pcap` file
+        /// (needs a `[network]` section; timestamps are virtual time).
+        #[arg(long)]
+        pcap: Option<PathBuf>,
         /// After the run, save the codec DAC audio (newest 10 s at most) as WAV.
         #[arg(long = "audio-out")]
         audio_out: Option<PathBuf>,
@@ -218,6 +222,7 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
             audio_out,
             device_out,
             device_set,
+            pcap,
         } => cmd_run(
             json,
             RunArgs {
@@ -237,6 +242,7 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
                 audio_out,
                 device_out,
                 device_set,
+                pcap,
             },
         ),
         Cmd::Test { recording } => cmd_test(json, &recording),
@@ -290,6 +296,7 @@ struct RunArgs {
     audio_out: Option<PathBuf>,
     device_out: Vec<String>,
     device_set: Vec<String>,
+    pcap: Option<PathBuf>,
 }
 
 /// `JA`..`JE` (any case) to the Pmod port index 0..=4.
@@ -585,6 +592,17 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
         }
     }
 
+    if let Some(p) = &a.pcap {
+        match engine.query(&Query::NetPcap, false)? {
+            Response::Pcap(bytes) => write_file(p, &bytes)?,
+            r => return Err(fail(2, format!("unexpected response {r:?}"))),
+        }
+    }
+    let network = match engine.query(&Query::NetStats, false) {
+        Ok(Response::NetStats(n)) => Some(n),
+        _ => None,
+    };
+
     let st = engine.status(false);
     let mut uart = |port: u8| -> String {
         match engine.query(
@@ -646,6 +664,7 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
                 "devices": st.devices,
                 "device_state": device_state,
                 "rgb": engine.board().rgb,
+                "network": network,
                 "leds": leds,
                 "uart": { "0": u0, "1": u1 },
                 "inputs": recording.as_ref().map(|r| r.entries.len()),
@@ -676,6 +695,24 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
             println!(
                 "audio out : {} frame(s), peak {}, {} codec register write(s)",
                 m.audio_frames, m.audio_peak, m.codec_writes
+            );
+        }
+        if let Some(n) = &network {
+            println!(
+                "ethernet  : {} on {} via {}, tx {} frame(s) / {} B, rx {} frame(s) / {} B \
+                 (arp {}, icmp {}, udp {}, tcp {}, other {})",
+                n.mac,
+                n.subnet,
+                n.gateway,
+                n.frames_tx,
+                n.bytes_tx,
+                n.frames_rx,
+                n.bytes_rx,
+                n.arp,
+                n.icmp,
+                n.udp,
+                n.tcp,
+                n.other
             );
         }
         let on: Vec<String> = engine

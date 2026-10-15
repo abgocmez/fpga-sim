@@ -17,6 +17,7 @@
 
 mod gdb;
 pub use gdb::{BreakKind, GdbClient, GdbError, Regs, Stop};
+pub mod net;
 
 use interop::{
     BusAccess, BusCmd, Interrupt, Packet, Session, SessionError, Sync, cap, flags, resp,
@@ -77,6 +78,9 @@ pub struct QemuConfig {
     /// **not** timing-reproducible: attaching shifts virtual time by up to a
     /// few microseconds and between runs by a few hundred nanoseconds.
     pub debug: bool,
+    /// Attach GEM0 to a user-mode network and capture its frames
+    /// (`work_dir/net.pcap`); see [`net`].
+    pub net: Option<net::NetConfig>,
 }
 
 impl QemuConfig {
@@ -93,6 +97,7 @@ impl QemuConfig {
             uart: UartMode::File,
             connect_timeout: Duration::from_secs(20),
             debug: false,
+            net: None,
         }
     }
 
@@ -269,6 +274,7 @@ pub struct QemuMachine {
     child: Child,
     rp: Session,
     uart: Uart,
+    net: Option<net::PcapTail>,
     pending: VecDeque<Packet>,
     held_sync: Option<Sync>,
     now_ns: u64,
@@ -347,6 +353,15 @@ impl QemuMachine {
         if let Some(e) = &cfg.elf1 {
             args.push("-device".into());
             args.push(format!("loader,file={},cpu-num=1", e.display()));
+        }
+        let net_log = cfg.work_dir.join("net.pcap");
+        let _ = std::fs::remove_file(&net_log);
+        match &cfg.net {
+            Some(n) => args.extend(n.qemu_args(&net_log)),
+            // QEMU otherwise attaches an implicit user-mode network (and, with
+            // `restrict` off, a path to the host's network) that the host
+            // could neither see nor reproduce.
+            None => args.extend(["-net".to_string(), "none".to_string()]),
         }
 
         let out_log = cfg.work_dir.join("qemu.out.log");
@@ -430,6 +445,7 @@ impl QemuMachine {
             child,
             rp,
             uart,
+            net: cfg.net.is_some().then(|| net::PcapTail::new(net_log)),
             pending: VecDeque::new(),
             held_sync: None,
             now_ns: 0,
@@ -496,6 +512,16 @@ impl QemuMachine {
                 .map(|mut v| std::mem::take(&mut *v))
                 .unwrap_or_default(),
         }
+    }
+
+    /// Frames GEM0 sent or received since the last call, in order. Empty
+    /// without [`QemuConfig::net`]. Complete at every sync boundary: QEMU's
+    /// network stack runs in the vCPU thread, which is stopped there.
+    pub fn net_take(&mut self) -> Vec<net::RawFrame> {
+        self.net
+            .as_mut()
+            .map(net::PcapTail::poll)
+            .unwrap_or_default()
     }
 
     /// Sends bytes to UART1. Only available in [`UartMode::Tcp`].

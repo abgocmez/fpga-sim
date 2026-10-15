@@ -9,6 +9,8 @@ use sim_api::{
 };
 use std::path::{Path, PathBuf};
 
+mod net;
+
 /// Longest simulated span a single `sim_run` may cover.
 const MAX_RUN_PS: u64 = 3600 * Ps::PER_S;
 /// Progress is reported, and cancellation checked, every simulated second.
@@ -564,6 +566,8 @@ impl McpServer {
                     r => Err(unexpected(&r)),
                 }
             }
+            "net_capture" => self.net_capture(a),
+            "net_send" => self.net_send(a),
             "board_screenshot" => {
                 let scale = a.get("scale").and_then(Value::as_f64).unwrap_or(1.0) as f32;
                 match self.client.query(Query::Screenshot { scale })? {
@@ -585,7 +589,13 @@ impl McpServer {
             "status_get" => {
                 let st = self.client.status()?;
                 let project = self.project.as_ref().map(|p| p.path.display().to_string());
-                Ok(Out::json(json!({ "status": st, "project": project })))
+                let mut out = json!({ "status": st, "project": project });
+                if st.capabilities.contains(&sim_api::Capability::Network) {
+                    if let Response::NetStats(n) = self.client.query(Query::NetStats)? {
+                        out["network"] = json!(n);
+                    }
+                }
+                Ok(Out::json(out))
             }
             "backend_list" => Ok(Out::json(json!({ "backends": detect_backends() }))),
             // Reaching here means the gate passed but no handler exists: a

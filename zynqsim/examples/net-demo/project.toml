@@ -1,0 +1,32 @@
+# PS Ethernet (GEM0): Rust firmware (smoltcp) brings the Cadence GEM up, gets an
+# address by DHCP and pings the simulated network's gateway. No PL is needed.
+# Rebuild the firmware with `cargo xtask firmware` (the ELF is in fixtures/elf).
+#
+#   zynqsim run --project examples/net-demo/project.toml --for 10ms --pcap net.pcap
+#
+# `net.pcap` opens in Wireshark: DHCP, ARP and four ICMP echo pairs, with
+# virtual-time stamps (the same bytes on every run).
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "demo"          # no PL
+
+[sim]
+quantum_ns = 1000
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_net.elf"
+
+[network]
+# Every key is optional; these are the defaults.
+mac = "00:0a:35:00:1e:53"     # GEM0 address register (Xilinx OUI)
+subnet = "10.0.2.0/24"        # the simulated LAN
+gateway = "10.0.2.2"          # router / DHCP server, answers ARP and ping
+restrict = true               # the guest cannot reach the real network

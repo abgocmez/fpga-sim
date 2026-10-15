@@ -6,7 +6,8 @@ Status values (prompt §1): **verified** (a named test proves it), **implemented
 
 Current milestone: **P1 reached locally** (see the exit criterion below). P0 is done. Parts of
 P2 (board devices) exist: the audio codec and HDMI connectors as pin-level models in the RTL
-testbench, with host audio/video, and a 3D board view. The remaining P2 devices are still drawn
+testbench, with host audio/video, a 3D board view, and the PS Ethernet (GEM0) on QEMU's
+user-mode network with a Rust ping firmware and `.pcap` export (see *Ethernet*). The remaining P2 devices are still drawn
 only.
 
 * `demo` engine (fidelity `demo`): built-in scripted model, no CPU, no RTL. Control-plane and
@@ -178,6 +179,47 @@ missing. See ADR-006.
   dropped. XSim runs at roughly 0.3-0.6 s of wall time per simulated millisecond with the media
   design, so real time is not reachable.
 * The media DPI/remote-port device numbers (14-18) are this project's convention.
+
+## Ethernet (PS GEM0)
+
+The Zybo's PS Gigabit Ethernet on QEMU's user-mode network, with every frame visible to the host.
+Needs the Xilinx QEMU; no PL, no XSim. Design, alternatives and limits: ADR-011. This section
+supersedes the "PHY" mention in the Board table's stub row and the "network" mention in the
+front-end table's `unsupported` row.
+
+| Feature | Status | Evidence / note |
+|---|---|---|
+| `[network]` (`enable`, `mac`, `subnet`, `gateway`, `restrict`) attaches GEM0 to a simulated LAN (`-netdev user` + `filter-dump`); without it the NIC is unplugged (`-net none`) instead of QEMU's implicit user-mode network | verified | `backend-qemu::net::{qemu_arguments_bind_gem0_and_mirror_to_the_capture_file, an_unplugged_nic_gets_no_answers_and_captures_nothing}`. **Behaviour change**: projects without `[network]` used to get that implicit network, invisible to the host |
+| Rust firmware (`firmware/net_demo`, prebuilt `fixtures/elf/rust_net.elf`, `examples/net-demo`): MDIO PHY scan, reset and auto-negotiation, descriptor rings, polled RX/TX, **smoltcp** ARP + DHCP + ICMP echo; four pings with 32 bytes, payload echoed unchanged | verified | `backend-qemu::net::firmware_pings_the_gateway_and_every_frame_is_captured` (14 frames: 4 DHCP, ARP pair, 4 echo pairs), `zynqsim::net::net_demo_pings_the_gateway_and_exports_a_matching_pcap`. smoltcp stands in for the BSP's lwIP, which is C; the Xilinx lwIP/xemacps applications themselves were **not** run |
+| Frames visible to the host: classified (ARP/ICMP/UDP/TCP), IPv4 and ICMP checksums verified, summarised, counted, 1 us virtual-time stamps; trace markers and `net.*_frames` signals; `.pcap` export | verified | `backend-qemu::net::tests::*` (decoder, malformed frames, partial reads, time recovery, pcap writer), `zynqsim::net::{net_demo_*, network_frames_are_in_the_trace_and_the_vcd}` |
+| **Determinism**: same project, same frames, same bytes, same virtual times, same measured round trips, same `.pcap` bytes, same trace digest | verified | `backend-qemu::net::{two_runs_produce_identical_frames_times_and_uart, frame_times_do_not_depend_on_how_the_run_is_sliced}` (7 us vs 1 ms slices give identical frames and times), `zynqsim::net::two_processes_agree_on_digest_pcap_and_uart`. Holds because slirp answers inside the transmitting instruction |
+| Record/replay, snapshot/restore (by re-execution) of a network session | verified | `zynqsim::net::a_network_session_records_and_replays_to_the_same_digest`, `mcp::net::network_project_through_mcp` (snapshot, restore, `session_replay`) |
+| `[network]` validation: MAC, subnet 8..=27, gateway inside it and not .3/.15/network/broadcast, needs `ps = "qemu"`, unknown keys, `restrict = false` warns | verified | `sim-api::project::tests::network_*`, `zynqsim::net::a_bad_network_section_is_rejected_with_every_field_listed` |
+| `mac`, `subnet`, `gateway` reach the firmware and the wire (DHCP lease, ARP, source MAC) | verified | `backend-qemu::net::a_custom_subnet_and_mac_reach_the_firmware_and_the_wire` |
+| CLI `run --pcap FILE`, counters in `run` output (`network`) | verified | `zynqsim::net::*`; `--pcap` without `[network]` exits 3 |
+| MCP `net_capture` (paged frames, counters), counters in `status_get`, gated by `Capability::Network` | verified | `mcp::net::{network_project_through_mcp, net_tools_are_refused_with_the_reason_without_a_network}` |
+| MCP `net_send` (inject a frame) | stub | answers `unsupported` with the reason: slirp has no injection point (ADR-011) |
+| GUI side panel "Ethernet (GEM0)": MAC, LAN, frame and byte counters | verified (model) / implemented-untested (panel) | `gui::model::tests::ethernet_counters_reach_the_model_for_a_network_project`; the panel was inspected in a `--screenshot` run only |
+| `restrict = false` (guest may reach the host's network) | implemented-untested | only "DHCP then offers a router and the gateway still answers" is tested (`backend-qemu::net::an_open_network_offers_a_router_and_the_gateway_still_answers`); traffic that leaves the simulation is not reproducible |
+| GEM driver register/descriptor layouts | implemented-untested against hardware | `VERIFY:` from memory of `xemacps_hw.h` / UG585; what is verified is that QEMU's `cadence_gem` model accepts them |
+
+### Known limits of the Ethernet model
+
+* **QEMU's GEM and PHY models, not the board's.** The firmware talks to the `cadence_gem` model
+  and its Marvell-like PHY (MDIO address 7, ID `0141:0e50`); the RTL8211E, RGMII timing and the
+  MIO pin mux are not simulated. The PHY reports link up with or without a network (no cable
+  model), so link status says nothing about the cable. GEM1 exists in QEMU and is wired to
+  nothing (its "no peer" warning in `qemu.err.log` is expected).
+* **No host-side injection and no custom peer** (UDP echo, loss, latency): the network is
+  slirp's (ARP, ICMP echo, DHCP, DNS, NAT); a Rust peer would need a socket backend behind a hub
+  and would make only frame content/order, not arrival instruction, reproducible.
+* Not exercised: interrupt-driven RX/TX, jumbo frames, checksum offload, priority queues, TCP
+  and UDP application traffic, port forwarding (`hostfwd`), the second GEM, IPv6.
+* The A9 global timer ticks at 100 MHz in this QEMU (silicon: 333 MHz at stock clocking,
+  `VERIFY:` UG585); the demo firmware's microsecond figures use the QEMU value (`GT_HZ`).
+* Timestamps have QEMU's 1 us resolution. The capture retains the newest 8192 frames (counters
+  and the trace digest cover all of them).
+* The Ethernet link/activity LEDs on the board picture and the 3D view are not driven.
 
 ## Board (`board-zybo`)
 
