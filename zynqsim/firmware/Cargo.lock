@@ -3,6 +3,20 @@
 version = 4
 
 [[package]]
+name = "acl_demo"
+version = "0.1.0"
+dependencies = [
+ "rt",
+]
+
+[[package]]
+name = "als_demo"
+version = "0.1.0"
+dependencies = [
+ "rt",
+]
+
+[[package]]
 name = "audio_demo"
 version = "0.1.0"
 dependencies = [
@@ -47,3 +61,10 @@ dependencies = [
 [[package]]
 name = "rt"
 version = "0.1.0"
+
+[[package]]
+name = "tmp2_demo"
+version = "0.1.0"
+dependencies = [
+ "rt",
+]

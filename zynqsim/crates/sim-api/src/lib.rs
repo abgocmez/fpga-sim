@@ -46,14 +46,17 @@ pub use tools::{
     find_vivado, locate, locate_binary,
 };
 pub use types::{
-    AudioSpec, BreakKind, BreakpointInfo, Capability, Command, CpuRegs, DebugStatus, DeviceStatus,
-    DisasmLine, Event, Fidelity, Input, MediaStatus, Query, Response, Status, SymbolInfo,
-    TraceFormat, VideoSpec,
+    AudioSpec, BreakKind, BreakpointInfo, Capability, Command, CpuRegs, DebugStatus,
+    DeviceRegisterInfo, DeviceStatus, DeviceValueInfo, DisasmLine, Event, Fidelity, Input,
+    MediaStatus, Query, Response, Status, SymbolInfo, TraceFormat, VideoSpec,
 };
 
 /// Board definition, state, rendering and hit-testing.
 pub use board_zybo as board;
 pub use devices::font5x7;
+/// Device kinds `[devices]` and `pmod_attach` accept, and the names of the
+/// quantities a kind lets the host set.
+pub use devices::{KINDS as DEVICE_KINDS, value_names as device_value_names};
 pub use pl_api::media::{SAMPLE_RATE as AUDIO_SAMPLE_RATE, parse_wav};
 /// Picosecond time type.
 pub use sim_core::Ps;

@@ -762,6 +762,19 @@ impl<T: Transport> Dpi<T> {
         }));
     }
 
+    /// Reports the levels of pin group `group` and waits for the host's
+    /// answer: the levels the devices on the port drive into the PL's input
+    /// pins of that group (1 = released). No simulated time passes, so the
+    /// answer is in effect in the instant of the change (ADR-009). A host
+    /// that is gone, or has no device model, answers `0xFF`.
+    pub fn pin_xchg(&mut self, group: u32, levels: u32, now_ns: u64) -> u8 {
+        let addr = u64::from(group & 0xFF) | u64::from(levels & 0xFF) << 8;
+        match self.host_read(DEV_PIN_OUT, addr, 1, 0, now_ns) {
+            Some(d) if d.len() == 1 => d[0],
+            _ => 0xFF,
+        }
+    }
+
     /// The latest host-driven levels of pin group `group`. Pumps packets that
     /// are already waiting, like [`Dpi::board_inputs`].
     pub fn pin_in(&mut self, group: u32) -> u8 {
@@ -1317,6 +1330,29 @@ mod tests {
         }
         assert_eq!(got, (0xF0, 0x11, 0));
         assert_eq!(dpi.pin_in(99), 0, "unknown groups read as zero");
+    }
+
+    #[test]
+    fn pin_exchange_blocks_for_the_host_answer() {
+        let (mut dpi, mut host) = pair();
+        let t = std::thread::spawn(move || {
+            serve_read(&mut host, DEV_PIN_OUT, |addr, len, _| {
+                assert_eq!(len, 1);
+                // group 3, levels 0b1010_0110: answer with the complement.
+                assert_eq!(addr, 3 | 0b1010_0110 << 8);
+                vec![!0b1010_0110]
+            });
+            // The second exchange is answered with the wrong length.
+            serve_read(&mut host, DEV_PIN_OUT, |_, _, _| vec![]);
+            host
+        });
+        assert_eq!(dpi.pin_xchg(3, 0b1010_0110, 55), 0b0101_1001);
+        assert_eq!(
+            dpi.pin_xchg(0, 0, 56),
+            0xFF,
+            "a bad answer reads as released"
+        );
+        let _ = t.join().unwrap();
     }
 
     /// Answers one host-side read with `data` produced by `f(addr, len)`.

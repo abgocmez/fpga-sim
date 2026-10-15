@@ -88,7 +88,10 @@ pub const DEV_BOARD_IN: u32 = 12;
 pub const DEV_BOARD_OUT: u32 = 13;
 /// Device number the testbench side uses to report the levels of a *pin
 /// group* (a Pmod port or the RGB LEDs): interrupt packets, `line` = group,
-/// `val` = 8 pin levels, stamped with the PL time of the change.
+/// `val` = 8 pin levels, stamped with the PL time of the change. Bus *reads*
+/// on the same device are the synchronous exchange (`zs_pin_xchg`): the
+/// address carries `group | levels << 8` and the one-byte answer is what the
+/// devices on the port drive into the PL's input pins (ADR-009).
 pub const DEV_PIN_OUT: u32 = 19;
 /// Device number the adapter uses to drive input pin groups (Pmod buttons...).
 pub const DEV_PIN_IN: u32 = 20;
@@ -125,6 +128,19 @@ pub struct PinEvent {
     pub group: u8,
     /// Levels of the group's eight pins, bit *n* = pin *n*.
     pub levels: u8,
+}
+
+/// The board side of the PL's Pmod pins: whatever is plugged into the ports.
+///
+/// The PL adapter calls it on its own thread of control, in PL-time order, the
+/// moment a pin change arrives from the testbench (also while the PS is held
+/// at a lock-step sync), so the answer can be returned to the testbench in
+/// the same simulated instant.
+pub trait PinSink: Send {
+    /// The pins of `group` changed to `levels` at PL time `t_ns`. Returns the
+    /// levels the board drives into the PL's input pins of that group (1 =
+    /// released or high, see `devices::PinDrive`).
+    fn pin_change(&mut self, group: u8, t_ns: u64, levels: u8) -> u8;
 }
 
 /// A change of the PL's board-facing output pins.
@@ -212,6 +228,11 @@ pub trait PlTarget {
     /// Drives the input levels of a pin group (for example a Pmod button
     /// module) at PS time `now_ns`.
     fn set_pin_inputs(&mut self, _group: u8, _levels: u8, _now_ns: u64) {}
+
+    /// Installs the board's response to pin changes: it is called for every
+    /// pin-group event, and its answer is what a synchronous exchange
+    /// returns to the testbench.
+    fn set_pin_sink(&mut self, _sink: Box<dyn PinSink>) {}
 
     /// True when this PL carries the board's audio codec and HDMI models.
     fn has_media(&self) -> bool {

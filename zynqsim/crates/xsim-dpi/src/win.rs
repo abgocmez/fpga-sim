@@ -485,6 +485,14 @@ pub extern "C" fn zs_pin_out(group: i32, levels: i32, now_ns: i64) {
     dpi().pin_out(group as u32, levels as u32, now_ns.max(0) as u64);
 }
 
+/// Reports the levels of pin group `group` and returns what the devices on
+/// the port drive into the PL's input pins of that group (blocks until the
+/// host answers; no simulated time passes).
+#[no_mangle]
+pub extern "C" fn zs_pin_xchg(group: i32, levels: i32, now_ns: i64) -> i32 {
+    i32::from(dpi().pin_xchg(group as u32, levels as u32, now_ns.max(0) as u64))
+}
+
 /// The host-driven levels of pin group `group`.
 #[no_mangle]
 pub extern "C" fn zs_pin_in(group: i32) -> i32 {

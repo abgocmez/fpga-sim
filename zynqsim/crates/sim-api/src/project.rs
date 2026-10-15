@@ -137,7 +137,7 @@ pub struct DebugSection {
 }
 
 /// A `project.toml` (prompt §12).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Project {
     /// Schema version; currently 1.
@@ -168,6 +168,10 @@ pub struct Project {
     /// Board devices attached to connectors.
     #[serde(default)]
     pub devices: BTreeMap<String, String>,
+    /// Initial physical quantities of the attached devices, by connector:
+    /// `[device_values.pmod_ja] temperature = 23.5`.
+    #[serde(default)]
+    pub device_values: BTreeMap<String, BTreeMap<String, f64>>,
     /// Host-side bindings (UART, network, audio).
     #[serde(default)]
     pub host: BTreeMap<String, String>,
@@ -447,8 +451,17 @@ impl Project {
                         devices.push((port, v.clone()));
                     }
                 }
+                let mut device_values = Vec::new();
+                for (k, vals) in &self.device_values {
+                    if let Some(port) = pmod_port(k) {
+                        for (name, v) in vals {
+                            device_values.push((port, name.clone(), *v));
+                        }
+                    }
+                }
                 let spec = crate::QemuSpec {
                     devices,
+                    device_values,
                     debug: debug.enabled,
                     breakpoints: debug.breakpoints.clone(),
                     qemu,
@@ -714,6 +727,52 @@ impl Project {
                 }
             }
         }
+        for (k, vals) in &self.device_values {
+            let field = format!("device_values.{k}");
+            if pmod_port(k).is_none() {
+                d.push(err(
+                    &field,
+                    "unknown connector; Pmod ports are pmod_ja, pmod_jb, pmod_jc, pmod_jd, pmod_je",
+                ));
+                continue;
+            }
+            let Some(kind) = self.devices.get(k) else {
+                d.push(err(
+                    &field,
+                    format!("no device is attached to `{k}`; add `[devices] {k} = \"...\"`"),
+                ));
+                continue;
+            };
+            let Some(dev) = devices::create(kind) else {
+                continue; // reported under `devices.*`
+            };
+            let known = dev.values();
+            for (name, v) in vals {
+                let field = format!("device_values.{k}.{name}");
+                match known.iter().find(|q| q.name.eq_ignore_ascii_case(name)) {
+                    None => d.push(err(
+                        &field,
+                        format!(
+                            "`{kind}` has no quantity `{name}`; available: {}",
+                            if known.is_empty() {
+                                "(none)".to_string()
+                            } else {
+                                known.iter().map(|q| q.name).collect::<Vec<_>>().join(", ")
+                            }
+                        ),
+                    )),
+                    Some(_) if !v.is_finite() => d.push(err(&field, "must be a finite number")),
+                    Some(q) if *v < q.min || *v > q.max => d.push(warn(
+                        &field,
+                        format!(
+                            "{v} is outside {}..{} {} and will be clamped",
+                            q.min, q.max, q.unit
+                        ),
+                    )),
+                    Some(_) => {}
+                }
+            }
+        }
         d
     }
 }
@@ -935,6 +994,54 @@ pmod_jc = \"oled\"
         // A valid device on a non-RTL PL is allowed but flagged.
         let (sev, _) = msg("devices.pmod_jc").expect("warning");
         assert_eq!(sev, Severity::Warning);
+    }
+
+    #[test]
+    fn device_values_are_checked_against_the_device() {
+        let base = "schema_version = 1
+[board]
+name = \"zybo-z7-20\"
+[backends]
+ps = \"qemu\"
+pl = \"xsim\"
+[devices]
+pmod_ja = \"tmp2\"
+pmod_jb = \"als\"
+";
+        let p = Project::from_toml(&format!(
+            "{base}[device_values.pmod_ja]
+temperature = 23.5
+[device_values.pmod_jb]
+light = 300
+humidity = 1
+[device_values.pmod_jc]
+light = 1
+[device_values.pmod_jz]
+light = 1
+"
+        ))
+        .unwrap();
+        let f = p.validate(Path::new("."));
+        let msg = |field: &str| {
+            f.iter()
+                .find(|d| d.field == field)
+                .map(|d| (d.severity, d.message.clone()))
+        };
+        assert!(msg("device_values.pmod_ja.temperature").is_none(), "{f:?}");
+        let (sev, m) = msg("device_values.pmod_jb.humidity").expect("unknown quantity");
+        assert_eq!(sev, Severity::Error);
+        assert!(m.contains("light"), "{m}");
+        let (sev, m) = msg("device_values.pmod_jb.light").expect("out of range");
+        assert_eq!(sev, Severity::Warning);
+        assert!(m.contains("clamped"), "{m}");
+        assert_eq!(
+            msg("device_values.pmod_jc").expect("no device").0,
+            Severity::Error
+        );
+        assert_eq!(
+            msg("device_values.pmod_jz").expect("no connector").0,
+            Severity::Error
+        );
     }
 
     #[test]

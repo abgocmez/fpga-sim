@@ -1,0 +1,44 @@
+# A Digilent Pmod TMP2 (ADT7420, I2C 0x4B) on Pmod JA. The PL block
+# fixtures/rtl/pmod/i2c_master.v is an I2C master the Rust firmware (firmware/tmp2_demo)
+# drives; the testbench was generated with
+# `zynqsim init --ip fixtures/rtl/pmod/i2c_master.v`. Its JA pins go to the host, where the
+# ADT7420 model (crates/devices) answers every pin change in the same simulated instant
+# (docs/adr/009-bidirectional-pmod-devices.md). The temperature the sensor measures is yours:
+#
+#   zynqsim run --project examples/tmp2-demo/project.toml --for 8ms
+#   zynqsim run --project examples/tmp2-demo/project.toml --for 8ms --device-set JA.temperature=-12.25
+#   zynqsim run --project examples/tmp2-demo/project.toml --for 10ms --device-set 5ms@JA.temperature=80
+#   (or the MCP tools pmod_set / pmod_state, or [device_values] below)
+#
+# Needs: Xilinx QEMU (Vitis), Vivado XSim, and the DPI library (`cargo xtask dpi`).
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "xsim"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_tmp2.elf"
+
+[rtl]
+files = [
+    "../../fixtures/rtl/pmod/i2c_master.v",
+    "../../fixtures/rtl/pmod/i2c_cosim_top.sv",
+]
+top = "cosim_top"
+
+[devices]
+pmod_ja = "tmp2"
+
+[device_values.pmod_ja]
+temperature = 23.5

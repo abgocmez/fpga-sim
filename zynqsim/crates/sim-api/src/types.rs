@@ -237,6 +237,32 @@ pub struct DeviceStatus {
     pub description: String,
 }
 
+/// A physical quantity of a device model the host can set.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DeviceValueInfo {
+    /// Name (`temperature`).
+    pub name: String,
+    /// Current value.
+    pub value: f64,
+    /// Unit (`degC`).
+    pub unit: String,
+    /// Smallest value the model represents.
+    pub min: f64,
+    /// Largest value the model represents.
+    pub max: f64,
+}
+
+/// A register of a device model.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceRegisterInfo {
+    /// Register name.
+    pub name: String,
+    /// Address in the device's register map.
+    pub addr: u32,
+    /// Content.
+    pub value: u32,
+}
+
 /// A request that changes the simulation.
 ///
 /// Adjacently tagged (`{"type": .., "args": ..}`) because `Input` is itself
@@ -271,6 +297,16 @@ pub enum Command {
         port: u8,
         /// Device kind (`oled`).
         kind: String,
+    },
+    /// Set a physical quantity of the device on a Pmod port (the
+    /// temperature a sensor measures). Needs [`Capability::Pmod`].
+    SetDeviceValue {
+        /// Pmod port index: 0..=4 are JA..JE.
+        port: u8,
+        /// Quantity name (`temperature`, see `Query::DeviceState`).
+        name: String,
+        /// New value, clamped to the model's range.
+        value: f64,
     },
     /// Set or clear a breakpoint or watchpoint. Needs [`Capability::CpuState`]
     /// (a project started with `[debug]`).
@@ -394,6 +430,12 @@ pub enum Query {
     },
     /// The picture of the device on a Pmod port. Needs [`Capability::Pmod`].
     DeviceImage {
+        /// Pmod port index.
+        port: u8,
+    },
+    /// The state of the device on a Pmod port: settable quantities and
+    /// registers. Needs [`Capability::Pmod`].
+    DeviceState {
         /// Pmod port index.
         port: u8,
     },
@@ -580,6 +622,19 @@ pub enum Response {
         png: Vec<u8>,
         /// One line of the device's state.
         description: String,
+    },
+    /// The state of a device.
+    DeviceState {
+        /// Pmod port index.
+        port: u8,
+        /// Device kind.
+        kind: String,
+        /// One line of the device's state.
+        description: String,
+        /// The quantities the host can set, with their current values.
+        values: Vec<DeviceValueInfo>,
+        /// The device's registers.
+        registers: Vec<DeviceRegisterInfo>,
     },
     /// Disassembled instructions.
     Disasm {

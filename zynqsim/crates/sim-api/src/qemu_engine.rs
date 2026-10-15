@@ -25,6 +25,7 @@ use pl_native::{MathIp, NativePl, RegisterBlock};
 use sim_core::Ps;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use trace::{TraceEvent, TraceLog};
 
@@ -105,6 +106,8 @@ pub struct QemuSpec {
     pub breakpoints: Vec<String>,
     /// Devices on Pmod ports: `(port 0..=4 for JA..JE, kind)`.
     pub devices: Vec<(u8, String)>,
+    /// Initial physical quantities of those devices: `(port, name, value)`.
+    pub device_values: Vec<(u8, String, f64)>,
 }
 
 struct BusEvent {
@@ -217,6 +220,10 @@ impl PlTarget for TracedPl {
         self.inner.set_pin_inputs(group, levels, now_ns);
     }
 
+    fn set_pin_sink(&mut self, sink: Box<dyn pl_api::PinSink>) {
+        self.inner.set_pin_sink(sink);
+    }
+
     fn set_board_inputs(&mut self, switches: u8, buttons: u8, now_ns: u64) {
         self.inner.set_board_inputs(switches, buttons, now_ns);
     }
@@ -252,6 +259,18 @@ fn model(name: &str) -> Option<Box<dyn RegisterBlock>> {
 
 /// Names accepted for `[native]` models.
 pub const NATIVE_MODELS: &[&str] = &["my_math_ip"];
+
+/// Gives the PL adapter access to the devices on the Pmod ports.
+struct BankSink(Arc<Mutex<devices::Bank>>);
+
+impl pl_api::PinSink for BankSink {
+    fn pin_change(&mut self, group: u8, t_ns: u64, levels: u8) -> u8 {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .pins(group, t_ns, levels)
+    }
+}
 
 fn make_device(port: u8, kind: &str) -> Result<Box<dyn BoardDevice>, ApiError> {
     if port > 4 {
@@ -455,8 +474,9 @@ pub struct QemuEngine {
     journal_ok: bool,
     /// Symbols of core 0's ELF (empty if it has none).
     symbols: Symbols,
-    /// Devices on Pmod ports.
-    devs: Vec<(u8, Box<dyn BoardDevice>)>,
+    /// Devices on Pmod ports; shared with the PL adapter, which feeds them
+    /// pin changes the moment they arrive (ADR-009).
+    devs: Arc<Mutex<devices::Bank>>,
     rgb: RgbMeter,
     snapshots: Vec<Snapshot>,
     /// Engines this one has been rebuilt from (names run directories).
@@ -637,6 +657,19 @@ impl QemuEngine {
             inner: pl,
             events: Vec::new(),
         };
+        let mut bank = devices::Bank::new();
+        for (port, kind) in &spec.devices {
+            bank.attach(*port, make_device(*port, kind)?)
+                .map_err(ApiError::invalid_argument)?;
+        }
+        for (port, name, value) in &spec.device_values {
+            let dev = bank.get_mut(*port).ok_or_else(|| {
+                ApiError::invalid_argument(format!("no device is attached to Pmod port {port}"))
+            })?;
+            devices::set_checked(dev, name, *value).map_err(ApiError::invalid_argument)?;
+        }
+        let devs = Arc::new(Mutex::new(bank));
+        pl.set_pin_sink(Box::new(BankSink(Arc::clone(&devs))));
         let symbols = Symbols::load(&spec.elf0).unwrap_or_default();
         let debug = if spec.debug {
             machine.attach_debugger(&mut pl).map_err(map_err)?;
@@ -708,11 +741,7 @@ impl QemuEngine {
             journal_bytes: 0,
             journal_ok: true,
             symbols,
-            devs: spec
-                .devices
-                .iter()
-                .map(|(port, kind)| make_device(*port, kind).map(|d| (*port, d)))
-                .collect::<Result<_, _>>()?,
+            devs,
             rgb: RgbMeter::default(),
             snapshots: Vec::new(),
             generation: 0,
@@ -839,6 +868,11 @@ impl QemuEngine {
         Ps(self.machine.now_ns().saturating_mul(1000))
     }
 
+    /// The devices on the Pmod ports.
+    fn bank(&self) -> std::sync::MutexGuard<'_, devices::Bank> {
+        self.devs.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// Moves PL accesses and UART output into the trace and the UART log.
     fn flush(&mut self) {
         for e in self.pl.events.drain(..) {
@@ -892,11 +926,7 @@ impl QemuEngine {
                         width: 8,
                     },
                 );
-                for (port, dev) in &mut self.devs {
-                    if *port == ev.group {
-                        dev.pins(ev.t_ns, ev.levels);
-                    }
-                }
+                // The devices were fed when the event arrived (`BankSink`).
             }
         }
         // PWM duty of the RGB LEDs, from the pin activity so far. Once the
@@ -1229,10 +1259,10 @@ impl Engine for QemuEngine {
             trace_hash: self.trace.hash_string(),
             pending_events: 0,
             devices: self
-                .devs
+                .bank()
                 .iter()
                 .map(|(port, d)| DeviceStatus {
-                    port: *port,
+                    port,
                     kind: d.kind().to_string(),
                     description: d.describe(),
                 })
@@ -1404,18 +1434,38 @@ impl QemuEngine {
                         "this PL does not report Pmod pins (an RTL design using the zs_pin_* DPI)",
                     ));
                 }
-                if self.devs.iter().any(|(p, _)| *p == port) {
-                    return Err(ApiError::invalid_argument(format!(
-                        "port {port} already has a device"
-                    )));
-                }
                 let dev = make_device(port, &kind)?;
-                self.devs.push((port, dev));
+                self.bank()
+                    .attach(port, dev)
+                    .map_err(ApiError::invalid_argument)?;
                 let now = self.now_ps();
                 self.trace.push(
                     now,
                     TraceEvent::Input {
                         what: format!("attach {kind} to Pmod port {port}"),
+                    },
+                );
+                Ok(Response::Ok)
+            }
+            Command::SetDeviceValue { port, name, value } => {
+                if !self.pl.has_pin_groups() {
+                    return Err(self.unsupported(
+                        "pmod devices",
+                        "this PL does not report Pmod pins (an RTL design using the zs_pin_* DPI)",
+                    ));
+                }
+                let stored = {
+                    let mut bank = self.bank();
+                    let dev = bank.get_mut(port).ok_or_else(|| {
+                        ApiError::not_found(format!("no device is attached to Pmod port {port}"))
+                    })?;
+                    devices::set_checked(dev, &name, value).map_err(ApiError::invalid_argument)?
+                };
+                let now = self.now_ps();
+                self.trace.push(
+                    now,
+                    TraceEvent::Input {
+                        what: format!("set Pmod port {port} {name} = {stored}"),
                     },
                 );
                 Ok(Response::Ok)
@@ -1707,14 +1757,42 @@ impl QemuEngine {
                     .collect();
                 Ok(Response::Disasm { thumb, lines })
             }
+            Query::DeviceState { port } => {
+                let bank = self.bank();
+                let dev = bank.get(*port).ok_or_else(|| {
+                    ApiError::not_found(format!("no device is attached to Pmod port {port}"))
+                })?;
+                Ok(Response::DeviceState {
+                    port: *port,
+                    kind: dev.kind().to_string(),
+                    description: dev.describe(),
+                    values: dev
+                        .values()
+                        .into_iter()
+                        .map(|v| crate::types::DeviceValueInfo {
+                            name: v.name.to_string(),
+                            value: v.value,
+                            unit: v.unit.to_string(),
+                            min: v.min,
+                            max: v.max,
+                        })
+                        .collect(),
+                    registers: dev
+                        .registers()
+                        .into_iter()
+                        .map(|r| crate::types::DeviceRegisterInfo {
+                            name: r.name,
+                            addr: r.addr,
+                            value: r.value,
+                        })
+                        .collect(),
+                })
+            }
             Query::DeviceImage { port } => {
-                let (_, dev) = self
-                    .devs
-                    .iter()
-                    .find(|(p, _)| p == port)
-                    .ok_or_else(|| {
-                        ApiError::not_found(format!("no device is attached to Pmod port {port}"))
-                    })?;
+                let bank = self.bank();
+                let dev = bank.get(*port).ok_or_else(|| {
+                    ApiError::not_found(format!("no device is attached to Pmod port {port}"))
+                })?;
                 let img = dev.image().ok_or_else(|| {
                     ApiError::unsupported(format!("`{}` has no display", dev.kind()))
                 })?;

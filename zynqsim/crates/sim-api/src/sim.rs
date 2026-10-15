@@ -317,7 +317,7 @@ impl Simulator {
                 self.snapshot_restore(&name)?;
                 Ok(Response::Ok)
             }
-            Command::AttachDevice { .. } => Err(self.unsupported(
+            Command::AttachDevice { .. } | Command::SetDeviceValue { .. } => Err(self.unsupported(
                 "pmod devices",
                 "the demo engine has no PL pins (use qemu + xsim with the pin-group DPI)",
             )),
@@ -420,7 +420,7 @@ impl Simulator {
                     .map(Response::Png)
                     .map_err(ApiError::internal)
             }
-            Query::DeviceImage { .. } => Err(self.unsupported(
+            Query::DeviceImage { .. } | Query::DeviceState { .. } => Err(self.unsupported(
                 "device_image",
                 "the demo engine has no PL pins (use qemu + xsim with the pin-group DPI)",
             )),

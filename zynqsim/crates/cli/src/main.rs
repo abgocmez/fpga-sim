@@ -82,6 +82,10 @@ enum Cmd {
         /// After the run, save a Pmod device's picture: `JA=FILE.png`.
         #[arg(long = "device-out")]
         device_out: Vec<String>,
+        /// Set a physical quantity of a Pmod device, at the start or at a
+        /// simulated time: `JA.temperature=23.5` or `5ms@JA.temperature=-12.25`.
+        #[arg(long = "device-set")]
+        device_set: Vec<String>,
     },
     /// Replay a recording and check that the trace digest matches.
     Test {
@@ -213,6 +217,7 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
             video_out,
             audio_out,
             device_out,
+            device_set,
         } => cmd_run(
             json,
             RunArgs {
@@ -231,6 +236,7 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
                 video_out,
                 audio_out,
                 device_out,
+                device_set,
             },
         ),
         Cmd::Test { recording } => cmd_test(json, &recording),
@@ -283,6 +289,56 @@ struct RunArgs {
     video_out: Option<PathBuf>,
     audio_out: Option<PathBuf>,
     device_out: Vec<String>,
+    device_set: Vec<String>,
+}
+
+/// `JA`..`JE` (any case) to the Pmod port index 0..=4.
+fn pmod_port(s: &str) -> Result<u8, Failure> {
+    match s.to_ascii_uppercase().as_str() {
+        "JA" => Ok(0),
+        "JB" => Ok(1),
+        "JC" => Ok(2),
+        "JD" => Ok(3),
+        "JE" => Ok(4),
+        other => Err(fail(2, format!("`{other}` is not a Pmod port (JA..JE)"))),
+    }
+}
+
+/// What a scripted step of a run does.
+enum Step {
+    Input(sim_api::Input),
+    Device { port: u8, name: String, value: f64 },
+}
+
+/// `[TIME@]PORT.NAME=VALUE`.
+fn parse_device_set(spec: &str) -> Result<(Ps, Step), Failure> {
+    let bad = |why: &str| fail(2, format!("--device-set `{spec}`: {why}"));
+    let (time, rest) = match spec.split_once('@') {
+        Some((t, r)) => (
+            Ps(sim_api::parse_duration(t)
+                .map_err(|e| fail(2, format!("--device-set `{spec}`: {}", e.message)))?),
+            r,
+        ),
+        None => (Ps(0), spec),
+    };
+    let (target, value) = rest
+        .split_once('=')
+        .ok_or_else(|| bad("expected [TIME@]PORT.NAME=VALUE, e.g. JA.temperature=23.5"))?;
+    let (port, name) = target
+        .split_once('.')
+        .ok_or_else(|| bad("expected PORT.NAME, e.g. JA.temperature"))?;
+    let value: f64 = value
+        .trim()
+        .parse()
+        .map_err(|_| bad(&format!("`{value}` is not a number")))?;
+    Ok((
+        time,
+        Step::Device {
+            port: pmod_port(port)?,
+            name: name.trim().to_string(),
+            value,
+        },
+    ))
 }
 
 fn parse_addr(s: &str) -> Result<u64, Failure> {
@@ -381,7 +437,15 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
         engine.command(Command::SetMediaSource { video, audio })?;
     }
 
-    for (t, input) in script {
+    let mut steps: Vec<(Ps, Step)> = script
+        .into_iter()
+        .map(|(t, i)| (t, Step::Input(i)))
+        .collect();
+    for spec in &a.device_set {
+        steps.push(parse_device_set(spec)?);
+    }
+    steps.sort_by_key(|(t, _)| *t);
+    for (t, step) in steps {
         if t > total {
             return Err(fail(
                 2,
@@ -389,7 +453,12 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
             ));
         }
         engine.command(Command::RunUntil { time_ps: t.0 })?;
-        engine.command(Command::Input(input))?;
+        match step {
+            Step::Input(input) => engine.command(Command::Input(input))?,
+            Step::Device { port, name, value } => {
+                engine.command(Command::SetDeviceValue { port, name, value })?
+            }
+        };
     }
     engine.command(Command::RunUntil { time_ps: total.0 })?;
 
@@ -521,6 +590,22 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
         }
     };
     let (u0, u1) = (uart(0), uart(1));
+    // The state of every attached device: settable quantities and registers.
+    let mut device_state = Vec::new();
+    for d in &st.devices {
+        if let Ok(Response::DeviceState {
+            port,
+            kind,
+            values,
+            registers,
+            ..
+        }) = engine.query(&Query::DeviceState { port: d.port }, false)
+        {
+            device_state.push(json!({
+                "port": port, "kind": kind, "values": values, "registers": registers,
+            }));
+        }
+    }
     let leds: Vec<Value> = engine
         .def()
         .leds
@@ -549,6 +634,7 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
                 "trace_dropped": engine.trace().dropped(),
                 "media": st.media,
                 "devices": st.devices,
+                "device_state": device_state,
                 "rgb": engine.board().rgb,
                 "leds": leds,
                 "uart": { "0": u0, "1": u1 },

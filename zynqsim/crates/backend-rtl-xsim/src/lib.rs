@@ -27,8 +27,8 @@ use interop::{
 use pl_api::media::{DEV_AUDIO_IN, DEV_AUDIO_OUT, DEV_CODEC_REG, DEV_VIDEO_IN, DEV_VIDEO_OUT};
 use pl_api::{
     AudioSource, BoardOutput, BusError, BusResult, DEV_BOARD_IN, DEV_BOARD_OUT, DEV_M_AXI_GP0,
-    DEV_PIN_IN, DEV_PIN_OUT, DEV_WIRES_PS_TO_PL, MasterAccess, MediaEvent, PinEvent, PlTarget,
-    PsMasterPort, PsPort, VideoSource,
+    DEV_PIN_IN, DEV_PIN_OUT, DEV_WIRES_PS_TO_PL, MasterAccess, MediaEvent, PinEvent, PinSink,
+    PlTarget, PsMasterPort, PsPort, VideoSource,
 };
 use std::fmt;
 use std::fs;
@@ -159,6 +159,8 @@ pub struct XsimPl {
     /// The design uses the Pmod/RGB pin-group DPI functions.
     has_pin_groups: bool,
     pin_events: Vec<PinEvent>,
+    /// The devices on the Pmod ports, asked as the pin events arrive.
+    pin_sink: Option<Box<dyn PinSink>>,
     work_dir: PathBuf,
     now_ns: u64,
 }
@@ -482,6 +484,7 @@ impl XsimPl {
             has_pins: sources_mention(&cfg.sources, &["tel_ctrl", "tel_event"]),
             has_pin_groups: sources_mention(&cfg.sources, &["zs_pin_"]),
             pin_events: Vec::new(),
+            pin_sink: None,
             work_dir: work,
             now_ns: 0,
         })
@@ -530,6 +533,10 @@ impl XsimPl {
                     group: i.line as u8,
                     levels: i.val,
                 });
+                // A report only: the devices see it, nothing is answered.
+                if let Some(sink) = &mut self.pin_sink {
+                    sink.pin_change(i.line as u8, i.timestamp, i.val);
+                }
             }
             Packet::Interrupt(i) if i.dev == DEV_BOARD_OUT => {
                 self.board_out.push(BoardOutput {
@@ -582,6 +589,23 @@ impl XsimPl {
                 let y = (b.addr & 0xFFFF) as u32;
                 let data = self.video_src.line(y, b.len / 3, b.width);
                 let rsp = b.response(resp::OK, data, b.timestamp);
+                let _ = self.rp.send(&Packet::Bus(rsp));
+                true
+            }
+            (DEV_PIN_OUT, BusCmd::Read) => {
+                // The synchronous exchange: report the change, answer at once
+                // with what the devices drive (1 = released).
+                let (group, levels) = ((b.addr & 0xFF) as u8, ((b.addr >> 8) & 0xFF) as u8);
+                self.pin_events.push(PinEvent {
+                    t_ns: b.timestamp,
+                    group,
+                    levels,
+                });
+                let answer = match &mut self.pin_sink {
+                    Some(sink) => sink.pin_change(group, b.timestamp, levels),
+                    None => 0xFF,
+                };
+                let rsp = b.response(resp::OK, vec![answer], b.timestamp);
                 let _ = self.rp.send(&Packet::Bus(rsp));
                 true
             }
@@ -817,6 +841,10 @@ impl PlTarget for XsimPl {
 
     fn drain_pin_events(&mut self) -> Vec<PinEvent> {
         std::mem::take(&mut self.pin_events)
+    }
+
+    fn set_pin_sink(&mut self, sink: Box<dyn PinSink>) {
+        self.pin_sink = Some(sink);
     }
 
     fn set_pin_inputs(&mut self, group: u8, levels: u8, now_ns: u64) {

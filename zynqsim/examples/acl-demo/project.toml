@@ -1,0 +1,44 @@
+# A Digilent Pmod ACL (ADXL345 accelerometer, SPI mode 3) on Pmod JA. The PL block
+# fixtures/rtl/pmod/spi_master.v is an SPI master with MISO that the Rust firmware
+# (firmware/acl_demo) drives; the testbench was generated with
+# `zynqsim init --ip fixtures/rtl/pmod/spi_master.v`. The sensor model answers on MISO in the
+# same simulated instant as every SCLK edge (docs/adr/009-bidirectional-pmod-devices.md).
+# The acceleration is yours, in g, per axis (accel_x, accel_y, accel_z; +-16 g):
+#
+#   zynqsim run --project examples/acl-demo/project.toml --for 4ms
+#   zynqsim run --project examples/acl-demo/project.toml --for 4ms --device-set JA.accel_z=-1
+#
+# Needs: Xilinx QEMU (Vitis), Vivado XSim, and the DPI library (`cargo xtask dpi`).
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "xsim"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_acl.elf"
+
+[rtl]
+files = [
+    "../../fixtures/rtl/pmod/spi_master.v",
+    "../../fixtures/rtl/pmod/spi_cosim_top.sv",
+]
+top = "cosim_top"
+
+[devices]
+pmod_ja = "acl"
+
+[device_values.pmod_ja]
+accel_x = 0.5
+accel_y = -0.25
+accel_z = 1.0

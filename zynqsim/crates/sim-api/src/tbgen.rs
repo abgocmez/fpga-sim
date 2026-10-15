@@ -821,6 +821,10 @@ pub struct PinGroup {
     pub group: u8,
     /// True when the IP drives it (an output), false for a host-driven input.
     pub output: bool,
+    /// True when the module has both an output and an input port on this
+    /// group (a bidirectional bus: I2C, SPI with MISO). The testbench then
+    /// asks the board's devices for the input after every output change.
+    pub paired: bool,
 }
 
 /// Eight-bit ports named like a Pmod (`pmod_ja`, `ja`, `pmod_jb_o`...) and
@@ -853,8 +857,19 @@ pub fn detect_pin_groups(m: &ModuleInfo) -> Vec<PinGroup> {
                 name: p.name.clone(),
                 group,
                 output: p.dir == Dir::Out,
+                paired: false,
             });
         }
+    }
+    // Pmod ports only: the RGB LEDs are outputs of the board.
+    let pairs: Vec<u8> = out
+        .iter()
+        .filter(|g| g.group < 6 && g.output)
+        .map(|g| g.group)
+        .filter(|gr| out.iter().any(|i| !i.output && i.group == *gr))
+        .collect();
+    for g in &mut out {
+        g.paired = pairs.contains(&g.group);
     }
     out
 }
@@ -931,6 +946,12 @@ pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
             (Dir::In, Some(_)) => {
                 let _ = writeln!(s, "    reg  {w}{n} = 0;");
             }
+            (Dir::In, None) if pin_groups.iter().any(|g| &g.name == n && g.paired) => {
+                let _ = writeln!(
+                    s,
+                    "    reg  {w}{n} = '1;     // driven by the board's devices (released = 1)"
+                );
+            }
             (Dir::In, None) if pin_groups.iter().any(|g| &g.name == n) => {
                 let _ = writeln!(
                     s,
@@ -985,15 +1006,35 @@ pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
     // Pmod and RGB pin groups: outputs are reported to the host on change,
     // inputs follow the levels the host sets (sampled every microsecond).
     let mut pin_blocks = String::new();
+    let mut xchg_init = String::new();
     for g in &pin_groups {
         let n = &g.name;
         if g.output {
-            let _ = write!(
-                pin_blocks,
-                "\n    // {n} -> pin group {gr}\n\
-                 \x20   always @({n}) if (connected) zs_pin_out({gr}, {n}, $time);\n",
-                gr = g.group
-            );
+            // An output with an input port on the same group: the board's
+            // devices answer each change at once (ADR-009).
+            if let Some(i) = pin_groups.iter().find(|i| !i.output && i.group == g.group) {
+                let _ = write!(
+                    pin_blocks,
+                    "\n    // {n} <-> {inp}: pin group {gr}, answered by the board at once\n\
+                     \x20   always @({n}) if (connected) {inp} <= zs_pin_xchg({gr}, {n}, $time);\n",
+                    inp = i.name,
+                    gr = g.group
+                );
+                let _ = writeln!(
+                    xchg_init,
+                    "        {} <= zs_pin_xchg({}, {n}, $time);",
+                    i.name, g.group
+                );
+            } else {
+                let _ = write!(
+                    pin_blocks,
+                    "\n    // {n} -> pin group {gr}\n\
+                     \x20   always @({n}) if (connected) zs_pin_out({gr}, {n}, $time);\n",
+                    gr = g.group
+                );
+            }
+        } else if g.paired {
+            // Driven by the exchange of the output port of the same group.
         } else {
             let _ = write!(
                 pin_blocks,
@@ -1025,6 +1066,7 @@ pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
         "\
     import \"DPI-C\" function void zs_pin_out(input int group, input int levels, input longint now_ns);
     import \"DPI-C\" function int  zs_pin_in(input int group);
+    import \"DPI-C\" function int  zs_pin_xchg(input int group, input int levels, input longint now_ns);
     reg        connected = 1'b0;
     reg        wr_ok;
     reg        rd_ok;
@@ -1074,7 +1116,7 @@ pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
         end
         $display(\"cosim_top: remote-port connected\");
         connected = 1'b1;
-{irq_init}
+{xchg_init}{irq_init}
         forever begin
             st = rp_next($time, -1, a_i, wd_i, ws_i, iw_i);
             if (st == 0) begin
@@ -1110,6 +1152,7 @@ endmodule
         master = master.as_ref().map(master_bridge).unwrap_or_default(),
         irq_blocks = irq_blocks,
         pin_blocks = pin_blocks,
+        xchg_init = xchg_init,
         irq_init = irq_init,
         awaddr = g("awaddr"),
         wdata = g("wdata"),
@@ -1323,7 +1366,8 @@ mod tests {
             vec![PinGroup {
                 name: "pmod_ja".into(),
                 group: 0,
-                output: true
+                output: true,
+                paired: false
             }]
         );
         let tb = generate_testbench(&m, &axi);
@@ -1359,6 +1403,48 @@ mod tests {
             "{tb}"
         );
         assert!(tb.contains("reg  [7:0] pmod_jb_i = 0;"), "{tb}");
+    }
+
+    #[test]
+    fn an_output_and_an_input_on_one_pmod_port_use_the_exchange() {
+        let src = "module b (input clk, output [7:0] pmod_ja_o, input [7:0] pmod_ja_i,
+                   output [7:0] pmod_jb, input [7:0] pmod_jc,
+                   input [3:0] s_awaddr, input s_awvalid, output s_awready, input [31:0] s_wdata,
+                   input [3:0] s_wstrb, input s_wvalid, output s_wready, output [1:0] s_bresp,
+                   output s_bvalid, input s_bready, input [3:0] s_araddr, input s_arvalid,
+                   output s_arready, output [31:0] s_rdata, output [1:0] s_rresp,
+                   output s_rvalid, input s_rready); endmodule";
+        let m = parse_module(src, None).unwrap();
+        let g = detect_pin_groups(&m);
+        let paired: Vec<(&str, bool)> = g.iter().map(|g| (g.name.as_str(), g.paired)).collect();
+        assert_eq!(
+            paired,
+            vec![
+                ("pmod_ja_o", true),
+                ("pmod_ja_i", true),
+                ("pmod_jb", false),
+                ("pmod_jc", false)
+            ]
+        );
+        let axi = detect_axi_lite(&m).unwrap();
+        let tb = generate_testbench(&m, &axi);
+        assert!(
+            tb.contains(
+                "always @(pmod_ja_o) if (connected) pmod_ja_i <= zs_pin_xchg(0, pmod_ja_o, $time);"
+            ),
+            "{tb}"
+        );
+        assert!(
+            tb.contains("        pmod_ja_i <= zs_pin_xchg(0, pmod_ja_o, $time);\n"),
+            "an initial exchange at connect: {tb}"
+        );
+        assert!(tb.contains("reg  [7:0] pmod_ja_i = '1;"), "{tb}");
+        assert!(
+            !tb.contains("zs_pin_in(0)"),
+            "a paired input is not polled: {tb}"
+        );
+        assert!(tb.contains("always @(pmod_jb) if (connected) zs_pin_out(1, pmod_jb, $time);"));
+        assert!(tb.contains("always #1000 pmod_jc <= zs_pin_in(2);"));
     }
 
     #[test]

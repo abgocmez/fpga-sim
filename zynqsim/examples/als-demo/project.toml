@@ -1,0 +1,42 @@
+# A Digilent Pmod ALS (TI ADC081S021 ambient light sensor, SPI) on Pmod JA. The PL block
+# fixtures/rtl/pmod/spi_master.v is an SPI master with MISO that the Rust firmware
+# (firmware/als_demo) drives in SPI mode 0; the testbench was generated with
+# `zynqsim init --ip fixtures/rtl/pmod/spi_master.v`. The sensor model answers on MISO in the
+# same simulated instant as every SCLK edge (docs/adr/009-bidirectional-pmod-devices.md).
+# `light` is the 8-bit ADC code the conversion returns (0..255).
+#
+#   zynqsim run --project examples/als-demo/project.toml --for 4ms
+#   zynqsim run --project examples/als-demo/project.toml --for 4ms --device-set JA.light=20
+#
+# Needs: Xilinx QEMU (Vitis), Vivado XSim, and the DPI library (`cargo xtask dpi`).
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "xsim"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_als.elf"
+
+[rtl]
+files = [
+    "../../fixtures/rtl/pmod/spi_master.v",
+    "../../fixtures/rtl/pmod/spi_cosim_top.sv",
+]
+top = "cosim_top"
+
+[devices]
+pmod_ja = "als"
+
+[device_values.pmod_ja]
+light = 173
