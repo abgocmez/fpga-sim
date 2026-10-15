@@ -1,7 +1,15 @@
-# NOTE: written during milestone P0 and NOT yet executed on hosted runners.
-# The workspace was only built and tested locally on Windows (GNU toolchain).
+# Runs on GitHub-hosted runners. Everything that needs the Xilinx tools
+# (QEMU, Vivado XSim) skips itself there, so this checks the build, lints and
+# the tests that do not need them, on three operating systems.
 name: ci
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+defaults:
+  run:
+    working-directory: zynqsim
 
 jobs:
   check:
@@ -22,10 +30,14 @@ jobs:
           libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libgl1-mesa-dev
           libasound2-dev
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: zynqsim
       - name: fmt
         run: cargo fmt --all -- --check
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: clippy (freestanding DPI library)
+        run: cargo clippy -p xsim-dpi --features freestanding -- -D warnings
       - name: test
         run: cargo test --workspace
       - name: release build (zynqsim, zynqsim-gui, zynqsim-mcp)
