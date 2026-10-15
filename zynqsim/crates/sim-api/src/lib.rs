@@ -23,6 +23,7 @@ pub mod storage;
 mod tbgen;
 mod tools;
 mod types;
+mod wave;
 
 pub use duration::parse_duration;
 pub use engine::Engine;

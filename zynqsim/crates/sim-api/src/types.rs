@@ -401,6 +401,22 @@ pub enum Query {
         /// Format.
         format: TraceFormat,
     },
+    /// The signals of the trace (name, width, activity), for a waveform
+    /// viewer's signal picker. Needs [`Capability::Trace`].
+    SignalCatalogue,
+    /// The value changes of named signals inside a time window. A name
+    /// ending in `*` matches by prefix. The answer is bounded and says when
+    /// it was cut. Needs [`Capability::Trace`].
+    Waveform {
+        /// Signal names, as listed by [`Query::SignalCatalogue`].
+        signals: Vec<String>,
+        /// Start of the window in picoseconds.
+        from_ps: u64,
+        /// End of the window in picoseconds (inclusive).
+        to_ps: u64,
+        /// Most value changes per signal; clamped to 1..=20000.
+        max_changes: usize,
+    },
     /// The input recording so far.
     Recording,
     /// Names of saved snapshots.
@@ -675,6 +691,17 @@ pub enum Response {
     },
     /// Exported trace text (VCD or JSON).
     Text(String),
+    /// The signal catalogue of the trace.
+    Signals {
+        /// The signals, in name order.
+        signals: Vec<trace::waveform::SignalInfo>,
+        /// Time of the newest record in picoseconds.
+        now_ps: u64,
+        /// Records ever recorded; changes when the catalogue may have.
+        trace_len: usize,
+    },
+    /// Value changes of chosen signals in a time window.
+    Waveform(Box<trace::waveform::Waveform>),
     /// A recording.
     Recording(Box<crate::recording::Recording>),
     /// Snapshot names.

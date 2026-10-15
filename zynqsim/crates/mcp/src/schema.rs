@@ -43,6 +43,12 @@ pub fn number(description: &str, min: Option<f64>, max: Option<f64>, examples: &
     Value::Object(m)
 }
 
+/// An array of strings.
+pub fn string_array(description: &str, examples: &[&str]) -> Value {
+    json!({ "type": "array", "items": { "type": "string" },
+            "description": description, "examples": [examples] })
+}
+
 /// A boolean parameter.
 pub fn boolean(description: &str) -> Value {
     json!({ "type": "boolean", "description": description })
@@ -119,6 +125,7 @@ fn check_value(name: &str, schema: &Value, v: &Value) -> Result<(), String> {
     let ok = match ty {
         "string" => v.is_string(),
         "boolean" => v.is_boolean(),
+        "array" => v.is_array(),
         "integer" => v.as_i64().is_some() || v.as_u64().is_some(),
         "number" => v.is_number(),
         _ => true,

@@ -10,6 +10,7 @@ use sim_api::{
 use std::path::{Path, PathBuf};
 
 mod net;
+mod waves;
 
 /// Longest simulated span a single `sim_run` may cover.
 const MAX_RUN_PS: u64 = 3600 * Ps::PER_S;
@@ -342,6 +343,7 @@ impl McpServer {
                 }
             }
             "waveform_export" => self.waveform_export(a),
+            "waveform_get" => self.waveform_get(a),
             "trace_get" => {
                 let from = a.get("from").and_then(Value::as_u64).unwrap_or(0) as usize;
                 let max = a.get("max").and_then(Value::as_u64).unwrap_or(100) as usize;
