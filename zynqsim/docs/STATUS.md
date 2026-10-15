@@ -126,7 +126,8 @@ Needs the Xilinx QEMU. The CPUs run under QEMU's gdb stub: `-gdb` and `-S`, a de
 | `Play` stops at a breakpoint and reports why instead of running past it | verified | `sim-api::qemu_debug::continuous_running_stops_at_a_breakpoint_instead_of_running_past_it` |
 | ELF symbol reader (ELF32 LE `.symtab`, no DWARF) | verified | `sim-api::elf::tests::*` on the C and the Rust firmware |
 | Core 1 stops and registers (`cpu_regs core=1`) | verified | `sim-api::qemu_debug::core_one_stops_at_its_own_breakpoint`: the DMA regression's second core stops at its `main` (0x040005e4), core 0 is readable at the same time. Breakpoint addresses are global, so a symbol of core 0's ELF resolves only core 0's code (core 1 needs a numeric address) |
-| `cpu_disasm`, single-step, reverse debugging, DWARF source lines | stub / not-planned | `cpu_disasm` is `Planned("P5")`; there is no disassembler |
+| `cpu_disasm`: ARM and Thumb/Thumb-2 from guest memory, symbol-annotated, works on a paused machine | verified | `sim-api::disasm::tests::*` (encodings, sizes, a real function without undecodable lines), `mcp::debugger_through_mcp`. Pure Rust (`yaxpeax-arm`, 0BSD). `thumb` defaults to the CPSR T bit of a stopped core 0, else ARM; the decoder is permissive and is not compared with an independent disassembler (no objdump on this machine) |
+| Single-step, reverse debugging, DWARF source lines | stub / not-planned | the stub supports `s`, which resume uses internally; there is no step command or line table |
 
 Limits that matter:
 
@@ -207,7 +208,8 @@ missing. See ADR-006.
 | MCP streamable HTTP transport | stub | stdio only |
 | MCP `mem_read`, `mem_write` on a QEMU engine; board tools, `uart_*` with an RTL board design | verified | `mcp::board_demo_through_mcp` |
 | MCP `cpu_regs`, `breakpoint_set`, `watchpoint_set`, `breakpoint_list`, `symbol_lookup` | verified for QEMU projects with `[debug]` | `mcp::scenario::debugger_through_mcp`; without `[debug]` they say how to enable it |
-| MCP tools needing PL signals/network/`cpu_disasm` | stub | `unsupported` naming the missing capability |
+| MCP `cpu_disasm`, `symbol_lookup` | verified for QEMU projects (no `[debug]` needed) | `mcp::scenario::debugger_through_mcp` |
+| MCP tools needing PL signals/network | stub | `unsupported` naming the missing capability |
 | `project_create_from_xsa`, `pmod_attach` | stub | milestones P3 / P2 |
 | CLI: `run` (any engine, `--at` inputs incl. `uartN:`/`swN:`/`btnN:`, `--dump-mem`, `--dump-image`), `inspect`, `init`, `trace`, `test` (exit codes 0/1/2/3, `--json`) | verified | `crates/cli/tests/cli.rs` |
 | CLI: `mcp`, `gui` launchers | implemented-untested | not covered by a test |

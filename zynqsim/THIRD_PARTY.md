@@ -57,6 +57,7 @@ linked; they are located at run time and driven as separate processes (see
 | bit-set | 0.8.0 | Apache-2.0 OR MIT |
 | bit-vec | 0.8.0 | Apache-2.0 OR MIT |
 | bitflags | 1.3.2, 2.13.2 | MIT/Apache-2.0 |
+| bitvec | 1.1.1 | MIT |
 | block | 0.1.6 | MIT |
 | block2 | 0.5.1, 0.6.2 | MIT |
 | blocking | 1.7.0 | Apache-2.0 OR MIT |
@@ -125,6 +126,7 @@ linked; they are located at run time and driven as separate processes (see
 | foreign-types-macros | 0.2.4 | MIT/Apache-2.0 |
 | foreign-types-shared | 0.3.1 | MIT/Apache-2.0 |
 | form_urlencoded | 1.2.2 | MIT OR Apache-2.0 |
+| funty | 2.0.0 | MIT |
 | futures-core | 0.3.34 | MIT OR Apache-2.0 |
 | futures-io | 0.3.34 | MIT OR Apache-2.0 |
 | futures-lite | 2.6.1 | Apache-2.0 OR MIT |
@@ -254,6 +256,7 @@ linked; they are located at run time and driven as separate processes (see
 | quick-xml | 0.38.4, 0.41.0 | MIT |
 | quote | 1.0.47 | MIT OR Apache-2.0 |
 | r-efi | 5.3.0, 6.0.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later |
+| radium | 0.7.0 | MIT |
 | range-alloc | 0.1.5 | MIT OR Apache-2.0 |
 | raw-window-handle | 0.6.2 | MIT OR Apache-2.0 OR Zlib |
 | redox_syscall | 0.4.1, 0.5.18, 0.9.4 | MIT |
@@ -294,6 +297,7 @@ linked; they are located at run time and driven as separate processes (see
 | strum_macros | 0.26.4 | MIT |
 | syn | 2.0.119, 3.0.9 | MIT OR Apache-2.0 |
 | synstructure | 0.14.0 | MIT |
+| tap | 1.0.1 | MIT |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 |
 | termcolor | 1.4.1 | Unlicense OR MIT |
 | thiserror | 1.0.69, 2.0.21 | MIT OR Apache-2.0 |
@@ -380,6 +384,7 @@ linked; they are located at run time and driven as separate processes (see
 | winnow | 0.7.15, 1.0.4 | MIT |
 | wit-bindgen | 0.46.0 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT |
 | writeable | 0.6.4 | Unicode-3.0 |
+| wyz | 0.5.1 | MIT |
 | x11-dl | 2.21.0 | MIT |
 | x11rb | 0.13.2 | MIT OR Apache-2.0 |
 | x11rb-protocol | 0.13.2 | MIT OR Apache-2.0 |
@@ -387,6 +392,8 @@ linked; they are located at run time and driven as separate processes (see
 | xkbcommon-dl | 0.4.2 | MIT |
 | xkeysym | 0.2.1 | MIT OR Apache-2.0 OR Zlib |
 | xml-rs | 0.8.29 | MIT |
+| yaxpeax-arch | 0.3.2 | 0BSD |
+| yaxpeax-arm | 0.5.0 | 0BSD |
 | yoke | 0.8.3 | Unicode-3.0 |
 | yoke-derive | 0.8.4 | Unicode-3.0 |
 | zbus | 5.13.2 | MIT |

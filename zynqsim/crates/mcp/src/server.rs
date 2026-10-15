@@ -485,6 +485,17 @@ impl McpServer {
                     json!({ "addr": addr, "kind": kind, "len": len, "set": enable }),
                 ))
             }
+            "cpu_disasm" => {
+                let addr = a.get("addr").and_then(Value::as_u64).unwrap_or(0);
+                let count = a.get("count").and_then(Value::as_u64).unwrap_or(16) as u32;
+                let thumb = a.get("thumb").and_then(Value::as_bool);
+                match self.client.query(Query::Disasm { addr, count, thumb })? {
+                    Response::Disasm { thumb, lines } => {
+                        Ok(Out::json(json!({ "thumb": thumb, "instructions": lines })))
+                    }
+                    r => Err(unexpected(&r)),
+                }
+            }
             "breakpoint_list" => match self.client.query(Query::Breakpoints)? {
                 Response::Breakpoints(list) => Ok(Out::json(json!({ "breakpoints": list }))),
                 r => Err(unexpected(&r)),

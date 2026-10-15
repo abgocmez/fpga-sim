@@ -847,7 +847,21 @@ fn debugger_through_mcp() {
             .contains("RESULT: ALL PASS"),
         "{uart}"
     );
-    // Planned features stay honest.
-    let r = call("cpu_disasm", json!({ "addr": 0x100000 }));
+    // Disassembly works on paused memory and names the symbols.
+    let d = call("cpu_disasm", json!({ "addr": 0x100614, "count": 6 }));
+    assert_eq!(d["isError"], false, "{d}");
+    let ins = d["structuredContent"]["instructions"].as_array().unwrap();
+    assert_eq!(ins.len(), 6);
+    assert_eq!(ins[0]["addr"], 0x100614);
+    assert_eq!(ins[0]["symbol"], "main");
+    assert_eq!(ins[1]["symbol"], "main+0x4");
+    assert!(
+        ins.iter()
+            .all(|i| !i["text"].as_str().unwrap().starts_with('.')),
+        "{d}"
+    );
+    assert_eq!(d["structuredContent"]["thumb"], false);
+    // Bad arguments are refused.
+    let r = call("cpu_disasm", json!({ "addr": 0x100614, "count": 0 }));
     assert_eq!(r["isError"], true);
 }

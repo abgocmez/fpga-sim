@@ -415,10 +415,11 @@ impl Simulator {
                     .map(Response::Png)
                     .map_err(ApiError::internal)
             }
-            Query::Breakpoints | Query::Symbol { .. } => Err(self.unsupported(
-                "breakpoints and symbols",
-                "the demo engine runs no CPU (use the qemu backend with [debug])",
-            )),
+            Query::Breakpoints | Query::Symbol { .. } | Query::Disasm { .. } => Err(self
+                .unsupported(
+                    "breakpoints and symbols",
+                    "the demo engine runs no CPU (use the qemu backend with [debug])",
+                )),
             Query::VideoFrame => Err(self.unsupported(
                 "video_frame",
                 "video needs a PL with an HDMI model (qemu + xsim)",

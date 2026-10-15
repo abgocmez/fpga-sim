@@ -10,8 +10,8 @@ use crate::elf::Symbols;
 use crate::engine::Engine;
 use crate::error::ApiError;
 use crate::types::{
-    AudioSpec, BreakKind, BreakpointInfo, Capability, Command, CpuRegs, DebugStatus, Fidelity,
-    Input, MediaStatus, Query, Response, Status, SymbolInfo, TraceFormat, VideoSpec,
+    AudioSpec, BreakKind, BreakpointInfo, Capability, Command, CpuRegs, DebugStatus, DisasmLine,
+    Fidelity, Input, MediaStatus, Query, Response, Status, SymbolInfo, TraceFormat, VideoSpec,
 };
 use backend_qemu::{BreakKind as GdbKind, QemuConfig, QemuError, QemuMachine, RunEnd, UartMode};
 use board_zybo::{BoardDef, BoardState};
@@ -421,6 +421,8 @@ pub struct QemuEngine {
     journal_bytes: usize,
     /// False once the journal outgrew its limits (snapshots/replay then say so).
     journal_ok: bool,
+    /// Symbols of core 0's ELF (empty if it has none).
+    symbols: Symbols,
     snapshots: Vec<Snapshot>,
     /// Engines this one has been rebuilt from (names run directories).
     generation: u32,
@@ -560,9 +562,10 @@ impl QemuEngine {
             inner: pl,
             events: Vec::new(),
         };
+        let symbols = Symbols::load(&spec.elf0).unwrap_or_default();
         let debug = if spec.debug {
             machine.attach_debugger(&mut pl).map_err(map_err)?;
-            let symbols = Symbols::load(&spec.elf0).unwrap_or_default();
+            let symbols = symbols.clone();
             let mut breakpoints = Vec::new();
             for b in &spec.breakpoints {
                 let addr = resolve_location(b, &symbols)?;
@@ -621,6 +624,7 @@ impl QemuEngine {
             journal: Vec::new(),
             journal_bytes: 0,
             journal_ok: true,
+            symbols,
             snapshots: Vec::new(),
             generation: 0,
             debug,
@@ -1476,13 +1480,56 @@ impl QemuEngine {
                     .slice(*from_frame, (*max_frames).max(1) as usize)
                     .into_response())
             }
+            Query::Disasm {
+                addr,
+                count,
+                thumb,
+            } => {
+                if *count == 0 || *count > 256 {
+                    return Err(ApiError::invalid_argument(
+                        "count must be between 1 and 256",
+                    ));
+                }
+                let a = u32::try_from(*addr).map_err(|_| {
+                    ApiError::invalid_argument("addresses above 4 GiB do not exist on this core")
+                })?;
+                // Thumb by default only when core 0 is stopped in Thumb state.
+                let thumb = thumb.unwrap_or_else(|| {
+                    self.debug.as_ref().is_some_and(|d| d.stopped.is_some())
+                        && self
+                            .machine
+                            .debug_regs(0)
+                            .is_ok_and(|r| r.cpsr & (1 << 5) != 0)
+                });
+                let bytes = self
+                    .machine
+                    .read_memory(u64::from(a), (*count as usize) * 4)
+                    .map_err(|e| ApiError::io(e.to_string()))?;
+                let lines = crate::disasm::disassemble(&bytes, a, thumb, *count as usize)
+                    .into_iter()
+                    .map(|l| DisasmLine {
+                        addr: u64::from(l.addr),
+                        size: l.size,
+                        hex: l.hex,
+                        text: l.text,
+                        symbol: self.symbols.containing(l.addr).map(|(s, off)| {
+                            if off == 0 {
+                                s.name.clone()
+                            } else {
+                                format!("{}+{off:#x}", s.name)
+                            }
+                        }),
+                    })
+                    .collect();
+                Ok(Response::Disasm { thumb, lines })
+            }
             Query::Breakpoints => {
                 let d = self.debug_needed("breakpoint_list")?;
                 Ok(Response::Breakpoints(d.breakpoints.clone()))
             }
             Query::Symbol { query } => {
-                let d = self.debug_needed("symbol_lookup")?;
-                if d.symbols.is_empty() {
+                let symbols = &self.symbols;
+                if symbols.is_empty() {
                     return Err(ApiError::not_found("the ELF has no symbols"));
                 }
                 let t = query.trim();
@@ -1490,8 +1537,8 @@ impl QemuEngine {
                     .strip_prefix("0x")
                     .and_then(|h| u32::from_str_radix(h, 16).ok());
                 let found = match addr {
-                    Some(a) => d.symbols.containing(a).map(|(s, off)| (s, u64::from(off))),
-                    None => d.symbols.by_name(t).map(|s| (s, 0)),
+                    Some(a) => symbols.containing(a).map(|(s, off)| (s, u64::from(off))),
+                    None => symbols.by_name(t).map(|s| (s, 0)),
                 };
                 let (s, offset) = found
                     .ok_or_else(|| ApiError::not_found(format!("no symbol for `{t}`")))?;

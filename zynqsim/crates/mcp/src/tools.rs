@@ -214,8 +214,10 @@ pub fn tool_defs() -> Vec<ToolDef> {
         ),
         t(
             "cpu_disasm",
-            "Disassemble instructions at an address, annotated with ELF symbols.",
-            Planned("P5"),
+            "Disassemble ARM or Thumb instructions from guest memory at an address, annotated \
+             with symbols of core 0's ELF. Works while the machine is paused. `thumb` defaults \
+             to the CPSR T bit when core 0 is stopped under the debugger, else ARM.",
+            Needs(C::MemoryAccess),
             object(
                 vec![
                     (
@@ -226,6 +228,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
                         "count",
                         integer("Number of instructions.", Some(1), Some(256), &[16]),
                     ),
+                    ("thumb", boolean("Decode as Thumb instead of ARM.")),
                 ],
                 &["addr"],
             ),
@@ -265,8 +268,8 @@ pub fn tool_defs() -> Vec<ToolDef> {
         ),
         t(
             "symbol_lookup",
-            "Resolve an address to an ELF symbol or a symbol to an address.",
-            Needs(C::CpuState),
+            "Resolve an address to an ELF symbol or a symbol to an address (core 0's ELF).",
+            Needs(C::MemoryAccess),
             object(
                 vec![(
                     "query",

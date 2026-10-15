@@ -189,6 +189,22 @@ pub struct SymbolInfo {
     pub offset: u64,
 }
 
+/// One disassembled instruction.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DisasmLine {
+    /// Address.
+    pub addr: u64,
+    /// Encoded size in bytes.
+    pub size: u32,
+    /// Raw bytes, hex, in memory order.
+    pub hex: String,
+    /// Assembly text.
+    pub text: String,
+    /// `symbol` or `symbol+0xoff` at this address, when the ELF knows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+}
+
 /// Debugger state of an engine started with a debugger attached.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DebugStatus {
@@ -355,6 +371,16 @@ pub enum Query {
         /// Core index.
         core: u8,
     },
+    /// Disassemble guest memory. Needs [`Capability::MemoryAccess`].
+    Disasm {
+        /// Start address.
+        addr: u64,
+        /// Instructions wanted.
+        count: u32,
+        /// Thumb (true) or ARM (false); by default the CPSR T bit of core 0
+        /// when it is stopped, else ARM.
+        thumb: Option<bool>,
+    },
     /// Breakpoints and watchpoints. Needs [`Capability::CpuState`].
     Breakpoints,
     /// Resolve an address (`0x...`) or a name against the core 0 ELF. Needs
@@ -511,6 +537,13 @@ pub enum Response {
     CpuRegs(CpuRegs),
     /// The breakpoints and watchpoints that are set.
     Breakpoints(Vec<BreakpointInfo>),
+    /// Disassembled instructions.
+    Disasm {
+        /// Whether Thumb decoding was used.
+        thumb: bool,
+        /// The instructions.
+        lines: Vec<DisasmLine>,
+    },
     /// A resolved symbol.
     Symbol(SymbolInfo),
     /// Guest memory contents.

@@ -8,6 +8,7 @@
 //! (see [`sim`]); every status reports it as [`Fidelity::Demo`].
 
 mod bytelog;
+mod disasm;
 mod duration;
 mod elf;
 mod engine;
@@ -39,8 +40,9 @@ pub use tools::{
     find_vivado, locate, locate_binary,
 };
 pub use types::{
-    AudioSpec, BreakKind, BreakpointInfo, Capability, Command, CpuRegs, DebugStatus, Event,
-    Fidelity, Input, MediaStatus, Query, Response, Status, SymbolInfo, TraceFormat, VideoSpec,
+    AudioSpec, BreakKind, BreakpointInfo, Capability, Command, CpuRegs, DebugStatus, DisasmLine,
+    Event, Fidelity, Input, MediaStatus, Query, Response, Status, SymbolInfo, TraceFormat,
+    VideoSpec,
 };
 
 /// Board definition, state, rendering and hit-testing.
