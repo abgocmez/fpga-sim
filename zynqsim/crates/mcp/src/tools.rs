@@ -207,7 +207,9 @@ pub fn tool_defs() -> Vec<ToolDef> {
             "Read r0-r15, CPSR and the mode of a Cortex-A9 core. Only possible while the guest is \
              stopped at a breakpoint or watchpoint (the project must have `[debug] enabled = \
              true`): set one with `breakpoint_set`, `sim_run`, and read the registers when the \
-             result says `debug.stopped`. A paused-but-not-stopped machine cannot be read.",
+             result says `debug.stopped`. A paused-but-not-stopped machine cannot be read. When \
+             the ELF has DWARF line info the result has `pc_source` (file and line) and \
+             `source_context` (the lines around it, when the file is found).",
             Needs(C::CpuState),
             object(
                 vec![("core", integer("Core index.", Some(0), Some(1), &[0]))],
@@ -281,8 +283,42 @@ pub fn tool_defs() -> Vec<ToolDef> {
             ),
         ),
         t(
+            "source_line",
+            "The source position of a code address, from the ELF's DWARF line table: file, \
+             line, column, function, and a few numbered lines of the file around it (`lines`, \
+             the current one marked). Give `addr`, a `symbol` or a `location` (`main.rs:42`). \
+             The file is found through the compilation directory recorded in the ELF, the \
+             project directory and `[debug] source_dirs`; if it is not found the position is \
+             still returned with `source_unavailable`. Fails if the ELF was built without \
+             debug info.",
+            Needs(C::MemoryAccess),
+            object(
+                vec![
+                    ("addr", integer("Code address.", Some(0), None, &[0x100000])),
+                    ("symbol", string("ELF symbol name or address.", &["main"])),
+                    (
+                        "location",
+                        string("Source line `file.rs:LINE`.", &["main.rs:42"]),
+                    ),
+                    (
+                        "context",
+                        integer(
+                            "Lines of context on each side (default 3).",
+                            Some(0),
+                            Some(50),
+                            &[3],
+                        ),
+                    ),
+                ],
+                &[],
+            ),
+        ),
+        t(
             "breakpoint_set",
-            "Set (or clear, with `enable` false) an execution breakpoint. `sim_run` then stops \
+            "Set (or clear, with `enable` false) an execution breakpoint at an address \
+             (`addr`) or at a `location`: a symbol, a hex address or a source line \
+             `file.rs:LINE` (needs DWARF line info; a line that starts code in several places \
+             gets one breakpoint at each). `sim_run` then stops \
              when the guest reaches it and reports `debug.stopped`; the next `sim_run` continues. \
              Needs a project with `[debug] enabled = true`. Setting one while the machine is \
              merely paused takes effect within the next quantum, at a wall-clock-dependent \
@@ -291,9 +327,16 @@ pub fn tool_defs() -> Vec<ToolDef> {
             object(
                 vec![
                     ("addr", integer("Address.", Some(0), None, &[0x100000])),
+                    (
+                        "location",
+                        string(
+                            "Symbol, hex address or `file.rs:LINE` (instead of `addr`).",
+                            &["main.rs:42"],
+                        ),
+                    ),
                     ("enable", boolean("False clears it (default true).")),
                 ],
-                &["addr"],
+                &[],
             ),
         ),
         t(
@@ -795,6 +838,7 @@ mod tests {
                 &"pmod_frame",
                 &"pmod_set",
                 &"pmod_state",
+                &"source_line",
                 &"trace_get"
             ],
             "undocumented extensions"
