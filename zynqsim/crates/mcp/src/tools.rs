@@ -410,20 +410,41 @@ pub fn tool_defs() -> Vec<ToolDef> {
         ),
         t(
             "pmod_attach",
-            "Attach a Pmod module (OLED, temperature sensor, ...) to a port. Not available yet.",
-            Planned("P2"),
+            "Attach a Pmod module to a port JA..JE so its display and state follow the pins the \
+             PL design drives. Available: `oled` (128x32 SSD1306 SPI, Digilent Pmod OLED pinout: \
+             1 CS, 2 SDIN, 4 SCLK, 7 D/C, 8 RES). Only RTL designs that report their Pmod pins \
+             (the `zs_pin_out` DPI, see fixtures/rtl/pmod) have a module to talk to. Modules can \
+             also be declared in project.toml (`[devices] pmod_ja = \"oled\"`).",
+            Needs(C::Pmod),
             object(
                 vec![
-                    ("port", string("Pmod port id.", &["JA"])),
-                    ("module", string("Module kind.", &["oled"])),
+                    (
+                        "port",
+                        enumeration("Pmod port.", &["JA", "JB", "JC", "JD", "JE"]),
+                    ),
+                    ("module", enumeration("Module kind.", &["oled"])),
                 ],
                 &["port", "module"],
             ),
         ),
         t(
+            "pmod_frame",
+            "The picture the module on a Pmod port shows, as a PNG (the OLED's 128x32 display), \
+             with its state line.",
+            Needs(C::Pmod),
+            object(
+                vec![(
+                    "port",
+                    enumeration("Pmod port.", &["JA", "JB", "JC", "JD", "JE"]),
+                )],
+                &["port"],
+            ),
+        ),
+        t(
             "pin_get",
-            "Read the logic level (0, 1 or Z) of a named pin or control.",
-            Needs(C::BoardIo),
+            "Read the logic level (0, 1 or Z) of a named pin or control. Pmod pins follow what the \
+             PL design drives (see `status_get` capabilities for `pmod`).",
+            Open,
             object(
                 vec![(
                     "name",
@@ -691,7 +712,7 @@ mod tests {
         extra.sort();
         assert_eq!(
             extra,
-            vec![&"media_source_set", &"trace_get"],
+            vec![&"media_source_set", &"pmod_frame", &"trace_get"],
             "undocumented extensions"
         );
     }

@@ -176,7 +176,7 @@ fn unsupported_tools_say_why_instead_of_guessing() {
     let code = h.err(
         "pmod_attach",
         json!({ "port": "JA", "module": "oled" }),
-        "planned for milestone P2",
+        "`Pmod` capability",
     );
     assert_eq!(code, "unsupported");
     h.err(
@@ -864,4 +864,95 @@ fn debugger_through_mcp() {
     // Bad arguments are refused.
     let r = call("cpu_disasm", json!({ "addr": 0x100614, "count": 0 }));
     assert_eq!(r["isError"], true);
+}
+
+/// Pmod OLED through MCP: the device declared in the project shows the text
+/// the firmware drew; attaching works at run time and is refused when it
+/// cannot.
+#[test]
+fn pmod_oled_through_mcp() {
+    let ws = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut server = zynqsim_mcp::McpServer::new(vec![ws.clone()]).unwrap();
+    let mut call = |name: &str, args: serde_json::Value| -> serde_json::Value {
+        server
+            .handle(
+                json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                        "params": { "name": name, "arguments": args } }),
+                &mut zynqsim_mcp::NoControl,
+            )
+            .unwrap()["result"]
+            .clone()
+    };
+    let backends = call("backend_list", json!({}))["structuredContent"]["backends"].clone();
+    let found = |n: &str| {
+        backends
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|b| b["name"] == n && b["found"] == true)
+    };
+    if !found("qemu") || !found("xsim") {
+        eprintln!("SKIPPED: needs the Xilinx QEMU and Vivado XSim");
+        return;
+    }
+    assert!(ws.join("target/dpi/release/libxsim_dpi.a").is_file());
+
+    // A design without Pmod pins refuses the tools.
+    let open = call("project_open", json!({ "path": "examples/math-qemu" }));
+    assert_eq!(open["isError"], false, "{open}");
+    let r = call("pmod_attach", json!({ "port": "JA", "module": "oled" }));
+    assert_eq!(r["isError"], true, "{r}");
+
+    let open = call("project_open", json!({ "path": "examples/oled-demo" }));
+    assert_eq!(open["isError"], false, "{open}");
+    let st = call("status_get", json!({}))["structuredContent"]["status"].clone();
+    assert!(
+        st["capabilities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c == "pmod"),
+        "{st}"
+    );
+    let before = call("pmod_frame", json!({ "port": "JA" }));
+    assert_eq!(before["isError"], false, "{before}");
+    assert!(
+        before["structuredContent"]["state"]
+            .as_str()
+            .unwrap()
+            .contains("off")
+    );
+
+    let run = call("sim_run", json!({ "duration": "4ms" }));
+    assert_eq!(run["isError"], false, "{run}");
+    let f = call("pmod_frame", json!({ "port": "JA" }));
+    assert_eq!(f["isError"], false, "{f}");
+    let sc = &f["structuredContent"];
+    assert_eq!(
+        (sc["width"].as_u64(), sc["height"].as_u64()),
+        (Some(128), Some(32))
+    );
+    assert!(sc["state"].as_str().unwrap().contains("on"), "{sc}");
+    let img = f["content"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["type"] == "image")
+        .expect("an image block");
+    assert!(img["data"].as_str().unwrap().starts_with("iVBOR"));
+
+    // The pins are visible too.
+    let pin = call("pin_get", json!({ "name": "JA1" }));
+    assert_eq!(pin["isError"], false, "{pin}");
+    assert!(["0", "1"].contains(&pin["structuredContent"]["level"].as_str().unwrap()));
+
+    // Attach: a second device on JA is refused, JB takes one, JF is not a PL port.
+    let r = call("pmod_attach", json!({ "port": "JA", "module": "oled" }));
+    assert_eq!(r["isError"], true, "{r}");
+    let r = call("pmod_attach", json!({ "port": "JB", "module": "oled" }));
+    assert_eq!(r["isError"], false, "{r}");
+    let r = call("pmod_attach", json!({ "port": "JF", "module": "oled" }));
+    assert_eq!(r["isError"], true, "{r}");
+    let r = call("pmod_attach", json!({ "port": "JC", "module": "toaster" }));
+    assert_eq!(r["isError"], true, "{r}");
 }

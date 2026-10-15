@@ -1,0 +1,37 @@
+# Text on a Pmod OLED (SSD1306, 128x32) on Pmod JA. A PL block (fixtures/rtl/pmod/oled_spi.v)
+# is an SPI master the Rust firmware (firmware/oled_demo) drives; the testbench was generated
+# with `zynqsim init --ip fixtures/rtl/pmod/oled_spi.v`, which reports the JA pins to the host,
+# where the SSD1306 model (crates/devices) decodes the SPI traffic into a picture.
+#
+#   zynqsim run --project examples/oled-demo/project.toml --for 3ms --device-out JA=oled.png
+#   (or open it in the GUI: the Pmod OLED panel shows the display)
+#
+# Needs: Xilinx QEMU (Vitis), Vivado XSim, and the DPI library (`cargo xtask dpi`).
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "xsim"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_oled.elf"
+
+[rtl]
+files = [
+    "../../fixtures/rtl/pmod/oled_spi.v",
+    "../../fixtures/rtl/pmod/cosim_top.sv",
+]
+top = "cosim_top"
+
+[devices]
+pmod_ja = "oled"

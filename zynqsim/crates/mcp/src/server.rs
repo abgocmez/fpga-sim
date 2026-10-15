@@ -496,6 +496,42 @@ impl McpServer {
                     r => Err(unexpected(&r)),
                 }
             }
+            "pmod_attach" => {
+                let port = pmod_index(str_arg(a, "port")?)?;
+                let kind = str_arg(a, "module")?.to_string();
+                self.client.command(Command::AttachDevice {
+                    port,
+                    kind: kind.clone(),
+                })?;
+                Ok(Out::json(json!({ "port": a["port"], "module": kind })))
+            }
+            "pmod_frame" => {
+                let port = pmod_index(str_arg(a, "port")?)?;
+                match self.client.query(Query::DeviceImage { port })? {
+                    Response::DeviceImage {
+                        kind,
+                        width,
+                        height,
+                        png,
+                        description,
+                        ..
+                    } => {
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+                        let mut out = Out::json(json!({
+                            "port": a["port"],
+                            "module": kind,
+                            "mime_type": "image/png",
+                            "width": width,
+                            "height": height,
+                            "state": description,
+                        }));
+                        out.extra
+                            .push(json!({ "type": "image", "data": b64, "mimeType": "image/png" }));
+                        Ok(out)
+                    }
+                    r => Err(unexpected(&r)),
+                }
+            }
             "breakpoint_list" => match self.client.query(Query::Breakpoints)? {
                 Response::Breakpoints(list) => Ok(Out::json(json!({ "breakpoints": list }))),
                 r => Err(unexpected(&r)),
@@ -981,6 +1017,20 @@ impl McpServer {
 
 fn to_pretty(v: &Value) -> String {
     serde_json::to_string_pretty(v).unwrap_or_default()
+}
+
+/// `JA`..`JE` (any case) to the port index 0..=4.
+fn pmod_index(s: &str) -> Result<u8, ApiError> {
+    match s.to_ascii_uppercase().as_str() {
+        "JA" => Ok(0),
+        "JB" => Ok(1),
+        "JC" => Ok(2),
+        "JD" => Ok(3),
+        "JE" => Ok(4),
+        other => Err(ApiError::invalid_argument(format!(
+            "`{other}` is not a Pmod port with PL pins (JA..JE)"
+        ))),
+    }
 }
 
 fn unexpected(r: &Response) -> ApiError {

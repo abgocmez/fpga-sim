@@ -37,21 +37,23 @@ pub use recording::{
 pub use server::SimClient;
 pub use sim::Simulator;
 pub use tbgen::{
-    AxiLite, AxiMaster, Dir, ModuleInfo, Port, detect_axi_lite, detect_axi_master, detect_irqs,
-    generate_project, generate_testbench, parse_module, relative_path,
+    AxiLite, AxiMaster, Dir, ModuleInfo, PinGroup, Port, detect_axi_lite, detect_axi_master,
+    detect_irqs, detect_pin_groups, generate_project, generate_testbench, parse_module,
+    relative_path,
 };
 pub use tools::{
     BackendInfo, BackendKind, BackendRole, detect_backends, find_dpi_lib, find_on_path,
     find_vivado, locate, locate_binary,
 };
 pub use types::{
-    AudioSpec, BreakKind, BreakpointInfo, Capability, Command, CpuRegs, DebugStatus, DisasmLine,
-    Event, Fidelity, Input, MediaStatus, Query, Response, Status, SymbolInfo, TraceFormat,
-    VideoSpec,
+    AudioSpec, BreakKind, BreakpointInfo, Capability, Command, CpuRegs, DebugStatus, DeviceStatus,
+    DisasmLine, Event, Fidelity, Input, MediaStatus, Query, Response, Status, SymbolInfo,
+    TraceFormat, VideoSpec,
 };
 
 /// Board definition, state, rendering and hit-testing.
 pub use board_zybo as board;
+pub use devices::font5x7;
 pub use pl_api::media::{SAMPLE_RATE as AUDIO_SAMPLE_RATE, parse_wav};
 /// Picosecond time type.
 pub use sim_core::Ps;

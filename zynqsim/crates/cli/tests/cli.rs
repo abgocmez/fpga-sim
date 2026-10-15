@@ -998,3 +998,134 @@ fn init_ip_generates_the_dma_testbench_with_a_memory_bridge() {
         "generated and hand-written testbenches behave identically"
     );
 }
+
+// -------------------------------------------------------------- Pmod OLED
+
+/// Expected panel pixels of the OLED demo: the four lines of text in the
+/// shared 5x7 font, upright (the firmware compensates the remap), 6 columns
+/// per character, one 8-pixel page per line.
+fn oled_expected() -> Vec<bool> {
+    let lines = [
+        "ZYNQSIM OLED",
+        "HELLO FROM RUST",
+        "PS PL 100 MHZ",
+        "RESULT: PASS",
+    ];
+    let mut px = vec![false; 128 * 32];
+    for (page, line) in lines.iter().enumerate() {
+        for (i, c) in line.bytes().enumerate() {
+            let g = sim_api::font5x7::glyph(c);
+            for (cx, col) in g.iter().enumerate() {
+                for bit in 0..7 {
+                    if col >> bit & 1 != 0 {
+                        px[(page * 8 + bit) * 128 + i * 6 + cx] = true;
+                    }
+                }
+            }
+        }
+    }
+    px
+}
+
+/// Firmware -> AXI-Lite -> SPI master RTL -> JA pins -> host SSD1306 model:
+/// the picture is exactly the text the firmware drew.
+#[test]
+fn oled_demo_draws_text_pixel_exact() {
+    if !qemu_available() || !xsim_available() {
+        eprintln!("SKIPPED: needs the Xilinx QEMU and Vivado XSim");
+        return;
+    }
+    ensure_dpi_lib();
+    let d = temp("oled");
+    let png = d.join("oled.png");
+    let o = zynqsim(&[
+        "--json",
+        "run",
+        "--project",
+        &example("oled-demo"),
+        "--for",
+        "4ms",
+        "--device-out",
+        &format!("JA={}", png.display()),
+    ]);
+    assert_eq!(
+        o.status.code(),
+        Some(0),
+        "{} {}",
+        stdout(&o),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let v: Value = serde_json::from_str(&stdout(&o)).unwrap();
+    assert!(
+        v["uart"]["1"]
+            .as_str()
+            .unwrap()
+            .contains("RESULT: ALL PASS")
+    );
+    assert_eq!(v["devices"][0]["kind"], "oled");
+    assert!(
+        v["devices"][0]["description"]
+            .as_str()
+            .unwrap()
+            .contains("512 data byte(s)"),
+        "{v}"
+    );
+
+    let (w, h, rgb) = sim_api::board::decode_png_rgb(&std::fs::read(&png).unwrap()).unwrap();
+    assert_eq!((w, h), (128, 32));
+    let want = oled_expected();
+    let mut bad = 0;
+    for y in 0..32usize {
+        for x in 0..128usize {
+            let lit = rgb[(y * 128 + x) * 3 + 2] > 128;
+            if lit != want[y * 128 + x] {
+                bad += 1;
+            }
+        }
+    }
+    assert_eq!(bad, 0, "pixels differ from the expected text");
+    assert!(want.iter().filter(|p| **p).count() > 150, "text has pixels");
+}
+
+/// RGB LEDs: six PWM pins reported by the testbench become duty cycles.
+#[test]
+fn rgb_demo_averages_the_pwm_pins_into_colours() {
+    if !qemu_available() || !xsim_available() {
+        eprintln!("SKIPPED: needs the Xilinx QEMU and Vivado XSim");
+        return;
+    }
+    ensure_dpi_lib();
+    let o = zynqsim(&[
+        "--json",
+        "run",
+        "--project",
+        &example("rgb-demo"),
+        "--for",
+        "2ms",
+    ]);
+    assert_eq!(
+        o.status.code(),
+        Some(0),
+        "{} {}",
+        stdout(&o),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let v: Value = serde_json::from_str(&stdout(&o)).unwrap();
+    assert!(
+        v["uart"]["1"]
+            .as_str()
+            .unwrap()
+            .contains("RESULT: ALL PASS")
+    );
+    let want = [[64i64, 128, 255], [255, 0, 32]];
+    for (led, w) in want.iter().enumerate() {
+        for (ch, d) in w.iter().enumerate() {
+            let got = v["rgb"][led][ch].as_i64().unwrap();
+            assert!(
+                (got - d).abs() <= 4,
+                "LED {led} channel {ch}: duty {got}, wanted about {d}: {}",
+                v["rgb"]
+            );
+        }
+    }
+}

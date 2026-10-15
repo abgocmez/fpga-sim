@@ -1,0 +1,32 @@
+# The two RGB LEDs (LD5, LD6) driven by a PWM block in the PL (fixtures/rtl/pmod/rgb_pwm.v).
+# The testbench reports the six pins as a pin group; the host averages them into duty cycles,
+# which the board view shows as colours.
+#
+#   zynqsim run --project examples/rgb-demo/project.toml --for 2ms --json    ("rgb": [[64,128,254],[254,0,32]])
+#
+# Needs: Xilinx QEMU (Vitis), Vivado XSim, and the DPI library (`cargo xtask dpi`).
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "xsim"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_rgb.elf"
+
+[rtl]
+files = [
+    "../../fixtures/rtl/pmod/rgb_pwm.v",
+    "../../fixtures/rtl/pmod/rgb_cosim_top.sv",
+]
+top = "cosim_top"

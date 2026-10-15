@@ -351,6 +351,11 @@ impl App {
                 );
             }
         });
+        if !self.model.device_images.is_empty() {
+            egui::CollapsingHeader::new("Pmod devices")
+                .default_open(true)
+                .show(ui, |ui| self.devices_panel(ui));
+        }
         if self.model.has_media() {
             egui::CollapsingHeader::new("HDMI")
                 .default_open(true)

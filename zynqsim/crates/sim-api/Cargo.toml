@@ -9,6 +9,7 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+devices = { path = "../devices" }
 backend-qemu = { version = "0.1.0", path = "../backend-qemu" }
 backend-rtl-xsim = { version = "0.1.0", path = "../backend-rtl-xsim" }
 board-zybo = { version = "0.1.0", path = "../board-zybo" }

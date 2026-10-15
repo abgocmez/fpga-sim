@@ -44,6 +44,11 @@ pub const DEV_VIDEO_IN: u32 = 16;
 pub const DEV_AUDIO_IN: u32 = 17;
 /// Codec register writes: interrupt packets, `line` = register, `vector` = value.
 pub const DEV_CODEC_REG: u32 = 18;
+/// Pin-group levels leaving the PL: interrupt packets, `line` = group, `val` =
+/// eight pin levels.
+pub const DEV_PIN_OUT: u32 = 19;
+/// Pin-group input levels sent by the host: `line` = group, `val` = levels.
+pub const DEV_PIN_IN: u32 = 20;
 /// Audio frames sent per bus packet (and fetched per read).
 const AUDIO_BLOCK: usize = 64;
 
@@ -180,6 +185,8 @@ pub struct Dpi<T: Transport> {
     /// Board input pins last sent by the host.
     switches: u8,
     buttons: u8,
+    /// Latest host-driven levels per pin group.
+    pins_in: [u8; 8],
     vtx: VideoTx,
     vrx_line: Vec<u8>,
     atx_buf: Vec<i16>,
@@ -224,6 +231,7 @@ impl<T: Transport> Dpi<T> {
             stage: vec![0; DATA_MAX],
             switches: 0,
             buttons: 0,
+            pins_in: [0; 8],
             vtx: VideoTx::default(),
             vrx_line: Vec::new(),
             atx_buf: Vec::new(),
@@ -351,6 +359,11 @@ impl<T: Transport> Dpi<T> {
                         flags: s.flags | flags::RESPONSE,
                         ..s
                     }));
+                }
+            }
+            Packet::Interrupt(i) if i.dev == DEV_PIN_IN => {
+                if let Some(slot) = self.pins_in.get_mut(i.line as usize) {
+                    *slot = i.val;
                 }
             }
             Packet::Interrupt(i) if i.dev == DEV_BOARD_IN => match i.line {
@@ -733,6 +746,31 @@ impl<T: Transport> Dpi<T> {
             }
         }
         (self.switches, self.buttons)
+    }
+
+    /// Reports the levels of pin group `group` to the host, stamped `now_ns`.
+    pub fn pin_out(&mut self, group: u32, levels: u32, now_ns: u64) {
+        let id = self.alloc_id();
+        self.send(&Packet::Interrupt(Interrupt {
+            id,
+            flags: flags::POSTED,
+            dev: DEV_PIN_OUT,
+            timestamp: now_ns,
+            vector: 0,
+            line: group & 0xFF,
+            val: (levels & 0xFF) as u8,
+        }));
+    }
+
+    /// The latest host-driven levels of pin group `group`. Pumps packets that
+    /// are already waiting, like [`Dpi::board_inputs`].
+    pub fn pin_in(&mut self, group: u32) -> u8 {
+        for _ in 0..16 {
+            if self.poll(0) != 1 {
+                break;
+            }
+        }
+        self.pins_in.get(group as usize).copied().unwrap_or(0)
     }
 
     /// Handles a testbench telemetry event. Only `{"k":"led","v":N,"t":T}` is
@@ -1236,6 +1274,49 @@ mod tests {
             .recv_timeout(Duration::from_millis(50))
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn pin_groups_are_reported_and_driven() {
+        let (mut dpi, mut host) = pair();
+        // Outputs: one posted packet per call, stamped with the given time.
+        dpi.pin_out(2, 0xA5, 4321);
+        dpi.pin_out(6, 0b10_0001, 5000);
+        for (group, levels, t) in [(2u32, 0xA5u8, 4321u64), (6, 0b10_0001, 5000)] {
+            match host.recv().unwrap() {
+                Packet::Interrupt(i) => {
+                    assert_eq!(
+                        (i.dev, i.line, i.val, i.timestamp),
+                        (DEV_PIN_OUT, group, levels, t)
+                    );
+                    assert_eq!(i.flags & flags::POSTED, flags::POSTED);
+                }
+                p => panic!("{p:?}"),
+            }
+        }
+        // Inputs: the latest value per group, 0 for a group never driven.
+        for (line, val) in [(1u32, 0x0Fu8), (1, 0xF0), (3, 0x11)] {
+            host.send(&Packet::Interrupt(Interrupt {
+                id: 0,
+                flags: flags::POSTED,
+                dev: DEV_PIN_IN,
+                timestamp: 10,
+                vector: 0,
+                line,
+                val,
+            }))
+            .unwrap();
+        }
+        let mut got = (0, 0, 0);
+        for _ in 0..200 {
+            got = (dpi.pin_in(1), dpi.pin_in(3), dpi.pin_in(0));
+            if got == (0xF0, 0x11, 0) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(got, (0xF0, 0x11, 0));
+        assert_eq!(dpi.pin_in(99), 0, "unknown groups read as zero");
     }
 
     /// Answers one host-side read with `data` produced by `f(addr, len)`.

@@ -79,6 +79,9 @@ enum Cmd {
         /// After the run, save the codec DAC audio (newest 10 s at most) as WAV.
         #[arg(long = "audio-out")]
         audio_out: Option<PathBuf>,
+        /// After the run, save a Pmod device's picture: `JA=FILE.png`.
+        #[arg(long = "device-out")]
+        device_out: Vec<String>,
     },
     /// Replay a recording and check that the trace digest matches.
     Test {
@@ -209,6 +212,7 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
             audio_in,
             video_out,
             audio_out,
+            device_out,
         } => cmd_run(
             json,
             RunArgs {
@@ -226,6 +230,7 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
                 audio_in,
                 video_out,
                 audio_out,
+                device_out,
             },
         ),
         Cmd::Test { recording } => cmd_test(json, &recording),
@@ -277,6 +282,7 @@ struct RunArgs {
     audio_in: Option<String>,
     video_out: Option<PathBuf>,
     audio_out: Option<PathBuf>,
+    device_out: Vec<String>,
 }
 
 fn parse_addr(s: &str) -> Result<u64, Failure> {
@@ -470,6 +476,23 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
         write_file(Path::new(parts[2]), &png)?;
     }
 
+    for spec in &a.device_out {
+        let (port, file) = spec
+            .split_once('=')
+            .ok_or_else(|| fail(2, format!("--device-out `{spec}`: expected JA=FILE.png")))?;
+        let idx = match port.to_ascii_uppercase().as_str() {
+            "JA" => 0u8,
+            "JB" => 1,
+            "JC" => 2,
+            "JD" => 3,
+            "JE" => 4,
+            other => return Err(fail(2, format!("`{other}` is not a Pmod port (JA..JE)"))),
+        };
+        match engine.query(&Query::DeviceImage { port: idx }, false)? {
+            Response::DeviceImage { png, .. } => write_file(Path::new(file), &png)?,
+            r => return Err(fail(2, format!("unexpected response {r:?}"))),
+        }
+    }
     if let Some(p) = &a.video_out {
         match engine.query(&Query::VideoFrame, false)? {
             Response::Video { png, .. } => write_file(p, &png)?,
@@ -525,6 +548,8 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
                 "bus_accesses": bus_accesses,
                 "trace_dropped": engine.trace().dropped(),
                 "media": st.media,
+                "devices": st.devices,
+                "rgb": engine.board().rgb,
                 "leds": leds,
                 "uart": { "0": u0, "1": u1 },
                 "inputs": recording.as_ref().map(|r| r.entries.len()),

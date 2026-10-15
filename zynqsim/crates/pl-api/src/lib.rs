@@ -86,6 +86,14 @@ pub const DEV_BOARD_IN: u32 = 12;
 /// Device number the testbench side uses to report board output pins (LEDs on
 /// line 0, 4 bits in `val`).
 pub const DEV_BOARD_OUT: u32 = 13;
+/// Device number the testbench side uses to report the levels of a *pin
+/// group* (a Pmod port or the RGB LEDs): interrupt packets, `line` = group,
+/// `val` = 8 pin levels, stamped with the PL time of the change.
+pub const DEV_PIN_OUT: u32 = 19;
+/// Device number the adapter uses to drive input pin groups (Pmod buttons...).
+pub const DEV_PIN_IN: u32 = 20;
+/// Pin group of the RGB LEDs: bits 0..2 = LD5 R,G,B and bits 3..5 = LD6 R,G,B.
+pub const PIN_GROUP_RGB: u8 = 6;
 
 /// A memory access the PL itself initiated (a PL master, for example a DMA
 /// engine on `S_AXI_HP0`), for the trace.
@@ -105,6 +113,18 @@ pub struct MasterAccess {
     pub data: u64,
     /// False if the PS answered with an error.
     pub ok: bool,
+}
+
+/// The levels of a pin group changed (Pmod port `group` 0..=4 are JA..JE,
+/// [`PIN_GROUP_RGB`] the RGB LEDs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PinEvent {
+    /// PL time of the change in nanoseconds.
+    pub t_ns: u64,
+    /// Pin group.
+    pub group: u8,
+    /// Levels of the group's eight pins, bit *n* = pin *n*.
+    pub levels: u8,
 }
 
 /// A change of the PL's board-facing output pins.
@@ -178,6 +198,20 @@ pub trait PlTarget {
     fn drain_board_outputs(&mut self) -> Vec<BoardOutput> {
         Vec::new()
     }
+
+    /// True when the PL design reports Pmod/RGB pin groups.
+    fn has_pin_groups(&self) -> bool {
+        false
+    }
+
+    /// Removes and returns the pin-group changes seen since the last call.
+    fn drain_pin_events(&mut self) -> Vec<PinEvent> {
+        Vec::new()
+    }
+
+    /// Drives the input levels of a pin group (for example a Pmod button
+    /// module) at PS time `now_ns`.
+    fn set_pin_inputs(&mut self, _group: u8, _levels: u8, _now_ns: u64) {}
 
     /// True when this PL carries the board's audio codec and HDMI models.
     fn has_media(&self) -> bool {

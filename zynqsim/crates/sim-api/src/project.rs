@@ -441,7 +441,14 @@ impl Project {
                     _ => backend_qemu::UartMode::File,
                 };
                 let debug = self.debug.clone().unwrap_or_default();
+                let mut devices = Vec::new();
+                for (k, v) in &self.devices {
+                    if let Some(port) = pmod_port(k) {
+                        devices.push((port, v.clone()));
+                    }
+                }
                 let spec = crate::QemuSpec {
+                    devices,
                     debug: debug.enabled,
                     breakpoints: debug.breakpoints.clone(),
                     qemu,
@@ -682,6 +689,31 @@ impl Project {
                 d.push(err(&format!("connect.\"{key}\""), msg));
             }
         }
+        for (k, v) in &self.devices {
+            let field = format!("devices.{k}");
+            match pmod_port(k) {
+                None => d.push(err(
+                    &field,
+                    "unknown connector; Pmod ports are pmod_ja, pmod_jb, pmod_jc, pmod_jd, pmod_je",
+                )),
+                Some(_) => {
+                    if !devices::KINDS.contains(&v.as_str()) {
+                        d.push(err(
+                            &field,
+                            format!(
+                                "unknown device `{v}`; available: {}",
+                                devices::KINDS.join(", ")
+                            ),
+                        ));
+                    } else if self.backends.pl != "xsim" {
+                        d.push(warn(
+                            &field,
+                            "Pmod pins are driven only by an RTL design in XSim (backends.pl = \"xsim\")",
+                        ));
+                    }
+                }
+            }
+        }
         d
     }
 }
@@ -720,6 +752,18 @@ fn unique_run_name() -> String {
         std::process::id(),
         COUNTER.fetch_add(1, Ordering::SeqCst)
     )
+}
+
+/// `pmod_ja` .. `pmod_je` to the port index 0..=4.
+pub(crate) fn pmod_port(key: &str) -> Option<u8> {
+    match key {
+        "pmod_ja" => Some(0),
+        "pmod_jb" => Some(1),
+        "pmod_jc" => Some(2),
+        "pmod_jd" => Some(3),
+        "pmod_je" => Some(4),
+        _ => None,
+    }
 }
 
 fn resolve(base: &Path, rel: &str) -> PathBuf {
@@ -844,6 +888,53 @@ seed = 7
     fn starter_project_is_valid() {
         let p = Project::from_toml(starter_project_toml()).unwrap();
         assert!(p.validate(Path::new(".")).is_empty());
+    }
+
+    #[test]
+    fn devices_are_validated_by_connector_and_kind() {
+        let base = "schema_version = 1
+[board]
+name = \"zybo-z7-20\"
+";
+        let ok = Project::from_toml(&format!(
+            "{base}[backends]
+ps = \"qemu\"
+pl = \"xsim\"
+[devices]
+pmod_ja = \"oled\"
+"
+        ))
+        .unwrap();
+        let findings = ok.validate(Path::new("."));
+        assert!(
+            findings.iter().all(|d| !d.field.starts_with("devices")),
+            "{findings:?}"
+        );
+
+        let bad = Project::from_toml(&format!(
+            "{base}[devices]
+pmod_jz = \"oled\"
+pmod_jb = \"toaster\"
+pmod_jc = \"oled\"
+"
+        ))
+        .unwrap();
+        let findings = bad.validate(Path::new("."));
+        let msg = |f: &str| {
+            findings
+                .iter()
+                .find(|d| d.field == f)
+                .map(|d| (d.severity, d.message.clone()))
+        };
+        let (sev, m) = msg("devices.pmod_jz").expect("unknown connector");
+        assert_eq!(sev, Severity::Error);
+        assert!(m.contains("pmod_ja"), "{m}");
+        let (sev, m) = msg("devices.pmod_jb").expect("unknown device");
+        assert_eq!(sev, Severity::Error);
+        assert!(m.contains("oled"), "{m}");
+        // A valid device on a non-RTL PL is allowed but flagged.
+        let (sev, _) = msg("devices.pmod_jc").expect("warning");
+        assert_eq!(sev, Severity::Warning);
     }
 
     #[test]

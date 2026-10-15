@@ -27,7 +27,8 @@ use interop::{
 use pl_api::media::{DEV_AUDIO_IN, DEV_AUDIO_OUT, DEV_CODEC_REG, DEV_VIDEO_IN, DEV_VIDEO_OUT};
 use pl_api::{
     AudioSource, BoardOutput, BusError, BusResult, DEV_BOARD_IN, DEV_BOARD_OUT, DEV_M_AXI_GP0,
-    DEV_WIRES_PS_TO_PL, MasterAccess, MediaEvent, PlTarget, PsMasterPort, PsPort, VideoSource,
+    DEV_PIN_IN, DEV_PIN_OUT, DEV_WIRES_PS_TO_PL, MasterAccess, MediaEvent, PinEvent, PlTarget,
+    PsMasterPort, PsPort, VideoSource,
 };
 use std::fmt;
 use std::fs;
@@ -155,6 +156,9 @@ pub struct XsimPl {
     has_media: bool,
     /// The design uses the board switch/button/LED DPI functions.
     has_pins: bool,
+    /// The design uses the Pmod/RGB pin-group DPI functions.
+    has_pin_groups: bool,
+    pin_events: Vec<PinEvent>,
     work_dir: PathBuf,
     now_ns: u64,
 }
@@ -476,6 +480,8 @@ impl XsimPl {
                 &["zs_ssm2603", "zs_hdmi", "zs_audio_", "zs_video_"],
             ),
             has_pins: sources_mention(&cfg.sources, &["tel_ctrl", "tel_event"]),
+            has_pin_groups: sources_mention(&cfg.sources, &["zs_pin_"]),
+            pin_events: Vec::new(),
             work_dir: work,
             now_ns: 0,
         })
@@ -516,6 +522,13 @@ impl XsimPl {
                     t_ns: i.timestamp,
                     reg: i.line as u8,
                     value: (i.vector & 0x1FF) as u16,
+                });
+            }
+            Packet::Interrupt(i) if i.dev == DEV_PIN_OUT => {
+                self.pin_events.push(PinEvent {
+                    t_ns: i.timestamp,
+                    group: i.line as u8,
+                    levels: i.val,
                 });
             }
             Packet::Interrupt(i) if i.dev == DEV_BOARD_OUT => {
@@ -796,6 +809,30 @@ impl PlTarget for XsimPl {
 
     fn has_board_pins(&self) -> bool {
         self.has_pins
+    }
+
+    fn has_pin_groups(&self) -> bool {
+        self.has_pin_groups
+    }
+
+    fn drain_pin_events(&mut self) -> Vec<PinEvent> {
+        std::mem::take(&mut self.pin_events)
+    }
+
+    fn set_pin_inputs(&mut self, group: u8, levels: u8, now_ns: u64) {
+        if self.finished {
+            return;
+        }
+        let id = self.rp.alloc_id();
+        let _ = self.rp.send(&Packet::Interrupt(Interrupt {
+            id,
+            flags: flags::POSTED,
+            dev: DEV_PIN_IN,
+            timestamp: now_ns,
+            vector: 0,
+            line: u32::from(group),
+            val: levels,
+        }));
     }
 
     fn set_board_inputs(&mut self, switches: u8, buttons: u8, now_ns: u64) {

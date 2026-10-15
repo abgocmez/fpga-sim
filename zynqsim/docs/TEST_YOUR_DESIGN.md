@@ -58,6 +58,12 @@ bridged to the PS's memory through `S_AXI_HP0`, so the IP reads and writes the s
 firmware sees, with a modelled 16-clock latency. Give the second core's firmware with `--elf1`.
 For `dma_xform.v` the generated testbench reproduces the hand-written regression's trace digest.
 
+Eight-bit ports named like a Pmod (`pmod_ja`, `jb_o`, `pmod_jc_i`...) and a six-bit `rgb_leds` are
+forwarded as pin groups: outputs are reported to the host on every change, inputs follow the
+levels the host sets. With `[devices] pmod_ja = "oled"` in the project (or `pmod_attach`), the
+host decodes the SPI traffic of a Digilent Pmod OLED into a picture:
+`zynqsim run ... --device-out JA=oled.png`. See `examples/oled-demo` and `examples/rgb-demo`.
+
 What it does **not** generate: a full AXI4 slave or AXI-Stream, AXI masters that are not 32 bits
 wide, board pins, audio/video. For those start from the hand-written testbenches:
 

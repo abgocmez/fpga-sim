@@ -9,12 +9,14 @@ use crate::bytelog::ByteLog;
 use crate::elf::Symbols;
 use crate::engine::Engine;
 use crate::error::ApiError;
+use crate::types::DeviceStatus;
 use crate::types::{
     AudioSpec, BreakKind, BreakpointInfo, Capability, Command, CpuRegs, DebugStatus, DisasmLine,
     Fidelity, Input, MediaStatus, Query, Response, Status, SymbolInfo, TraceFormat, VideoSpec,
 };
 use backend_qemu::{BreakKind as GdbKind, QemuConfig, QemuError, QemuMachine, RunEnd, UartMode};
 use board_zybo::{BoardDef, BoardState};
+use devices::BoardDevice;
 use pl_api::media::{SAMPLE_RATE, wav_bytes};
 use pl_api::{
     AudioSource, BusResult, MasterAccess, MediaEvent, PlTarget, PsMasterPort, PsPort, VideoSource,
@@ -101,6 +103,8 @@ pub struct QemuSpec {
     pub debug: bool,
     /// Execution breakpoints to plant at start (addresses or ELF symbols).
     pub breakpoints: Vec<String>,
+    /// Devices on Pmod ports: `(port 0..=4 for JA..JE, kind)`.
+    pub devices: Vec<(u8, String)>,
 }
 
 struct BusEvent {
@@ -201,6 +205,18 @@ impl PlTarget for TracedPl {
         self.inner.has_board_pins()
     }
 
+    fn has_pin_groups(&self) -> bool {
+        self.inner.has_pin_groups()
+    }
+
+    fn drain_pin_events(&mut self) -> Vec<pl_api::PinEvent> {
+        self.inner.drain_pin_events()
+    }
+
+    fn set_pin_inputs(&mut self, group: u8, levels: u8, now_ns: u64) {
+        self.inner.set_pin_inputs(group, levels, now_ns);
+    }
+
     fn set_board_inputs(&mut self, switches: u8, buttons: u8, now_ns: u64) {
         self.inner.set_board_inputs(switches, buttons, now_ns);
     }
@@ -236,6 +252,20 @@ fn model(name: &str) -> Option<Box<dyn RegisterBlock>> {
 
 /// Names accepted for `[native]` models.
 pub const NATIVE_MODELS: &[&str] = &["my_math_ip"];
+
+fn make_device(port: u8, kind: &str) -> Result<Box<dyn BoardDevice>, ApiError> {
+    if port > 4 {
+        return Err(ApiError::invalid_argument(
+            "Pmod ports with PL pins are JA..JE (0..=4)",
+        ));
+    }
+    devices::create(kind).ok_or_else(|| {
+        ApiError::invalid_argument(format!(
+            "unknown device `{kind}`; available: {}",
+            devices::KINDS.join(", ")
+        ))
+    })
+}
 
 fn check_size(w: u32, h: u32) -> Result<(), ApiError> {
     if w == 0 || h == 0 || w > 4096 || h > 4096 {
@@ -425,6 +455,9 @@ pub struct QemuEngine {
     journal_ok: bool,
     /// Symbols of core 0's ELF (empty if it has none).
     symbols: Symbols,
+    /// Devices on Pmod ports.
+    devs: Vec<(u8, Box<dyn BoardDevice>)>,
+    rgb: RgbMeter,
     snapshots: Vec<Snapshot>,
     /// Engines this one has been rebuilt from (names run directories).
     generation: u32,
@@ -483,6 +516,46 @@ fn resolve_location(text: &str, symbols: &Symbols) -> Result<u32, ApiError> {
                 "`{t}` is neither an address nor a symbol of the ELF"
             ))
         })
+}
+
+/// Averages the RGB LED pins into PWM duty cycles.
+#[derive(Default)]
+struct RgbMeter {
+    /// Levels of the six pins now.
+    levels: u8,
+    /// PL time of the last accounting, in nanoseconds.
+    last_ns: u64,
+    /// High time per pin since the window started.
+    high_ns: [u64; 6],
+    /// Window start.
+    since_ns: u64,
+}
+
+impl RgbMeter {
+    /// Accounts the time up to `t_ns` at the current levels.
+    fn advance(&mut self, t_ns: u64) {
+        let dt = t_ns.saturating_sub(self.last_ns);
+        for (i, h) in self.high_ns.iter_mut().enumerate() {
+            if self.levels >> i & 1 != 0 {
+                *h += dt;
+            }
+        }
+        self.last_ns = self.last_ns.max(t_ns);
+    }
+
+    /// The duty of every pin if the window is long enough to mean something,
+    /// starting a new window.
+    fn take(&mut self, min_ns: u64) -> Option<[u8; 6]> {
+        let span = self.last_ns.saturating_sub(self.since_ns);
+        if span < min_ns {
+            return None;
+        }
+        let duty =
+            std::array::from_fn(|i| ((self.high_ns[i] * 255 + span / 2) / span).min(255) as u8);
+        self.high_ns = [0; 6];
+        self.since_ns = self.last_ns;
+        Some(duty)
+    }
 }
 
 /// A named point in the journal, with what a faithful restore must reproduce.
@@ -635,6 +708,12 @@ impl QemuEngine {
             journal_bytes: 0,
             journal_ok: true,
             symbols,
+            devs: spec
+                .devices
+                .iter()
+                .map(|(port, kind)| make_device(*port, kind).map(|d| (*port, d)))
+                .collect::<Result<_, _>>()?,
+            rgb: RgbMeter::default(),
             snapshots: Vec::new(),
             generation: 0,
             debug,
@@ -774,6 +853,66 @@ impl QemuEngine {
                     ok: e.ok,
                 },
             );
+        }
+        let mut rgb_event = false;
+        for ev in self.pl.drain_pin_events() {
+            let t = Ps(ev.t_ns.saturating_mul(1000));
+            if ev.group == pl_api::PIN_GROUP_RGB {
+                rgb_event = true;
+                self.rgb.advance(ev.t_ns);
+                self.rgb.levels = ev.levels & 0x3F;
+                self.trace.push(
+                    t,
+                    TraceEvent::Signal {
+                        name: "board.rgb_pins".to_string(),
+                        value: u64::from(ev.levels & 0x3F),
+                        width: 6,
+                    },
+                );
+            } else if let Some(row) = self.board.pmod_pins.get_mut(usize::from(ev.group)) {
+                for (i, p) in row.iter_mut().enumerate() {
+                    *p = if ev.levels >> i & 1 != 0 {
+                        board_zybo::PinLevel::High
+                    } else {
+                        board_zybo::PinLevel::Low
+                    };
+                }
+                let name = format!(
+                    "pmod.{}",
+                    self.def
+                        .pmods
+                        .get(usize::from(ev.group))
+                        .map_or_else(|| ev.group.to_string(), |p| p.id.to_lowercase())
+                );
+                self.trace.push(
+                    t,
+                    TraceEvent::Signal {
+                        name,
+                        value: u64::from(ev.levels),
+                        width: 8,
+                    },
+                );
+                for (port, dev) in &mut self.devs {
+                    if *port == ev.group {
+                        dev.pins(ev.t_ns, ev.levels);
+                    }
+                }
+            }
+        }
+        // PWM duty of the RGB LEDs, from the pin activity so far. Once the
+        // testbench has ended the pins are frozen at an arbitrary phase of
+        // the PWM, which says nothing about the duty: keep the last result.
+        if self.pl.has_pin_groups() && !self.pl.finished() {
+            // Without new events the pins held their level up to now; with
+            // events, the PL may lag the PS, so account only up to the last one.
+            if !rgb_event {
+                self.rgb.advance(self.machine.now_ns());
+            }
+            if let Some(duty) = self.rgb.take(200_000) {
+                for (c, d) in self.board.rgb.iter_mut().zip(duty.chunks_exact(3)) {
+                    c.copy_from_slice(d);
+                }
+            }
         }
         for o in self.pl.drain_board_outputs() {
             for i in 0..self.board.leds.len().min(4) {
@@ -1069,6 +1208,9 @@ impl Engine for QemuEngine {
         if self.pl.has_board_pins() {
             caps.push(Capability::BoardIo);
         }
+        if self.pl.has_pin_groups() {
+            caps.push(Capability::Pmod);
+        }
         if self.pl.has_media() {
             caps.push(Capability::Video);
             caps.push(Capability::Audio);
@@ -1086,6 +1228,15 @@ impl Engine for QemuEngine {
             trace_len: self.trace.len(),
             trace_hash: self.trace.hash_string(),
             pending_events: 0,
+            devices: self
+                .devs
+                .iter()
+                .map(|(port, d)| DeviceStatus {
+                    port: *port,
+                    kind: d.kind().to_string(),
+                    description: d.describe(),
+                })
+                .collect(),
             debug: self.debug.as_ref().map(|d| DebugStatus {
                 stopped: d.stopped.is_some(),
                 core: d.stopped.as_ref().map(|s| s.core),
@@ -1244,6 +1395,29 @@ impl QemuEngine {
                     },
                 );
                 self.push_board_inputs();
+                Ok(Response::Ok)
+            }
+            Command::AttachDevice { port, kind } => {
+                if !self.pl.has_pin_groups() {
+                    return Err(self.unsupported(
+                        "pmod devices",
+                        "this PL does not report Pmod pins (an RTL design using the zs_pin_* DPI)",
+                    ));
+                }
+                if self.devs.iter().any(|(p, _)| *p == port) {
+                    return Err(ApiError::invalid_argument(format!(
+                        "port {port} already has a device"
+                    )));
+                }
+                let dev = make_device(port, &kind)?;
+                self.devs.push((port, dev));
+                let now = self.now_ps();
+                self.trace.push(
+                    now,
+                    TraceEvent::Input {
+                        what: format!("attach {kind} to Pmod port {port}"),
+                    },
+                );
                 Ok(Response::Ok)
             }
             Command::SetBreakpoint {
@@ -1532,6 +1706,28 @@ impl QemuEngine {
                     })
                     .collect();
                 Ok(Response::Disasm { thumb, lines })
+            }
+            Query::DeviceImage { port } => {
+                let (_, dev) = self
+                    .devs
+                    .iter()
+                    .find(|(p, _)| p == port)
+                    .ok_or_else(|| {
+                        ApiError::not_found(format!("no device is attached to Pmod port {port}"))
+                    })?;
+                let img = dev.image().ok_or_else(|| {
+                    ApiError::unsupported(format!("`{}` has no display", dev.kind()))
+                })?;
+                let png = board_zybo::encode_rgba_png(img.width, img.height, img.rgba)
+                    .map_err(ApiError::internal)?;
+                Ok(Response::DeviceImage {
+                    port: *port,
+                    kind: dev.kind().to_string(),
+                    width: img.width,
+                    height: img.height,
+                    png,
+                    description: dev.describe(),
+                })
             }
             Query::Breakpoints => {
                 let d = self.debug_needed("breakpoint_list")?;

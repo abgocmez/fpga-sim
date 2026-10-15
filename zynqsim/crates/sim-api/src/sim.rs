@@ -154,6 +154,7 @@ impl Simulator {
             trace_len: self.st.trace.len(),
             trace_hash: self.st.trace.hash_string(),
             pending_events: self.st.sched.len(),
+            devices: Vec::new(),
             debug: None,
             media: None,
         }
@@ -316,6 +317,10 @@ impl Simulator {
                 self.snapshot_restore(&name)?;
                 Ok(Response::Ok)
             }
+            Command::AttachDevice { .. } => Err(self.unsupported(
+                "pmod devices",
+                "the demo engine has no PL pins (use qemu + xsim with the pin-group DPI)",
+            )),
             Command::SetBreakpoint { .. } => Err(self.unsupported(
                 "breakpoints",
                 "the demo engine runs no CPU (use the qemu backend with [debug])",
@@ -415,6 +420,10 @@ impl Simulator {
                     .map(Response::Png)
                     .map_err(ApiError::internal)
             }
+            Query::DeviceImage { .. } => Err(self.unsupported(
+                "device_image",
+                "the demo engine has no PL pins (use qemu + xsim with the pin-group DPI)",
+            )),
             Query::Breakpoints | Query::Symbol { .. } | Query::Disasm { .. } => Err(self
                 .unsupported(
                     "breakpoints and symbols",

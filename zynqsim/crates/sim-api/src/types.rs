@@ -47,6 +47,9 @@ pub enum Capability {
     Audio,
     /// Network capture and injection.
     Network,
+    /// Pmod ports and the RGB LEDs driven by the PL design, and the devices
+    /// attached to them.
+    Pmod,
 }
 
 /// An input applied to the simulated system at the current simulation time.
@@ -223,6 +226,17 @@ pub struct DebugStatus {
     pub stops: u32,
 }
 
+/// A device attached to a Pmod port.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceStatus {
+    /// Pmod port index: 0..=4 are JA..JE.
+    pub port: u8,
+    /// Device kind (`oled`).
+    pub kind: String,
+    /// One line of the device's state.
+    pub description: String,
+}
+
 /// A request that changes the simulation.
 ///
 /// Adjacently tagged (`{"type": .., "args": ..}`) because `Input` is itself
@@ -251,6 +265,13 @@ pub enum Command {
     },
     /// Stop continuous running.
     Pause,
+    /// Attach a device model to a Pmod port. Needs [`Capability::Pmod`].
+    AttachDevice {
+        /// Pmod port index: 0..=4 are JA..JE.
+        port: u8,
+        /// Device kind (`oled`).
+        kind: String,
+    },
     /// Set or clear a breakpoint or watchpoint. Needs [`Capability::CpuState`]
     /// (a project started with `[debug]`).
     SetBreakpoint {
@@ -371,6 +392,11 @@ pub enum Query {
         /// Core index.
         core: u8,
     },
+    /// The picture of the device on a Pmod port. Needs [`Capability::Pmod`].
+    DeviceImage {
+        /// Pmod port index.
+        port: u8,
+    },
     /// Disassemble guest memory. Needs [`Capability::MemoryAccess`].
     Disasm {
         /// Start address.
@@ -430,6 +456,9 @@ pub struct Status {
     pub trace_hash: String,
     /// Events waiting in the scheduler.
     pub pending_events: usize,
+    /// Devices attached to Pmod ports.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub devices: Vec<DeviceStatus>,
     /// Debugger state, when the engine was started with one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub debug: Option<DebugStatus>,
@@ -537,6 +566,21 @@ pub enum Response {
     CpuRegs(CpuRegs),
     /// The breakpoints and watchpoints that are set.
     Breakpoints(Vec<BreakpointInfo>),
+    /// The picture of a device.
+    DeviceImage {
+        /// Pmod port index.
+        port: u8,
+        /// Device kind.
+        kind: String,
+        /// Width in pixels.
+        width: u32,
+        /// Height in pixels.
+        height: u32,
+        /// PNG-encoded picture.
+        png: Vec<u8>,
+        /// One line of the device's state.
+        description: String,
+    },
     /// Disassembled instructions.
     Disasm {
         /// Whether Thumb decoding was used.

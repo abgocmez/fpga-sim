@@ -87,6 +87,17 @@ RTL is cached so a firmware change does not recompile it). **Save project.tomlâ€
 result. The **3D board** tab shows the board in perspective: drag to rotate, wheel to zoom, click
 the switches and buttons.
 
+### Pmod OLED and RGB LEDs
+
+```
+zynqsim run --project examples/oled-demo/project.toml --for 4ms --device-out JA=oled.png
+zynqsim run --project examples/rgb-demo/project.toml  --for 2ms --json     # "rgb": duty per LED channel
+```
+
+A Rust firmware drives an SPI master in the PL; the testbench reports the Pmod pins to the host,
+where an SSD1306 model turns the traffic into the 128x32 picture. In the GUI the **Pmod devices**
+panel shows it; MCP has `pmod_attach` and `pmod_frame`.
+
 ### Test your own firmware and IP
 
 ```
@@ -126,11 +137,11 @@ what the board receives.
 
 | Path | Contents |
 |---|---|
-| `crates/` | `sim-core`, `trace`, `board-zybo`, `sim-api`, `mcp`, `cli`, `gui`, `xtask`, `interop`, `pl-api`, `pl-native`, `backend-qemu`, `backend-rtl-xsim`, `xsim-dpi` |
+| `crates/` | `sim-core`, `trace`, `board-zybo`, `devices`, `sim-api`, `mcp`, `cli`, `gui`, `xtask`, `interop`, `pl-api`, `pl-native`, `backend-qemu`, `backend-rtl-xsim`, `xsim-dpi` |
 | `boards/` | board descriptions (TOML) |
 | `docs/` | `DESIGN.md`, `STATUS.md`, `TESTPLAN.md`, `adr/` |
-| `examples/` | `demo`, `math-qemu`, `math-debug`, `dma-regression`, `board-demo`, `audio-demo`, `hdmi-demo`, `irq-demo`, `rust-hello` projects |
-| `firmware/` | Rust `no_std` Cortex-A9 firmware (`hello`, `audio_demo`, `hdmi_demo`, `irq_demo`); its own workspace, built by `cargo xtask firmware` |
+| `examples/` | `demo`, `math-qemu`, `math-debug`, `dma-regression`, `board-demo`, `audio-demo`, `hdmi-demo`, `irq-demo`, `oled-demo`, `rgb-demo`, `rust-hello` projects |
+| `firmware/` | Rust `no_std` Cortex-A9 firmware (`hello`, `audio_demo`, `hdmi_demo`, `irq_demo`, `oled_demo`, `rgb_demo`); its own workspace, built by `cargo xtask firmware` |
 | `fixtures/` | prototype firmware ELFs, the prebuilt Rust ELFs (`rust_*.elf`) and the RTL used by the examples and tests |
 
 Requirements: [../docs/RUST_SOC_SIM_PROMPT.md](../docs/RUST_SOC_SIM_PROMPT.md).

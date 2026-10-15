@@ -812,6 +812,53 @@ fn master_bridge(mst: &AxiMaster) -> String {
     )
 }
 
+/// A port of the IP that is a Pmod port or the RGB LEDs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PinGroup {
+    /// Port name.
+    pub name: String,
+    /// Group: 0..=4 are JA..JE, 6 is the RGB LEDs.
+    pub group: u8,
+    /// True when the IP drives it (an output), false for a host-driven input.
+    pub output: bool,
+}
+
+/// Eight-bit ports named like a Pmod (`pmod_ja`, `ja`, `pmod_jb_o`...) and
+/// six-bit ports named like the RGB LEDs (`rgb`, `rgb_leds`, `ld5_6`).
+pub fn detect_pin_groups(m: &ModuleInfo) -> Vec<PinGroup> {
+    let mut out = Vec::new();
+    for p in &m.ports {
+        if p.dir == Dir::InOut {
+            continue;
+        }
+        let mut l = p.name.to_ascii_lowercase();
+        for suf in ["_out", "_in", "_o", "_i", "_pins"] {
+            if let Some(r) = l.strip_suffix(suf) {
+                l = r.to_string();
+                break;
+            }
+        }
+        let l = l.replace("pmod_", "").replace("pmod", "");
+        let group = match (l.as_str(), p.width) {
+            ("ja", 8) => Some(0),
+            ("jb", 8) => Some(1),
+            ("jc", 8) => Some(2),
+            ("jd", 8) => Some(3),
+            ("je", 8) => Some(4),
+            ("rgb" | "rgb_led" | "rgb_leds" | "ld5_6", 6) => Some(6),
+            _ => None,
+        };
+        if let Some(group) = group {
+            out.push(PinGroup {
+                name: p.name.clone(),
+                group,
+                output: p.dir == Dir::Out,
+            });
+        }
+    }
+    out
+}
+
 /// One-bit outputs that look like interrupt lines (`irq`, `interrupt`,
 /// `intr` in the name), in declaration order. They become `IRQ_F2P[0..]`.
 pub fn detect_irqs(m: &ModuleInfo, axi: &AxiLite) -> Vec<String> {
@@ -831,6 +878,7 @@ pub fn detect_irqs(m: &ModuleInfo, axi: &AxiLite) -> Vec<String> {
 /// The testbench text for `m` and its interface `axi`.
 pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
     let irqs = detect_irqs(m, axi);
+    let pin_groups = detect_pin_groups(m);
     let master = detect_axi_master(m).ok().flatten();
     let sig = |r: &str| axi.signals.get(r).cloned();
     let mut s = String::new();
@@ -883,6 +931,12 @@ pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
             (Dir::In, Some(_)) => {
                 let _ = writeln!(s, "    reg  {w}{n} = 0;");
             }
+            (Dir::In, None) if pin_groups.iter().any(|g| &g.name == n) => {
+                let _ = writeln!(
+                    s,
+                    "    reg  {w}{n} = 0;      // driven by the host (Pmod/RGB input)"
+                );
+            }
             (Dir::In, None) => {
                 let l = n.to_ascii_lowercase();
                 if l.contains("clk") || l.contains("clock") {
@@ -928,6 +982,27 @@ pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
 
     let g = |r: &str| sig(r).unwrap_or_default();
     let aw = axi.addr_width;
+    // Pmod and RGB pin groups: outputs are reported to the host on change,
+    // inputs follow the levels the host sets (sampled every microsecond).
+    let mut pin_blocks = String::new();
+    for g in &pin_groups {
+        let n = &g.name;
+        if g.output {
+            let _ = write!(
+                pin_blocks,
+                "\n    // {n} -> pin group {gr}\n\
+                 \x20   always @({n}) if (connected) zs_pin_out({gr}, {n}, $time);\n",
+                gr = g.group
+            );
+        } else {
+            let _ = write!(
+                pin_blocks,
+                "\n    // {n} <- pin group {gr}\n\
+                 \x20   always #1000 {n} <= zs_pin_in({gr});\n",
+                gr = g.group
+            );
+        }
+    }
     // Interrupt outputs go to the PS as IRQ_F2P[i] (level, on change).
     let mut irq_blocks = String::new();
     let mut irq_init = String::new();
@@ -948,11 +1023,13 @@ pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
     let _ = write!(
         s,
         "\
+    import \"DPI-C\" function void zs_pin_out(input int group, input int levels, input longint now_ns);
+    import \"DPI-C\" function int  zs_pin_in(input int group);
     reg        connected = 1'b0;
     reg        wr_ok;
     reg        rd_ok;
     reg [31:0] rd_val;
-{irq_blocks}
+{irq_blocks}{pin_blocks}
     task lite_write(input [31:0] a, input [31:0] d, input [3:0] st, output ok);
         begin
             @(posedge aclk);
@@ -1032,6 +1109,7 @@ endmodule
 ",
         master = master.as_ref().map(master_bridge).unwrap_or_default(),
         irq_blocks = irq_blocks,
+        pin_blocks = pin_blocks,
         irq_init = irq_init,
         awaddr = g("awaddr"),
         wdata = g("wdata"),
@@ -1233,6 +1311,54 @@ mod tests {
         let axi = detect_axi_lite(&m).unwrap();
         assert!(detect_irqs(&m, &axi).is_empty());
         assert!(!generate_testbench(&m, &axi).contains("IRQ_F2P"));
+    }
+
+    #[test]
+    fn pmod_and_rgb_ports_become_pin_groups() {
+        let m = parse_module(&fixture("pmod/oled_spi.v"), None).unwrap();
+        let axi = detect_axi_lite(&m).unwrap();
+        let g = detect_pin_groups(&m);
+        assert_eq!(
+            g,
+            vec![PinGroup {
+                name: "pmod_ja".into(),
+                group: 0,
+                output: true
+            }]
+        );
+        let tb = generate_testbench(&m, &axi);
+        assert!(
+            tb.contains("always @(pmod_ja) if (connected) zs_pin_out(0, pmod_ja, $time);"),
+            "{tb}"
+        );
+
+        let src =
+            "module b (input clk, input [7:0] pmod_jb_i, output [7:0] jc_o, output [5:0] rgb_leds,
+                   input [3:0] s_awaddr, input s_awvalid, output s_awready, input [31:0] s_wdata,
+                   input [3:0] s_wstrb, input s_wvalid, output s_wready, output [1:0] s_bresp,
+                   output s_bvalid, input s_bready, input [3:0] s_araddr, input s_arvalid,
+                   output s_arready, output [31:0] s_rdata, output [1:0] s_rresp,
+                   output s_rvalid, input s_rready); endmodule";
+        let m = parse_module(src, None).unwrap();
+        let names: Vec<(String, u8, bool)> = detect_pin_groups(&m)
+            .into_iter()
+            .map(|g| (g.name, g.group, g.output))
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                ("pmod_jb_i".to_string(), 1, false),
+                ("jc_o".to_string(), 2, true),
+                ("rgb_leds".to_string(), 6, true),
+            ]
+        );
+        let axi = detect_axi_lite(&m).unwrap();
+        let tb = generate_testbench(&m, &axi);
+        assert!(
+            tb.contains("always #1000 pmod_jb_i <= zs_pin_in(1);"),
+            "{tb}"
+        );
+        assert!(tb.contains("reg  [7:0] pmod_jb_i = 0;"), "{tb}");
     }
 
     #[test]

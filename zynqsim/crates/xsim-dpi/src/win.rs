@@ -479,6 +479,18 @@ pub extern "C" fn zs_codec_reg(reg: i32, value: i32, now_ns: i64) {
     dpi().codec_register(reg as u32, value as u32, now_ns.max(0) as u64);
 }
 
+/// The levels of pin group `group` (a Pmod port or the RGB LEDs) changed.
+#[no_mangle]
+pub extern "C" fn zs_pin_out(group: i32, levels: i32, now_ns: i64) {
+    dpi().pin_out(group as u32, levels as u32, now_ns.max(0) as u64);
+}
+
+/// The host-driven levels of pin group `group`.
+#[no_mangle]
+pub extern "C" fn zs_pin_in(group: i32) -> i32 {
+    i32::from(dpi().pin_in(group as u32))
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn tel_ctrl(sw: *mut i32, btn: *mut i32) -> i32 {
     let (s, b) = dpi().board_inputs();

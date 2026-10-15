@@ -75,6 +75,10 @@ pub struct Model {
     pub generation: u32,
     /// Registers of each core while the guest is stopped under the debugger.
     pub cpu_regs: [Option<sim_api::CpuRegs>; 2],
+    /// The newest picture of each attached Pmod device: `(port, kind, state,
+    /// width, height, rgba)`.
+    pub device_images: Vec<(u8, String, String, u32, u32, Vec<u8>)>,
+    device_polled: Option<Instant>,
     /// An engine being built in the background.
     pub load: Option<LoadJob>,
     /// Why the last load failed.
@@ -110,6 +114,8 @@ impl Model {
             audio_wanted: false,
             generation: 0,
             cpu_regs: [None, None],
+            device_images: Vec::new(),
+            device_polled: None,
             load: None,
             load_error: None,
             cursors: [0; 2],
@@ -199,6 +205,41 @@ impl Model {
     /// Takes the audio fetched since the last call (interleaved stereo, 48 kHz).
     pub fn take_audio(&mut self) -> Vec<i16> {
         std::mem::take(&mut self.audio_pending)
+    }
+
+    /// Fetches the pictures of attached devices, at most ten times a second.
+    fn refresh_devices(&mut self) {
+        if self.status.devices.is_empty() {
+            self.device_images.clear();
+            return;
+        }
+        if self
+            .device_polled
+            .is_some_and(|t| t.elapsed() < Duration::from_millis(100))
+        {
+            return;
+        }
+        self.device_polled = Some(Instant::now());
+        let ports: Vec<u8> = self.status.devices.iter().map(|d| d.port).collect();
+        let mut images = Vec::new();
+        for port in ports {
+            if let Ok(Response::DeviceImage {
+                kind,
+                png,
+                description,
+                ..
+            }) = self.client.query(Query::DeviceImage { port })
+            {
+                if let Ok((w, h, rgb)) = sim_api::board::decode_png_rgb(&png) {
+                    let rgba = rgb
+                        .chunks_exact(3)
+                        .flat_map(|p| [p[0], p[1], p[2], 255])
+                        .collect();
+                    images.push((port, kind, description, w, h, rgba));
+                }
+            }
+        }
+        self.device_images = images;
     }
 
     /// Reads the registers when (and only when) the guest is stopped.
@@ -313,6 +354,7 @@ impl Model {
         }
         self.refresh_media();
         self.refresh_cpu();
+        self.refresh_devices();
         let total = self.status.trace_len;
         let from = total.saturating_sub(TRACE_TAIL);
         if let Ok(Response::Trace { records, .. }) = self.client.query(Query::Trace {

@@ -301,6 +301,28 @@ impl App {
         }
     }
 
+    /// The pictures of the devices on the Pmod ports (the OLED display).
+    pub(super) fn devices_panel(&mut self, ui: &mut egui::Ui) {
+        let ports = ["JA", "JB", "JC", "JD", "JE"];
+        for (port, kind, state, w, h, rgba) in self.model.device_images.clone() {
+            ui.strong(format!(
+                "{} {}",
+                ports.get(usize::from(port)).copied().unwrap_or("?"),
+                kind
+            ));
+            let img = ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
+            let tex = ui
+                .ctx()
+                .load_texture(format!("device{port}"), img, TextureOptions::NEAREST);
+            let width = ui.available_width().min(w as f32 * 2.5);
+            ui.add(egui::Image::new((
+                tex.id(),
+                egui::vec2(width, width * h as f32 / w as f32),
+            )));
+            ui.label(RichText::new(state).small().color(Color32::GRAY));
+        }
+    }
+
     /// Moves fetched DAC audio to the speaker.
     pub(super) fn pump_audio(&mut self) {
         #[cfg(feature = "audio")]
