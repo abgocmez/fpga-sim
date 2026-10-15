@@ -199,6 +199,24 @@ fn two_runs_produce_identical_frames_times_and_uart() {
     assert_eq!(x.end_ns, y.end_ns);
 }
 
+/// The frames' virtual times come from QEMU's own stamps, so how the host
+/// slices its run requests must not change them (unlike UART bytes, which
+/// are attributed to the slice they were found in).
+#[test]
+fn frame_times_do_not_depend_on_how_the_run_is_sliced() {
+    let (Some(a), Some(b)) = (
+        config("slice-a", NetConfig::default()),
+        config("slice-b", NetConfig::default()),
+    ) else {
+        eprintln!("SKIPPED: Xilinx QEMU / co-sim DTB not found (set ZYNQSIM_QEMU)");
+        return;
+    };
+    let fine = run_net_in(&a, 7_000);
+    let coarse = run_net_in(&b, 1_000_000);
+    assert_eq!(fine.frames.len(), 14);
+    assert_eq!(fine.frames, coarse.frames);
+}
+
 /// With no `[network]` the GEM has no netdev (`-net none`; QEMU would attach
 /// an implicit user-mode network otherwise): nothing answers and nothing is
 /// captured. QEMU's PHY model still reports link up, there being no cable

@@ -6,7 +6,8 @@ Status values (prompt §1): **verified** (a named test proves it), **implemented
 
 Current milestone: **P1 reached locally** (see the exit criterion below). P0 is done. Parts of
 P2 (board devices) exist: the audio codec and HDMI connectors as pin-level models in the RTL
-testbench, with host audio/video, and a 3D board view. The remaining P2 devices are still drawn
+testbench, with host audio/video, a 3D board view, and the PS Ethernet (GEM0) on QEMU's
+user-mode network with a Rust ping firmware and `.pcap` export (see *Ethernet*). The remaining P2 devices are still drawn
 only.
 
 * `demo` engine (fidelity `demo`): built-in scripted model, no CPU, no RTL. Control-plane and
@@ -159,7 +160,7 @@ front-end table's `unsupported` row.
 | `[network]` (`enable`, `mac`, `subnet`, `gateway`, `restrict`) attaches GEM0 to a simulated LAN (`-netdev user` + `filter-dump`); without it the NIC is unplugged (`-net none`) instead of QEMU's implicit user-mode network | verified | `backend-qemu::net::{qemu_arguments_bind_gem0_and_mirror_to_the_capture_file, an_unplugged_nic_gets_no_answers_and_captures_nothing}`. **Behaviour change**: projects without `[network]` used to get that implicit network, invisible to the host |
 | Rust firmware (`firmware/net_demo`, prebuilt `fixtures/elf/rust_net.elf`, `examples/net-demo`): MDIO PHY scan, reset and auto-negotiation, descriptor rings, polled RX/TX, **smoltcp** ARP + DHCP + ICMP echo; four pings with 32 bytes, payload echoed unchanged | verified | `backend-qemu::net::firmware_pings_the_gateway_and_every_frame_is_captured` (14 frames: 4 DHCP, ARP pair, 4 echo pairs), `zynqsim::net::net_demo_pings_the_gateway_and_exports_a_matching_pcap`. smoltcp stands in for the BSP's lwIP, which is C; the Xilinx lwIP/xemacps applications themselves were **not** run |
 | Frames visible to the host: classified (ARP/ICMP/UDP/TCP), IPv4 and ICMP checksums verified, summarised, counted, 1 us virtual-time stamps; trace markers and `net.*_frames` signals; `.pcap` export | verified | `backend-qemu::net::tests::*` (decoder, malformed frames, partial reads, time recovery, pcap writer), `zynqsim::net::{net_demo_*, network_frames_are_in_the_trace_and_the_vcd}` |
-| **Determinism**: same project, same frames, same bytes, same virtual times, same measured round trips, same `.pcap` bytes, same trace digest | verified | `backend-qemu::net::two_runs_produce_identical_frames_times_and_uart`, `zynqsim::net::two_processes_agree_on_digest_pcap_and_uart`. Holds because slirp answers inside the transmitting instruction |
+| **Determinism**: same project, same frames, same bytes, same virtual times, same measured round trips, same `.pcap` bytes, same trace digest | verified | `backend-qemu::net::{two_runs_produce_identical_frames_times_and_uart, frame_times_do_not_depend_on_how_the_run_is_sliced}` (7 us vs 1 ms slices give identical frames and times), `zynqsim::net::two_processes_agree_on_digest_pcap_and_uart`. Holds because slirp answers inside the transmitting instruction |
 | Record/replay, snapshot/restore (by re-execution) of a network session | verified | `zynqsim::net::a_network_session_records_and_replays_to_the_same_digest`, `mcp::net::network_project_through_mcp` (snapshot, restore, `session_replay`) |
 | `[network]` validation: MAC, subnet 8..=27, gateway inside it and not .3/.15/network/broadcast, needs `ps = "qemu"`, unknown keys, `restrict = false` warns | verified | `sim-api::project::tests::network_*`, `zynqsim::net::a_bad_network_section_is_rejected_with_every_field_listed` |
 | `mac`, `subnet`, `gateway` reach the firmware and the wire (DHCP lease, ARP, source MAC) | verified | `backend-qemu::net::a_custom_subnet_and_mac_reach_the_firmware_and_the_wire` |

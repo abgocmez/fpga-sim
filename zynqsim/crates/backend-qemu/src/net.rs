@@ -811,7 +811,7 @@ mod tests {
 
     #[test]
     fn pcap_writer_output_is_deterministic_and_well_formed() {
-        let f = vec![0xabu8; 60];
+        let f = [0xabu8; 60];
         let a = write_pcap([(1_000_000_123u64, &f[..])]);
         assert_eq!(a, write_pcap([(1_000_000_123u64, &f[..])]));
         assert_eq!(&a[..4], &[0xd4, 0xc3, 0xb2, 0xa1]);
