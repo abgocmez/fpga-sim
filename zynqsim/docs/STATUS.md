@@ -158,7 +158,23 @@ missing. See ADR-006.
 | **3D board view**: layout extruded to boxes, orbit camera, perspective, lit LEDs glow, switch levers and button plungers move, picking by drawn face | verified (scene) / implemented-untested (mouse handling) | `board-zybo::scene3d::tests::*` (deterministic, camera changes pixels, every switch/button/LED is found where it is drawn at three cameras, state changes pixels). Heights are illustrative, not measurements |
 | Board SVG import, custom boards | not-planned / stub | layout is TOML-driven; only `zybo-z7-20` is selectable |
 | SSM2603 and HDMI RX/TX | verified at pin level in the testbench | see *Audio, video and the project loader*. Not a model of the board's wiring: the testbench connects them |
-| Pcam, PHY, SD, QSPI, Pmod modules | stub | drawn as inert parts; milestone P2 |
+| Pcam, PHY, Pmod modules | stub | drawn as inert parts; milestone P2 |
+
+## Storage (SD card, QSPI flash; ADR-012)
+
+| Feature | Status | Evidence / note |
+|---|---|---|
+| `[storage]` SD card from a raw image or a folder (FAT16/FAT32, reproducible), read-only by default | verified | `sim-api::storage::tests::*`; `zynqsim` `sd_demo_reads_a_file_from_the_card_through_sdhci_and_fat`; `sim-api` `storage_session` |
+| Image tools: `sd-image`, `qspi-image`; size, label and missing-folder rules | verified | `sim-api::storage::tests::*`, `zynqsim` `image_tools_build_card_and_flash_images_and_refuse_bad_sizes` |
+| Writable storage: guest writes change the host image; snapshot, reset and recording refused with the reason | verified | `sim-api` `storage_session::writable_storage_drops_snapshot_and_replay_and_says_why`; `zynqsim` `writable_storage_changes_the_image_and_refuses_what_cannot_be_repeated` |
+| Read-only storage keeps snapshots, reset and replay exact | verified (QEMU) | `sim-api` `storage_session::read_only_storage_keeps_snapshots_reset_and_replay_exact` |
+| QSPI flash, default `s25fl129p0`; other models report their own JEDEC ID | verified | `zynqsim` `qspi_demo_reads_the_jedec_id_*`, `the_qspi_demo_example_and_each_flash_model_report_their_own_id` |
+| Writable flash is programmed in the image file | verified | `zynqsim` `writable_flash_is_programmed_in_the_image_file` |
+| `sd_demo` (polled SDHCI, PIO, 1-bit) and `qspi_demo` (FIFO and linear reads) firmware | implemented-untested | run against QEMU's SDHCI and QSPI models only; register offsets are from the TRM, marked `VERIFY:` |
+| Storage through MCP (`status_get`, `sim_run`, snapshots over the example projects) | verified (QEMU) | `mcp` `tests/storage.rs` |
+| SD high-speed, 4-bit bus, DMA, card-detect; SDHC above 1 GiB | not implemented | ADR-012 |
+| QSPI dual/quad modes, DMA, interrupts, dual-flash | not implemented | ADR-012 |
+| Storage on the PL (RTL) engines | not implemented | storage is attached to the QEMU (PS) engine only |
 
 ## Demo engine
 

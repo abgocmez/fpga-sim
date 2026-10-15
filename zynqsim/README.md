@@ -79,6 +79,20 @@ in DDR that the PL scans out to HDMI while capturing the picture you supply. In 
 same projects: the **HDMI** and **Audio codec** panels show the picture and level, *listen on the
 speakers* plays the codec output, and the source pickers change what the board receives.
 
+### SD card and QSPI flash
+
+```
+zynqsim sd-image --dir examples/sd-demo/sdcard --out sd.img      # FAT card from a folder
+zynqsim qspi-image --file data.bin --offset 0x100000 --out flash.bin
+zynqsim run --project examples/sd-demo/project.toml --for 2ms    # reads HELLO.TXT over SDHCI + FAT
+zynqsim run --project examples/qspi-demo/project.toml --for 2ms  # JEDEC ID, FIFO and linear reads
+```
+
+`[storage]` in `project.toml` attaches the card (`sd_image` or `sd_dir`) and the flash
+(`qspi_image` or `qspi_data`). Both are read-only unless `writable = true`, which writes guest
+changes into the image file and refuses snapshot, reset and recording (ADR-012). The firmware
+(`firmware/sd_demo`, `firmware/qspi_demo`) is verified against QEMU's models only.
+
 ### Load your own PS firmware and PL design
 
 In the GUI use **Open project…**, or **Project…** to set the Cortex-A9 ELF and the RTL files
@@ -107,8 +121,8 @@ what the board receives.
 | `crates/` | `sim-core`, `trace`, `board-zybo`, `sim-api`, `mcp`, `cli`, `gui`, `xtask`, `interop`, `pl-api`, `pl-native`, `backend-qemu`, `backend-rtl-xsim`, `xsim-dpi` |
 | `boards/` | board descriptions (TOML) |
 | `docs/` | `DESIGN.md`, `STATUS.md`, `TESTPLAN.md`, `adr/` |
-| `examples/` | `demo`, `math-qemu`, `dma-regression`, `board-demo`, `audio-demo`, `hdmi-demo`, `rust-hello` projects |
-| `firmware/` | Rust `no_std` Cortex-A9 firmware (`hello`, `audio_demo`, `hdmi_demo`); its own workspace, built by `cargo xtask firmware` |
+| `examples/` | `demo`, `math-qemu`, `dma-regression`, `board-demo`, `audio-demo`, `hdmi-demo`, `rust-hello`, `sd-demo`, `qspi-demo` projects |
+| `firmware/` | Rust `no_std` Cortex-A9 firmware (`hello`, `audio_demo`, `hdmi_demo`, `sd_demo`, `qspi_demo`); its own workspace, built by `cargo xtask firmware` |
 | `fixtures/` | prototype firmware ELFs, the prebuilt Rust ELFs (`rust_*.elf`) and the RTL used by the examples and tests |
 
 Requirements: [../docs/RUST_SOC_SIM_PROMPT.md](../docs/RUST_SOC_SIM_PROMPT.md).

@@ -276,6 +276,9 @@ impl App {
         ui.label(format!("quantum: {}   seed: {}", Ps(s.quantum_ps), s.seed));
         ui.label(format!("pending events: {}", s.pending_events));
         ui.label(RichText::new(&s.trace_hash).monospace().small());
+        for line in self.model.storage_lines() {
+            ui.label(RichText::new(line).small());
+        }
         ui.separator();
 
         for core in 0..2usize {
