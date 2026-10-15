@@ -562,7 +562,8 @@ pub fn tool_defs() -> Vec<ToolDef> {
         ),
         t(
             "net_send",
-            "Inject an Ethernet frame towards the target.",
+            "Inject an Ethernet frame towards the target. Not available with the user-mode \
+             network the simulator provides: it answers `unsupported` and says why (ADR-011).",
             Needs(C::Network),
             object(
                 vec![("hex", string("Frame bytes as hex.", &["ffffffffffff"]))],
@@ -571,9 +572,35 @@ pub fn tool_defs() -> Vec<ToolDef> {
         ),
         t(
             "net_capture",
-            "Return captured network packets.",
+            "Return the frames the board's Ethernet (GEM0) sent and received, oldest first, with \
+             virtual-time stamps, a one-line summary each, and the frame counters. Frames are \
+             captured by QEMU's network stack at the instant the guest transmits, so the list is \
+             identical on every run of the same project. Use `from`/`next` to page.",
             Needs(C::Network),
-            none(),
+            object(
+                vec![
+                    (
+                        "from",
+                        integer(
+                            "Index of the first frame wanted, counted from the start of the \
+                             run (default 0).",
+                            Some(0),
+                            None,
+                            &[0],
+                        ),
+                    ),
+                    (
+                        "max",
+                        integer(
+                            "At most this many frames (default 50, at most 500).",
+                            Some(1),
+                            Some(500),
+                            &[50],
+                        ),
+                    ),
+                ],
+                &[],
+            ),
         ),
         // --- configuration -------------------------------------------------------
         t(

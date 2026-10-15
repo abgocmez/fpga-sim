@@ -430,6 +430,10 @@ impl Simulator {
                 "pl_signal_get",
                 "PL signals need an RTL backend (Verilator/Icarus/XSim, milestone P1)",
             )),
+            Query::NetCapture { .. } | Query::NetStats | Query::NetPcap => Err(self.unsupported(
+                "net_capture",
+                "the board's Ethernet needs the QEMU PS backend and a [network] section",
+            )),
         }
     }
 

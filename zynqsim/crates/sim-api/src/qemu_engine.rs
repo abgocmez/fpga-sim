@@ -8,6 +8,7 @@
 use crate::bytelog::ByteLog;
 use crate::engine::Engine;
 use crate::error::ApiError;
+use crate::netlog::NetLog;
 use crate::types::{
     AudioSpec, Capability, Command, Fidelity, Input, MediaStatus, Query, Response, Status,
     TraceFormat, VideoSpec,
@@ -96,6 +97,8 @@ pub struct QemuSpec {
     pub board: String,
     /// Name to report as the PL backend.
     pub pl_name: String,
+    /// Attach GEM0 to a simulated LAN (`[network]`), or `None` for no NIC.
+    pub net: Option<backend_qemu::net::NetConfig>,
 }
 
 struct BusEvent {
@@ -419,6 +422,8 @@ pub struct QemuEngine {
     snapshots: Vec<Snapshot>,
     /// Engines this one has been rebuilt from (names run directories).
     generation: u32,
+    /// The board's Ethernet capture, when `[network]` is configured.
+    net: Option<NetLog>,
 }
 
 /// A named point in the journal, with what a faithful restore must reproduce.
@@ -494,6 +499,7 @@ impl QemuEngine {
         cfg.quantum_ns = spec.quantum_ns;
         cfg.icount_shift = Some(spec.icount_shift);
         cfg.uart = spec.uart;
+        cfg.net = spec.net.clone();
         let machine = QemuMachine::spawn(&cfg).map_err(map_err)?;
 
         let mut trace = TraceLog::with_limit(TRACE_RETAIN);
@@ -536,6 +542,7 @@ impl QemuEngine {
             journal_ok: true,
             snapshots: Vec::new(),
             generation: 0,
+            net: spec.net.as_ref().map(NetLog::new),
         })
     }
 
@@ -751,6 +758,12 @@ impl QemuEngine {
                 },
             );
         }
+        if let Some(net) = &mut self.net {
+            let raw = self.machine.net_take();
+            for (t_ns, ev) in net.ingest(raw, self.machine.now_ns()) {
+                self.trace.push(Ps(t_ns.saturating_mul(1000)), ev);
+            }
+        }
         let now = self.now_ps();
         for b in self.machine.uart_take() {
             self.trace.push(
@@ -855,6 +868,15 @@ impl QemuEngine {
             "`{what}` is not available on the `qemu` backend yet: {why}"
         ))
     }
+
+    fn net_log(&self, what: &str) -> Result<&NetLog, ApiError> {
+        self.net.as_ref().ok_or_else(|| {
+            self.unsupported(
+                what,
+                "the board's Ethernet is not attached; add a `[network]` section to project.toml",
+            )
+        })
+    }
 }
 
 impl Drop for QemuEngine {
@@ -902,6 +924,9 @@ impl Engine for QemuEngine {
         if self.pl.has_media() {
             caps.push(Capability::Video);
             caps.push(Capability::Audio);
+        }
+        if self.net.is_some() {
+            caps.push(Capability::Network);
         }
         Status {
             now_ps: self.now_ps().0,
@@ -1283,6 +1308,12 @@ impl QemuEngine {
                 "pl_signal_get",
                 "signal access into the RTL design is not implemented yet (waveforms: `[rtl] waves = true`)",
             )),
+            Query::NetCapture { from, max } => {
+                let net = self.net_log("net_capture")?;
+                Ok(net.page(*from, (*max).clamp(1, 1000)))
+            }
+            Query::NetStats => Ok(Response::NetStats(self.net_log("net_stats")?.status())),
+            Query::NetPcap => Ok(Response::Pcap(self.net_log("net_pcap")?.pcap())),
         }
     }
 }

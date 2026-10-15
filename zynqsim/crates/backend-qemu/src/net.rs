@@ -82,7 +82,9 @@ pub fn parse_cidr(s: &str) -> Result<(Ipv4Addr, u8), String> {
         .map_err(|_| format!("`{s}` is not a network like 10.0.2.0/24"))?;
     let len: u8 = l
         .parse()
-        .map_err(|_| format!("`{s}` is not a network like 10.0.2.0/24"))?;
+        .ok()
+        .filter(|&n| n <= 32)
+        .ok_or_else(|| format!("`{s}` is not a network like 10.0.2.0/24"))?;
     Ok((addr, len))
 }
 

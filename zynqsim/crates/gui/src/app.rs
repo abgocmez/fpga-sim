@@ -317,6 +317,34 @@ impl App {
                 .default_open(true)
                 .show(ui, |ui| self.audio_panel(ui));
         }
+        if let Some(n) = &self.model.net {
+            egui::CollapsingHeader::new("Ethernet (GEM0)")
+                .default_open(true)
+                .show(ui, |ui| {
+                    ui.label(format!("{} on {} via {}", n.mac, n.subnet, n.gateway));
+                    ui.label(format!(
+                        "tx {} frame(s) / {} B, rx {} frame(s) / {} B",
+                        n.frames_tx, n.bytes_tx, n.frames_rx, n.bytes_rx
+                    ));
+                    ui.label(format!(
+                        "arp {}  icmp {}  udp {}  tcp {}  other {}",
+                        n.arp, n.icmp, n.udp, n.tcp, n.other
+                    ));
+                    if n.bad_checksums > 0 {
+                        ui.label(
+                            RichText::new(format!("{} frame(s) with a bad checksum", n.bad_checksums))
+                                .color(Color32::from_rgb(235, 160, 20)),
+                        );
+                    }
+                    if !n.restricted {
+                        ui.label(
+                            RichText::new("open network: runs are not reproducible")
+                                .color(Color32::from_rgb(235, 160, 20))
+                                .small(),
+                        );
+                    }
+                });
+        }
         egui::CollapsingHeader::new("Memory / image viewer")
             .default_open(self.mem_open)
             .show(ui, |ui| self.memory_panel(ui));

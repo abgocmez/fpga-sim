@@ -11,6 +11,7 @@ mod bytelog;
 mod duration;
 mod engine;
 mod error;
+mod netlog;
 mod project;
 mod qemu_engine;
 mod recording;
@@ -23,8 +24,9 @@ pub use duration::parse_duration;
 pub use engine::Engine;
 pub use error::{ApiError, ErrorCode};
 pub use project::{
-    BackendsSection, BoardSection, BootSection, CpuSection, Diagnostic, MediaSection, Project,
-    RtlSection, Severity, SimSection, parse_audio_spec, parse_video_spec, starter_project_toml,
+    BackendsSection, BoardSection, BootSection, CpuSection, Diagnostic, MediaSection,
+    NetworkSection, Project, RtlSection, Severity, SimSection, parse_audio_spec, parse_video_spec,
+    starter_project_toml,
 };
 pub use qemu_engine::{NATIVE_MODELS, NativeInstance, QemuEngine, QemuSpec, RtlSpec};
 pub use recording::{
@@ -37,8 +39,8 @@ pub use tools::{
     find_vivado, locate, locate_binary,
 };
 pub use types::{
-    AudioSpec, Capability, Command, Event, Fidelity, Input, MediaStatus, Query, Response, Status,
-    TraceFormat, VideoSpec,
+    AudioSpec, Capability, Command, Event, Fidelity, Input, MediaStatus, NetDirection, NetFrame,
+    NetStatus, Query, Response, Status, TraceFormat, VideoSpec,
 };
 
 /// Board definition, state, rendering and hit-testing.
