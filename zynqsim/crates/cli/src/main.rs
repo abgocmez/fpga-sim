@@ -1203,7 +1203,7 @@ fn cmd_init(
     if filelist.is_some() {
         return Err(fail(
             3,
-            "--filelist on its own is not implemented in this build; combine it with --xsa",
+            "--filelist on its own is not implemented in this build (milestone P3); combine it with --xsa",
         ));
     }
     std::fs::create_dir_all(dir)

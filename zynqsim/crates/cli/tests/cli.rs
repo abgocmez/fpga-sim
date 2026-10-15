@@ -149,7 +149,7 @@ fn init_creates_a_valid_project_and_refuses_to_overwrite() {
 #[test]
 fn unsupported_features_exit_3_with_a_clear_message() {
     let d = temp("uns");
-    let x = zynqsim(&["init", d.to_str().unwrap(), "--xsa", "design.xsa"]);
+    let x = zynqsim(&["init", d.to_str().unwrap(), "--filelist", "files.f"]);
     assert_eq!(x.status.code(), Some(3));
     assert!(String::from_utf8_lossy(&x.stderr).contains("milestone P3"));
 

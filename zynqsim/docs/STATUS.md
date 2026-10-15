@@ -293,6 +293,8 @@ front-end table's `unsupported` row.
 (`fixtures/xsa/make_xsa.tcl`: Zybo Z7-20 board preset, `my_math_ip` as a module reference at
 `0x43C00000`, optionally an AXI GPIO with its interrupt on `IRQ_F2P[0]`); they are one design,
 so other Vivado versions and richer designs (SmartConnect, hierarchies, DMA) are `VERIFY:`.
+Gate on this branch: `cargo xtask ci` exited 0 on 2026-10-16 with 376 tests (356 + 20 new), none
+failed; the end-to-end row below was also run alone with QEMU and XSim present (it did not skip).
 
 | Feature | Status | Evidence / note |
 |---|---|---|
