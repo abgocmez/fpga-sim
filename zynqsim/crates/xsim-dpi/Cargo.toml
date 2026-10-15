@@ -1,0 +1,29 @@
+[package]
+name = "xsim-dpi"
+version.workspace = true
+# 2021: the DPI exports are plain `#[no_mangle]` functions.
+edition = "2021"
+license.workspace = true
+rust-version.workspace = true
+description = "no_std static library: the PL side of remote-port, loaded into Vivado XSim as DPI-C"
+
+[lib]
+# `staticlib` is what xelab links (it needs `<name>.a`); `rlib` is for tests.
+crate-type = ["staticlib", "rlib"]
+
+# This crate is an FFI boundary and must be able to use `unsafe`, so it does not
+# inherit the workspace `unsafe_code = "forbid"`. All unsafe is in `win.rs`.
+[lints.rust]
+missing_docs = "deny"
+
+[features]
+# Build the freestanding Windows static library XSim links: `no_std`, kernel32
+# only, DPI exports. Off by default so `cargo test` / `clippy` see a normal
+# (std) crate that exercises the same protocol core.
+freestanding = []
+
+[dependencies]
+interop = { path = "../interop", default-features = false }
+
+[dev-dependencies]
+interop = { path = "../interop", features = ["std"] }

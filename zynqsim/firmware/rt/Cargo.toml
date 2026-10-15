@@ -1,0 +1,6 @@
+[package]
+name = "rt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Minimal runtime and drivers for the simulated Zynq-7000 PS (no_std)"

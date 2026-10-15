@@ -1,0 +1,16 @@
+[package]
+name = "interop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["std"]
+# Enables the TCP session. Without it the crate is `no_std` + `alloc`.
+std = []
+
+[dependencies]

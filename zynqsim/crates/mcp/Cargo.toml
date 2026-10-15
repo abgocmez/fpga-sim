@@ -1,0 +1,20 @@
+[package]
+name = "zynqsim-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+base64 = "0.23.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sim-api = { version = "0.1.0", path = "../sim-api" }
+thiserror = "2.0.21"
+
+[dev-dependencies]
+base64 = "0.23.1"
+sim-core = { path = "../sim-core" }

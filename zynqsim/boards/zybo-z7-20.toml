@@ -1,0 +1,294 @@
+# Digilent Zybo Z7-20 (XC7Z020-1CLG400C) board description.
+#
+# Layout coordinates are in a 1000 x 640 drawing space, origin top-left, y down.
+# Every entry's x,y is its CENTRE. The drawing is schematic and NOT to scale; it
+# is not a photograph of the physical board layout.
+#
+# VERIFY: every package pin below is transcribed from memory of the Digilent
+# Zybo-Z7-Master.xdc and has NOT been checked against the Zybo Z7 Reference
+# Manual / schematic. Pmod pin locations are deliberately omitted until checked.
+# `pin_status` is surfaced by `zynqsim inspect` and the MCP `status_get` tool.
+
+schema_version = 1
+name = "zybo-z7-20"
+display_name = "Digilent Zybo Z7-20"
+part = "xc7z020clg400-1"
+ddr_mb = 1024              # 1 GB DDR3L; VERIFY against the reference manual
+pl_clock_hz = 125000000    # VERIFY: 125 MHz PL oscillator
+ps_clock_hz = 33333333     # VERIFY: 33.33 MHz PS clock
+pin_status = "unverified"
+
+[layout]
+width = 1000
+height = 640
+
+# --- slide switches (PL) -----------------------------------------------------
+[[switches]]
+id = "sw0"
+pin = "G15"
+key = "1"
+x = 160
+y = 585
+
+[[switches]]
+id = "sw1"
+pin = "P15"
+key = "2"
+x = 230
+y = 585
+
+[[switches]]
+id = "sw2"
+pin = "W13"
+key = "3"
+x = 300
+y = 585
+
+[[switches]]
+id = "sw3"
+pin = "T16"
+key = "4"
+x = 370
+y = 585
+
+# --- push buttons (PL) -------------------------------------------------------
+[[buttons]]
+id = "btn0"
+pin = "K18"
+key = "Q"
+x = 640
+y = 585
+
+[[buttons]]
+id = "btn1"
+pin = "P16"
+key = "W"
+x = 710
+y = 585
+
+[[buttons]]
+id = "btn2"
+pin = "K19"
+key = "E"
+x = 780
+y = 585
+
+[[buttons]]
+id = "btn3"
+pin = "Y16"
+key = "R"
+x = 850
+y = 585
+
+# --- user LEDs (PL) ----------------------------------------------------------
+[[leds]]
+id = "led0"
+pin = "M14"
+color = "green"
+x = 160
+y = 515
+
+[[leds]]
+id = "led1"
+pin = "M15"
+color = "green"
+x = 230
+y = 515
+
+[[leds]]
+id = "led2"
+pin = "G14"
+color = "green"
+x = 300
+y = 515
+
+[[leds]]
+id = "led3"
+pin = "D18"
+color = "green"
+x = 370
+y = 515
+
+# --- RGB LEDs (PL, PWM driven) -----------------------------------------------
+[[rgb_leds]]
+id = "led5"
+pin_r = "Y11"
+pin_g = "T5"
+pin_b = "Y12"
+x = 470
+y = 515
+
+[[rgb_leds]]
+id = "led6"
+pin_r = "V16"
+pin_g = "F17"
+pin_b = "M17"
+x = 530
+y = 515
+
+# --- Pmod ports ---------------------------------------------------------------
+# VERIFY: port count, which of JA..JE are PL and which share XADC pins, and the
+# MIO assignment of JF. Signal pins are named <id>1..4 and <id>7..10 as on a
+# standard 12-pin Pmod.
+[[pmods]]
+id = "JA"
+domain = "pl"
+x = 100
+y = 46
+
+[[pmods]]
+id = "JB"
+domain = "pl"
+x = 250
+y = 46
+
+[[pmods]]
+id = "JC"
+domain = "pl"
+x = 400
+y = 46
+
+[[pmods]]
+id = "JD"
+domain = "pl"
+x = 550
+y = 46
+
+[[pmods]]
+id = "JE"
+domain = "pl"
+x = 700
+y = 46
+
+[[pmods]]
+id = "JF"
+domain = "ps"
+x = 850
+y = 46
+
+# --- connectors and major parts (drawn, not yet functional) ------------------
+[[connectors]]
+id = "soc"
+kind = "soc"
+label = "XC7Z020"
+x = 500
+y = 300
+w = 240
+h = 200
+
+[[connectors]]
+id = "ddr"
+kind = "ddr"
+label = "DDR3L"
+x = 260
+y = 300
+w = 120
+h = 150
+
+[[connectors]]
+id = "qspi"
+kind = "qspi"
+label = "QSPI"
+x = 740
+y = 300
+w = 90
+h = 50
+
+[[connectors]]
+id = "ethernet"
+kind = "ethernet"
+label = "GbE"
+x = 55
+y = 170
+w = 90
+h = 100
+
+[[connectors]]
+id = "usb_otg"
+kind = "usb_otg"
+label = "USB OTG"
+x = 55
+y = 285
+w = 90
+h = 70
+
+[[connectors]]
+id = "hdmi_rx"
+kind = "hdmi_rx"
+label = "HDMI RX"
+x = 55
+y = 380
+w = 90
+h = 60
+
+[[connectors]]
+id = "hdmi_tx"
+kind = "hdmi_tx"
+label = "HDMI TX"
+x = 55
+y = 455
+w = 90
+h = 60
+
+[[connectors]]
+id = "microsd"
+kind = "microsd"
+label = "microSD"
+x = 945
+y = 150
+w = 90
+h = 70
+
+[[connectors]]
+id = "usb_uart"
+kind = "usb_uart"
+label = "UART"
+x = 945
+y = 235
+w = 90
+h = 60
+
+[[connectors]]
+id = "audio_line_in"
+kind = "audio"
+label = "LINE IN"
+x = 945
+y = 310
+w = 90
+h = 36
+
+[[connectors]]
+id = "audio_hp_out"
+kind = "audio"
+label = "HP OUT"
+x = 945
+y = 355
+w = 90
+h = 36
+
+[[connectors]]
+id = "audio_mic"
+kind = "audio"
+label = "MIC"
+x = 945
+y = 400
+w = 90
+h = 36
+
+[[connectors]]
+id = "power"
+kind = "power"
+label = "PWR"
+x = 945
+y = 470
+w = 90
+h = 70
+
+[[connectors]]
+id = "pcam"
+kind = "pcam"
+label = "Pcam CSI-2"
+x = 500
+y = 445
+w = 160
+h = 36

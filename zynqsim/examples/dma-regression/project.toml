@@ -1,0 +1,31 @@
+# Prototype regression (prompt §14.1, first acceptance test):
+#  * CPU0 programs a DMA engine in the PL, sleeps in WFI until the PL interrupt,
+#    verifies the data and prints PASS/FAIL on UART1;
+#  * CPU1 produces ping-pong input buffers, talking to CPU0 over a DDR mailbox;
+#  * the PL is `dma_xform.v` running in Vivado XSim (RTL-exact at its ports).
+# Needs: Xilinx QEMU (Vitis), Vivado XSim, and the DPI library (`cargo xtask dpi`).
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "xsim"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/dma_test.elf"
+
+[cpu1]
+elf = "../../fixtures/elf/dma_cpu1.elf"
+
+[rtl]
+files = ["../../fixtures/rtl/dma/dma_xform.v", "../../fixtures/rtl/dma/cosim_top.sv"]
+top = "cosim_top"

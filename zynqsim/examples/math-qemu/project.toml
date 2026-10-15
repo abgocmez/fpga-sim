@@ -1,0 +1,27 @@
+# Xilinx QEMU runs the prototype's bare-metal firmware; a native Rust model of
+# `my_math_ip` (reg1 = reg0 * 2) answers on M_AXI_GP0.
+# Needs the Xilinx QEMU (Vitis): found on PATH, in C:\Xilinx\Vitis, or via ZYNQSIM_QEMU.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "native"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/math_test.elf"
+
+[native]
+u_math = "my_math_ip"
+
+[connect]
+"u_math.s_axi" = "M_AXI_GP0@0x43C00000"

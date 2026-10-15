@@ -1,0 +1,19 @@
+# Firmware written in Rust (no_std, armv7a-none-eabi), from ../../firmware.
+# Rebuild with `cargo xtask firmware` (the prebuilt ELF is in fixtures/elf).
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "demo"          # no PL
+
+[sim]
+quantum_ns = 1000
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_hello.elf"

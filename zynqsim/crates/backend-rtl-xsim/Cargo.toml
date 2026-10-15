@@ -1,0 +1,16 @@
+[package]
+name = "backend-rtl-xsim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+interop = { path = "../interop" }
+pl-api = { path = "../pl-api" }
+
+[dev-dependencies]
+backend-qemu = { path = "../backend-qemu" }

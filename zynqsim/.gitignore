@@ -1,0 +1,12 @@
+# Cargo and the firmware workspace
+/target
+/firmware/target
+
+# Simulator output
+/out/
+*.vcd
+*.wdb
+.zynqsim/
+
+# Local tool state
+ruvector.db

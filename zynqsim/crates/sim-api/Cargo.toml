@@ -1,0 +1,22 @@
+[package]
+name = "sim-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+backend-qemu = { version = "0.1.0", path = "../backend-qemu" }
+backend-rtl-xsim = { version = "0.1.0", path = "../backend-rtl-xsim" }
+board-zybo = { version = "0.1.0", path = "../board-zybo" }
+pl-api = { version = "0.1.0", path = "../pl-api" }
+pl-native = { version = "0.1.0", path = "../pl-native" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sim-core = { version = "0.1.0", path = "../sim-core" }
+thiserror = "2.0.21"
+toml = "1.1.8"
+trace = { version = "0.1.0", path = "../trace" }

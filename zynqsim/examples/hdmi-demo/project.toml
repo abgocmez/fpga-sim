@@ -1,0 +1,38 @@
+# HDMI on the Zybo Z7: Rust firmware (firmware/hdmi_demo) draws a test card in DDR, the
+# PL scans it out to the HDMI TX connector model and captures a frame arriving on HDMI RX.
+#
+#   zynqsim run --project examples/hdmi-demo/project.toml --for 40ms --video-out tx.png
+#   zynqsim run --project examples/hdmi-demo/project.toml --for 40ms --video-in photo.png
+#
+# Needs: Xilinx QEMU (Vitis), Vivado XSim, and the DPI library (`cargo xtask dpi`).
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "xsim"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_hdmi.elf"
+
+[rtl]
+files = [
+    "../../fixtures/rtl/media/zs_media.sv",
+    "../../fixtures/rtl/media/audio_ctl.v",
+    "../../fixtures/rtl/media/video_fb.v",
+    "../../fixtures/rtl/media/cosim_media.sv",
+]
+top = "cosim_media"
+
+# The picture HDMI RX receives; 320x240 matches the PL's raster.
+[media]
+video_in = "bars:320x240"

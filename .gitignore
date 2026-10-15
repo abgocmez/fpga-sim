@@ -1,0 +1,35 @@
+# ---- build products and simulator scratch ----
+build/
+out/
+third_party/
+xsim.dir/
+.Xil/
+*.wdb
+*.jou
+*.log
+*.pb
+vivado*.str
+webtalk*
+*.vcd
+
+# ---- Rust ----
+target/
+**/*.rs.bk
+
+# ---- local tool state (agents, MCP, vector DBs) ----
+.mcp.json
+ruvector.db
+*.db-wal
+*.db-shm
+.claude/
+.swarm/
+.claude-flow/
+.zynqsim/
+
+# ---- editors and OS ----
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
+nul

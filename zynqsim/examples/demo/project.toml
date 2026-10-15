@@ -1,0 +1,15 @@
+# Starter project for the built-in demo backend. See docs/DESIGN.md.
+# `qemu`, `verilator`, `icarus`, `xsim` and `native` backends are not implemented yet.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+ddr_mb = 1024
+
+[backends]
+ps = "demo"
+pl = "demo"
+
+[sim]
+quantum_ns = 1000
+seed = 1

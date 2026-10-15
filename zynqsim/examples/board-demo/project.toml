@@ -1,0 +1,39 @@
+# The prototype's "virtual Zybo": an interactive UART shell on the Cortex-A9, a GPIO
+# block (4 LEDs, 4 switches, 4 buttons with IRQ) and a DMA image filter in the PL, all
+# as RTL in XSim. Switches/buttons you set reach the RTL; its LED pins light the board.
+#
+#   zynqsim-gui --project examples/board-demo/project.toml
+#   zynqsim run --project examples/board-demo/project.toml --for 15ms \
+#       --at "3ms=uart1:led 5\r" --at 6ms=sw1:on --at "7ms=uart1:status\r"
+#
+# Needs: Xilinx QEMU (Vitis), Vivado XSim, and the DPI library (`cargo xtask dpi`).
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "xsim"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/board_test.elf"
+
+[rtl]
+files = [
+    "../../fixtures/rtl/dma/dma_xform.v",
+    "../../fixtures/rtl/board/gpio_ctrl.v",
+    "../../fixtures/rtl/board/cosim_top.sv",
+]
+top = "cosim_top"
+
+# The shell needs UART input, which means the interactive (TCP) UART mode.
+[host]
+uart1 = "tcp"

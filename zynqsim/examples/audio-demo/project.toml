@@ -1,0 +1,40 @@
+# Audio on the Zybo Z7's SSM2603 codec: Rust firmware (firmware/audio_demo) brings the
+# codec up over I2C, plays a 1 kHz tone, then loops LINE IN back to the headphones.
+# The RTL (an I2S master + bit-banged I2C block) and the codec pin model run in XSim.
+#
+#   zynqsim run --project examples/audio-demo/project.toml --for 160ms \
+#       --audio-out tone.wav            # codec DAC output, 48 kHz stereo
+#   zynqsim run --project examples/audio-demo/project.toml --for 160ms --audio-in speech.wav
+#
+# Needs: Xilinx QEMU (Vitis), Vivado XSim, and the DPI library (`cargo xtask dpi`).
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "xsim"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_audio.elf"
+
+[rtl]
+files = [
+    "../../fixtures/rtl/media/zs_media.sv",
+    "../../fixtures/rtl/media/audio_ctl.v",
+    "../../fixtures/rtl/media/video_fb.v",
+    "../../fixtures/rtl/media/cosim_media.sv",
+]
+top = "cosim_media"
+
+# What the codec's LINE IN receives (the firmware loops it back in its second phase).
+[media]
+audio_in = "tone:440:0.5"

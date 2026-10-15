@@ -1,0 +1,57 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/sim-core",
+    "crates/trace",
+    "crates/board-zybo",
+    "crates/sim-api",
+    "crates/mcp",
+    "crates/cli",
+    "crates/gui",
+    "crates/xtask",
+    "crates/interop",
+    "crates/pl-api",
+    "crates/pl-native",
+    "crates/backend-qemu",
+    "crates/xsim-dpi",
+    "crates/backend-rtl-xsim",
+]
+default-members = [
+    "crates/sim-core",
+    "crates/trace",
+    "crates/board-zybo",
+    "crates/sim-api",
+    "crates/mcp",
+    "crates/cli",
+    "crates/gui",
+    "crates/interop",
+    "crates/pl-api",
+    "crates/pl-native",
+    "crates/backend-qemu",
+    "crates/xsim-dpi",
+    "crates/backend-rtl-xsim",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+rust-version = "1.85"
+repository = "https://example.invalid/zynqsim"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+# `xsim-dpi` is a no_std static library that cannot unwind, and cargo takes the
+# panic strategy from the workspace profile. Tests always unwind regardless.
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+panic = "abort"

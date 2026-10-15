@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zynq Co-Simulation</title>
+<style>
+  :root {
+    --bg: #0f1419; --panel: #171d25; --panel2: #1d2530; --line: #2b3542; --fg: #e6edf3;
+    --mut: #8b98a8; --cpu: #4aa3ff; --pl: #3ddc97; --ddr: #c792ea; --irq: #ffb454; --err: #ff6b6b;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f4f6f8; --panel: #fff; --panel2: #f0f3f6; --line: #d5dbe3; --fg: #1b2430;
+            --mut: #5d6b7c; --cpu: #1664c0; --pl: #0f8f5a; --ddr: #7b3fc4; --irq: #b86e00; --err: #c62828; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.45 system-ui, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: baseline; padding: 12px 16px;
+           border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { margin: 0; font-size: 16px; }
+  header .kv { color: var(--mut); }
+  header .kv b { color: var(--fg); font-variant-numeric: tabular-nums; }
+  .pill { padding: 1px 8px; border-radius: 10px; font-size: 12px; border: 1px solid var(--line); }
+  .ok { color: var(--pl); border-color: var(--pl); }
+  .bad { color: var(--err); border-color: var(--err); }
+  main { display: grid; gap: 12px; padding: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  @media (max-width: 1000px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+  .card h2 { margin: 0 0 2px; font-size: 15px; display: flex; justify-content: space-between; }
+  .role { color: var(--mut); font-size: 12px; margin-bottom: 8px; }
+  .cpu h2 .tag { color: var(--cpu); } .pl h2 .tag { color: var(--pl); }
+  table.kv { width: 100%; border-collapse: collapse; }
+  table.kv td { padding: 2px 0; vertical-align: top; }
+  table.kv td:first-child { color: var(--mut); width: 42%; }
+  td.mono, .mono { font-family: ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums; }
+  .state { display: inline-block; padding: 1px 8px; border-radius: 4px; font-size: 12px;
+           background: var(--panel2); border: 1px solid var(--line); }
+  .state.run { color: var(--cpu); border-color: var(--cpu); }
+  .state.wait { color: var(--irq); border-color: var(--irq); }
+  .state.busy { color: var(--pl); border-color: var(--pl); }
+  .bar { height: 8px; background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--pl); width: 0; transition: width .15s; }
+  .regs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px 8px; margin-top: 8px;
+          font-size: 12px; color: var(--mut); }
+  .regs b { color: var(--fg); font-weight: 500; }
+  .wide { grid-column: 1 / -1; }
+  .fsm { display: flex; gap: 4px; margin: 6px 0 10px; flex-wrap: wrap; }
+  .fsm span { padding: 2px 8px; border-radius: 4px; background: var(--panel2); border: 1px solid var(--line);
+              font-size: 12px; color: var(--mut); }
+  .fsm span.on { color: var(--bg); background: var(--pl); border-color: var(--pl); }
+  canvas { width: 100%; height: 190px; display: block; background: var(--panel2);
+           border: 1px solid var(--line); border-radius: 6px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--mut); font-size: 12px; margin-top: 6px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; }
+  pre { margin: 0; max-height: 220px; overflow: auto; padding: 8px; background: var(--panel2);
+        border: 1px solid var(--line); border-radius: 6px; font: 12px/1.4 ui-monospace, Consolas, monospace; }
+  .jobs { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+  .jobs span { width: 26px; height: 22px; border-radius: 4px; text-align: center; font-size: 11px; line-height: 22px;
+               background: var(--panel2); border: 1px solid var(--line); color: var(--mut); }
+  .jobs span.fill { border-color: var(--cpu); color: var(--cpu); }
+  .jobs span.fly { border-color: var(--pl); color: var(--pl); }
+  .jobs span.done { background: var(--pl); color: var(--bg); border-color: var(--pl); }
+  .board { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; text-align: center; margin-top: 4px; }
+  .board .lbl { color: var(--mut); font-size: 11px; margin-top: 4px; }
+  .led { width: 22px; height: 22px; border-radius: 50%; margin: 0 auto; background: var(--panel2);
+         border: 2px solid var(--line); }
+  .led.on { background: var(--irq); border-color: var(--irq); box-shadow: 0 0 10px var(--irq); }
+  .sw { width: 30px; height: 52px; border-radius: 6px; margin: 0 auto; background: var(--panel2);
+        border: 2px solid var(--line); position: relative; cursor: pointer; user-select: none; }
+  .sw::after { content: ""; position: absolute; left: 3px; right: 3px; height: 20px; border-radius: 4px;
+               background: var(--mut); bottom: 3px; transition: bottom .1s; }
+  .sw.on { border-color: var(--cpu); }
+  .sw.on::after { bottom: 25px; background: var(--cpu); }
+  .btn { width: 44px; height: 44px; border-radius: 50%; margin: 0 auto; background: var(--panel2);
+         border: 2px solid var(--line); cursor: pointer; user-select: none; }
+  .btn.on, .btn:active { background: var(--pl); border-color: var(--pl); }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+  input[type=text], select { background: var(--panel2); color: var(--fg); border: 1px solid var(--line);
+         border-radius: 4px; padding: 4px 8px; font: 13px ui-monospace, Consolas, monospace; }
+  button.chip { background: var(--panel2); color: var(--fg); border: 1px solid var(--line); border-radius: 12px;
+         padding: 2px 10px; cursor: pointer; font-size: 12px; }
+  button.chip:hover { border-color: var(--cpu); }
+  .imgs { display: flex; gap: 12px; flex-wrap: wrap; }
+  .imgs canvas { height: auto; width: 256px; image-rendering: pixelated; }
+  .imgs figcaption { color: var(--mut); font-size: 12px; text-align: center; }
+  figure { margin: 0; }
+  footer { color: var(--mut); padding: 4px 16px 16px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Zynq-7000 co-simulation</h1>
+  <span class="kv">PL time <b id="h_t">0</b></span>
+  <span class="kv">time lock <b id="h_lock">-</b></span>
+  <span class="kv">sync quantum <b id="h_q">-</b></span>
+  <span class="kv">DDR latency <b id="h_ddr">-</b></span>
+  <span class="kv">QEMU monitor <span id="h_qemu" class="pill">-</span></span>
+  <span class="kv">wall <b id="h_wall">0</b> s</span>
+</header>
+
+<main>
+  <section class="card cpu" id="cpu0">
+    <h2><span><span class="tag">CPU0</span> Cortex-A9</span><span id="c0_state" class="state">-</span></h2>
+    <div class="role" id="c0_role"></div>
+    <table class="kv">
+      <tr><td>PC</td><td class="mono" id="c0_pc">-</td></tr>
+      <tr><td>Function</td><td class="mono" id="c0_fn">-</td></tr>
+      <tr><td>Mode / IRQ</td><td id="c0_mode">-</td></tr>
+      <tr><td>SP / LR</td><td class="mono" id="c0_sp">-</td></tr>
+      <tr><td>Current job</td><td id="c0_job">-</td></tr>
+      <tr><td>Jobs done / errors</td><td id="c0_done">-</td></tr>
+    </table>
+    <div class="regs" id="c0_regs"></div>
+  </section>
+
+  <section class="card cpu" id="cpu1">
+    <h2><span><span class="tag">CPU1</span> Cortex-A9</span><span id="c1_state" class="state">-</span></h2>
+    <div class="role" id="c1_role"></div>
+    <table class="kv">
+      <tr><td>PC</td><td class="mono" id="c1_pc">-</td></tr>
+      <tr><td>Function</td><td class="mono" id="c1_fn">-</td></tr>
+      <tr><td>Mode / IRQ</td><td id="c1_mode">-</td></tr>
+      <tr><td>SP / LR</td><td class="mono" id="c1_sp">-</td></tr>
+      <tr><td>Task</td><td id="c1_task">-</td></tr>
+      <tr><td>Words produced</td><td class="mono" id="c1_words">-</td></tr>
+    </table>
+    <div class="regs" id="c1_regs"></div>
+  </section>
+
+  <section class="card pl">
+    <h2><span><span class="tag">PL</span> dma_xform</span><span id="pl_state" class="state">-</span></h2>
+    <div class="role">AXI4-Lite slave + AXI4 master (HP0), IRQ_F2P[0], 100 MHz</div>
+    <div class="fsm" id="pl_fsm"></div>
+    <table class="kv">
+      <tr><td>Status</td><td id="pl_status">-</td></tr>
+      <tr><td>IRQ line / enable</td><td id="pl_irq">-</td></tr>
+      <tr><td>SRC / DST</td><td class="mono" id="pl_addr">-</td></tr>
+      <tr><td>LEN / SCALE / OFFSET</td><td class="mono" id="pl_cfg">-</td></tr>
+      <tr><td>Progress</td><td><div class="bar"><i id="pl_bar"></i></div>
+          <span class="mono" id="pl_prog">-</span></td></tr>
+      <tr><td>Checksum</td><td class="mono" id="pl_sum">-</td></tr>
+    </table>
+  </section>
+
+  <section class="card wide">
+    <h2><span>Activity</span><span class="mono" id="tl_range" style="color:var(--mut)"></span></h2>
+    <canvas id="tl" width="1400" height="190"></canvas>
+    <div class="legend">
+      <span><i style="background:var(--cpu)"></i>PS register write</span>
+      <span><i style="background:#8ec5ff"></i>PS register read</span>
+      <span><i style="background:var(--pl)"></i>DMA read burst</span>
+      <span><i style="background:var(--ddr)"></i>DMA write burst</span>
+      <span><i style="background:var(--irq)"></i>IRQ_F2P[0] high</span>
+    </div>
+  </section>
+
+  <section class="card" id="boardcard">
+    <h2><span>Virtual board</span><span id="b_link" class="state">-</span></h2>
+    <div class="role">Zybo Z7-20: LEDs, slide switches, push buttons (click / hold)</div>
+    <div class="board" id="b_led"></div>
+    <div class="board" id="b_sw" style="margin-top:12px"></div>
+    <div class="board" id="b_btn" style="margin-top:12px"></div>
+  </section>
+
+  <section class="card" style="grid-column: span 2" id="memcard">
+    <h2><span>Memory / image viewer</span><span class="mono" id="m_info" style="color:var(--mut)"></span></h2>
+    <div class="row">
+      <label>addr <input type="text" id="m_addr" size="11" value="0x01000000"></label>
+      <label>width <input type="text" id="m_w" size="4" value="64"></label>
+      <label>height <input type="text" id="m_h" size="4" value="64"></label>
+      <label>bytes/pixel <select id="m_bpp"><option>4</option><option>1</option></select></label>
+      <button class="chip" id="m_go">refresh</button>
+      <label><input type="checkbox" id="m_auto"> auto</label>
+    </div>
+    <div class="row">
+      <button class="chip" data-addr="0x01000000">source image</button>
+      <button class="chip" data-addr="0x01100000">result image</button>
+    </div>
+    <div class="imgs" style="margin-top:10px">
+      <figure><canvas id="m_cv" width="64" height="64"></canvas><figcaption id="m_cap">-</figcaption></figure>
+      <pre id="m_hex" style="flex:1; min-width:260px; max-height:256px"></pre>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2><span>Traffic</span></h2>
+    <table class="kv">
+      <tr><td>PS &rarr; PL reads / writes</td><td class="mono" id="s_ps">-</td></tr>
+      <tr><td>Last PS access latency</td><td class="mono" id="s_lat">-</td></tr>
+      <tr><td>DMA read bursts / words</td><td class="mono" id="s_rd">-</td></tr>
+      <tr><td>DMA write bursts / words</td><td class="mono" id="s_wr">-</td></tr>
+      <tr><td>Interrupts raised</td><td class="mono" id="s_irq">-</td></tr>
+      <tr><td>Engine busy</td><td class="mono" id="s_busy">-</td></tr>
+      <tr><td>Throughput (busy)</td><td class="mono" id="s_thr">-</td></tr>
+    </table>
+    <div class="role" style="margin-top:10px">Two-CPU pipeline (ping-pong)</div>
+    <div class="jobs" id="jobs"></div>
+  </section>
+
+  <section class="card" style="grid-column: span 2">
+    <h2><span>UART1 console</span></h2>
+    <pre id="uart"></pre>
+    <form id="cons" class="row" autocomplete="off">
+      <input type="text" id="cons_in" style="flex:1" placeholder="type a command, e.g. help  (needs -Ui -SerialPort)">
+      <button class="chip" type="submit">send</button>
+    </form>
+    <div class="row">
+      <button class="chip" data-cmd="help">help</button>
+      <button class="chip" data-cmd="status">status</button>
+      <button class="chip" data-cmd="img 1">img 1</button>
+      <button class="chip" data-cmd="bright 60">bright 60</button>
+      <button class="chip" data-cmd="contrast 2">contrast 2</button>
+      <button class="chip" data-cmd="led 5">led 5</button>
+    </div>
+  </section>
+</main>
+<footer>
+  Times are simulated nanoseconds. CPU timing is an instruction-count model (not cycle accurate);
+  PL timing is RTL-exact at the AXI ports; PS&harr;PL time is locked at the sync quantum.
+</footer>
+
+<script>
+const FSM = ["IDLE", "AR", "R", "AW", "W", "B", "NEXT"];
+const $ = id => document.getElementById(id);
+const hex = (v, n = 8) => v == null ? "-" : "0x" + (v >>> 0).toString(16).padStart(n, "0");
+const fmtT = ns => ns == null ? "-" : ns >= 1e6 ? (ns / 1e6).toFixed(3) + " ms"
+                              : ns >= 1e3 ? (ns / 1e3).toFixed(2) + " µs" : ns + " ns";
+const CPU1ST = ["boot", "waiting for slot", "filling buffer", "done"];
+
+let events = [];
+let lastT = 0;
+let state = {};
+
+function setState(el, text, cls) { el.textContent = text; el.className = "state " + (cls || ""); }
+
+function renderCpu(i, c) {
+  const p = "c" + i + "_";
+  $(p + "role").textContent = c.role || "";
+  if (c.pc == null) { setState($(p + "state"), "no data"); return; }
+  setState($(p + "state"), c.halted ? c.waiting + " (waiting)" : "running", c.halted ? "wait" : "run");
+  $(p + "pc").textContent = hex(c.pc);
+  $(p + "fn").textContent = c.where || "-";
+  $(p + "mode").textContent = c.mode + (c.irq_masked ? " / IRQ masked" : " / IRQ enabled");
+  $(p + "sp").textContent = hex(c.sp) + " / " + hex(c.lr);
+  const r = c.regs || {};
+  $(p + "regs").innerHTML = Object.keys(r).filter(k => /^R\d+$/.test(k))
+      .sort((a, b) => a.slice(1) - b.slice(1)).slice(0, 12)
+      .map(k => `<span>${k} <b class="mono">${hex(r[k])}</b></span>`).join("");
+}
+
+function render(s) {
+  state = s;
+  const pl = s.pl || {};
+  $("h_t").textContent = fmtT(pl.t);
+  $("h_lock").textContent = pl.lock == null ? "-" : pl.lock ? "locked (icount)" : "free-running";
+  $("h_q").textContent = pl.quantum != null ? pl.quantum + " ns" : "-";
+  $("h_ddr").textContent = pl.ddr_lat != null ? pl.ddr_lat + " clk" : "-";
+  $("h_wall").textContent = s.wall;
+  const q = $("h_qemu"); q.textContent = s.qemu_ok ? "connected" : "no link (last values shown)";
+  q.className = "pill " + (s.qemu_ok ? "ok" : "bad");
+
+  renderCpu(0, s.cpus[0]); renderCpu(1, s.cpus[1]);
+  const m = s.mailbox;
+  if (m) {
+    $("c0_job").textContent = m.magic === 0xC0DEC0DE ? `${m.cpu0_job} of ${m.jobs_total}` : "(not in pipeline)";
+    $("c0_done").textContent = `${m.cpu0_jobs_done} / ${m.cpu0_errors}`;
+    $("c1_task").textContent = `${CPU1ST[m.cpu1_state] || m.cpu1_state}` +
+        (m.magic === 0xC0DEC0DE ? ` (job ${m.cpu1_job})` : "");
+    $("c1_words").textContent = m.cpu1_words + " (heartbeat " + m.cpu1_alive + ")";
+    const jobs = $("jobs"); const n = m.magic === 0xC0DEC0DE ? m.jobs_total : 0;
+    let h = "";
+    for (let j = 0; j < n; j++) {
+      let cls = "";
+      if (j < m.cpu0_jobs_done) cls = "done";
+      else if (j === m.cpu0_job && m.magic === 0xC0DEC0DE) cls = "fly";
+      else if (j === m.cpu1_job && m.cpu1_state === 2) cls = "fill";
+      h += `<span class="${cls}">${j}</span>`;
+    }
+    jobs.innerHTML = h;
+  }
+
+  // PL
+  if (pl.t != null) {
+    const st = pl.state;
+    $("pl_fsm").innerHTML = FSM.map((n, k) => `<span class="${k === st ? "on" : ""}">${n}</span>`).join("");
+    setState($("pl_state"), pl.busy ? "busy" : pl.done ? "done" : "idle", pl.busy ? "busy" : "");
+    $("pl_status").textContent = `busy=${pl.busy} done=${pl.done} error=${pl.err}`;
+    $("pl_irq").textContent = `${pl.irq ? "HIGH" : "low"} / enable ${pl.irq_en}`;
+    $("pl_addr").textContent = hex(pl.src) + " → " + hex(pl.dst);
+    $("pl_cfg").textContent = `${pl.len} words, x${pl.scale}, +${pl.off}`;
+    const done = pl.words, tot = pl.len || 1;
+    const frac = pl.busy ? Math.min(1, done / tot) : (pl.done ? 1 : 0);
+    $("pl_bar").style.width = (100 * frac).toFixed(0) + "%";
+    $("pl_prog").textContent = ` ${done} / ${pl.len} words` + (pl.busy ? `, burst of ${pl.burst}` : "");
+    $("pl_sum").textContent = hex(pl.checksum);
+    $("s_ps").textContent = `${pl.ps_rd} / ${pl.ps_wr}`;
+    $("s_lat").textContent = pl.ps_lat + " ns";
+    $("s_rd").textContent = `${pl.dma_rd_b} / ${pl.dma_rd_w}`;
+    $("s_wr").textContent = `${pl.dma_wr_b} / ${pl.dma_wr_w}`;
+    $("s_irq").textContent = pl.irqs;
+    const busyNs = pl.busy_clk * 10;
+    $("s_busy").textContent = `${pl.busy_clk} clk (${fmtT(busyNs)}, ${(100 * busyNs / Math.max(pl.t, 1)).toFixed(1)} % of run)`;
+    const words = pl.dma_wr_w;
+    $("s_thr").textContent = busyNs ? (words * 4 / busyNs * 1000).toFixed(1) + " MB/s" : "-";
+  }
+  $("uart").textContent = s.uart || "";
+  $("uart").scrollTop = $("uart").scrollHeight;
+  setState($("b_link"), s.serial ? "console live" : "view only", s.serial ? "busy" : "");
+  drawBoard(pl);
+  draw();
+}
+
+function draw() {
+  const cv = $("tl"), ctx = cv.getContext("2d");
+  const W = cv.width, H = cv.height, padL = 78, padR = 10;
+  const css = getComputedStyle(document.documentElement);
+  const col = n => css.getPropertyValue(n).trim();
+  ctx.clearRect(0, 0, W, H);
+  let evmax = 0;
+  for (const e of events) if (e.t > evmax) evmax = e.t;
+  const tmax = Math.max(state.pl ? state.pl.t || 0 : 0, evmax, 1000);
+  const tmin = Math.max(0, tmax - 400000);          // sliding window: last 400 µs
+  $("tl_range").textContent = `${fmtT(tmin)} → ${fmtT(tmax)}`;
+  const x = t => padL + (t - tmin) / (tmax - tmin) * (W - padL - padR);
+  const lanes = [["PS → PL regs", 28], ["DMA read", 62], ["DMA write", 96], ["IRQ_F2P[0]", 130]];
+  ctx.font = "12px system-ui"; ctx.fillStyle = col("--mut"); ctx.strokeStyle = col("--line");
+  lanes.forEach(([n, y]) => {
+    ctx.fillText(n, 6, y + 4);
+    ctx.beginPath(); ctx.moveTo(padL, y + 12); ctx.lineTo(W - padR, y + 12); ctx.stroke();
+  });
+  // axis ticks
+  const span = tmax - tmin, want = span / 6, base = Math.pow(10, Math.floor(Math.log10(want)));
+  const step = [1, 2, 5, 10].map(m => m * base).find(v => v >= want);
+  ctx.fillStyle = col("--mut");
+  for (let t = Math.ceil(tmin / step) * step; t <= tmax; t += step) {
+    ctx.fillText(fmtT(t), x(t) - 14, H - 10);
+    ctx.beginPath(); ctx.moveTo(x(t), 150); ctx.lineTo(x(t), 156); ctx.stroke();
+  }
+  let irqHigh = null;
+  for (const e of events) {
+    if (e.t < tmin - 5000) continue;
+    const px = x(e.t);
+    if (e.k === "ps_wr" || e.k === "ps_rd") {
+      ctx.fillStyle = e.k === "ps_wr" ? col("--cpu") : "#8ec5ff";
+      ctx.fillRect(px, 14, 2, 28);
+    } else if (e.k === "dma_rd") {
+      ctx.fillStyle = col("--pl"); ctx.fillRect(px - 6, 50, 8, 24);
+    } else if (e.k === "dma_wr") {
+      ctx.fillStyle = col("--ddr"); ctx.fillRect(px - 6, 84, 8, 24);
+    } else if (e.k === "irq") {
+      if (e.v) irqHigh = e.t;
+      else if (irqHigh != null) {
+        ctx.fillStyle = col("--irq");
+        ctx.fillRect(x(irqHigh), 120, Math.max(2, px - x(irqHigh)), 20);
+        irqHigh = null;
+      }
+    }
+  }
+  if (irqHigh != null) { ctx.fillStyle = col("--irq"); ctx.fillRect(x(irqHigh), 120, W - padR - x(irqHigh), 20); }
+}
+
+// ---------------- virtual board ----------------
+let ctrl = { sw: 0, btn: 0 };
+function pushCtrl() {
+  fetch("/api/ctrl", { method: "POST", body: JSON.stringify(ctrl) }).catch(() => {});
+  drawBoard(state.pl || {});
+}
+function buildBoard() {
+  const mk = (id, cls, n, onDown, onUp) => {
+    const box = $(id); box.innerHTML = "";
+    for (let i = 0; i < n; i++) {
+      const c = document.createElement("div");
+      const el = document.createElement("div"); el.className = cls; el.dataset.i = i;
+      const l = document.createElement("div"); l.className = "lbl";
+      c.appendChild(el); c.appendChild(l); box.appendChild(c);
+      if (onDown) el.addEventListener("pointerdown", e => { e.preventDefault(); onDown(i); });
+      if (onUp) { el.addEventListener("pointerup", () => onUp(i)); el.addEventListener("pointerleave", () => onUp(i)); }
+    }
+  };
+  mk("b_led", "led", 4);
+  mk("b_sw", "sw", 4, i => { ctrl.sw ^= 1 << i; pushCtrl(); });
+  mk("b_btn", "btn", 4, i => { ctrl.btn |= 1 << i; pushCtrl(); },
+                        i => { if (ctrl.btn & (1 << i)) { ctrl.btn &= ~(1 << i); pushCtrl(); } });
+  ["b_led", "b_sw", "b_btn"].forEach((id, k) =>
+    [...$(id).children].forEach((c, i) => c.querySelector(".lbl").textContent =
+        ["LD", "SW", "BTN"][k] + i));
+}
+function drawBoard(pl) {
+  const led = pl.led || 0;
+  [...$("b_led").children].forEach((c, i) => c.firstChild.classList.toggle("on", !!(led & (1 << i))));
+  [...$("b_sw").children].forEach((c, i) => c.firstChild.classList.toggle("on", !!(ctrl.sw & (1 << i))));
+  [...$("b_btn").children].forEach((c, i) => c.firstChild.classList.toggle("on", !!(ctrl.btn & (1 << i))));
+}
+buildBoard();
+
+// ---------------- console ----------------
+function sendText(t) {
+  return fetch("/api/uart", { method: "POST", body: JSON.stringify({ text: t }) }).catch(() => {});
+}
+$("cons").addEventListener("submit", e => {
+  e.preventDefault();
+  const v = $("cons_in").value; $("cons_in").value = "";
+  sendText(v + "\r");
+});
+document.querySelectorAll("button[data-cmd]").forEach(b =>
+  b.addEventListener("click", () => sendText(b.dataset.cmd + "\r")));
+
+// ---------------- memory / image viewer ----------------
+async function refreshMem() {
+  const addr = parseInt($("m_addr").value, 0) || 0;
+  const w = parseInt($("m_w").value) || 64, h = parseInt($("m_h").value) || 64;
+  const bpp = parseInt($("m_bpp").value) || 4;
+  const len = w * h * bpp;
+  try {
+    const r = await fetch(`/api/mem?addr=${addr}&len=${len}`, { cache: "no-store" });
+    if (!r.ok) { $("m_info").textContent = "monitor unavailable"; return; }
+    const b = new Uint8Array(await r.arrayBuffer());
+    const cv = $("m_cv"); cv.width = w; cv.height = h;
+    const ctx = cv.getContext("2d"), img = ctx.createImageData(w, h);
+    let lo = 255, hi = 0;
+    for (let i = 0; i < w * h; i++) {
+      const v = b[i * bpp] || 0;                  // low byte of each pixel word
+      lo = Math.min(lo, v); hi = Math.max(hi, v);
+      img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    $("m_cap").textContent = `${w}x${h}  @ 0x${addr.toString(16)}  min ${lo} max ${hi}`;
+    let hex = "";
+    for (let i = 0; i < Math.min(b.length, 256); i += 16) {
+      hex += (addr + i).toString(16).padStart(8, "0") + ": " +
+             [...b.slice(i, i + 16)].map(x => x.toString(16).padStart(2, "0")).join(" ") + "\n";
+    }
+    $("m_hex").textContent = hex;
+    $("m_info").textContent = "";
+  } catch (e) { $("m_info").textContent = "read failed"; }
+}
+$("m_go").addEventListener("click", refreshMem);
+document.querySelectorAll("button[data-addr]").forEach(b => b.addEventListener("click", () => {
+  $("m_addr").value = b.dataset.addr; refreshMem();
+}));
+setInterval(() => { if ($("m_auto").checked) refreshMem(); }, 1500);
+
+async function tick() {
+  try {
+    const r = await fetch("/api/state?since=" + lastT, { cache: "no-store" });
+    const s = await r.json();
+    if (s.events.length) {
+      events = events.concat(s.events);
+      lastT = s.total;                       // server-side sequence number
+      if (events.length > 30000) events = events.slice(-30000);
+    }
+    render(s);
+  } catch (e) { /* server not up yet / run finished */ }
+  setTimeout(tick, 300);
+}
+tick();
+</script>
+</body>
+</html>

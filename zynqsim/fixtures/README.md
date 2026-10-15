@@ -1,0 +1,24 @@
+# Test fixtures
+
+`elf/` holds **user-supplied firmware images** built by the prototype (the C sources are in
+`../../sw`, `../../dma_demo/sw*`, `../../board_demo/sw`; Vitis 2022.1, bare-metal, standalone BSP).
+They are inputs to the simulator, not code of this project, and are only ever executed by the
+simulated Cortex-A9.
+
+| File | Source | Behaviour (from the source) |
+|---|---|---|
+| `math_test.elf` | `sw/main.c` | writes 7 vectors to `0x43C00000`, checks `0x43C00004 == 2 * value`, prints `RESULT: ALL PASS` then `COSIM_DONE` on UART1 |
+| `dma_test.elf`, `dma_cpu1.elf` | `dma_demo/sw`, `dma_demo/sw_cpu1` | DMA accelerator regression, two cores (needs the `dma_xform` RTL and an RTL backend) |
+| `board_test.elf` | `board_demo/sw` | GPIO / LED demo (needs the `gpio_ctrl` RTL) |
+
+## `rtl/`
+
+User-supplied RTL and testbench tops from the prototype, used as inputs to the XSim backend.
+Each `cosim_top.sv` is a testbench that imports the `rp_*` DPI functions provided by
+`xsim-dpi` (same names and signatures as the prototype's `rp_dpi.c`).
+
+| Dir | Files | Notes |
+|---|---|---|
+| `math/` | `my_math_ip.v`, `cosim_top.sv` | AXI4-Lite slave, `reg1 = reg0 * 2`; used with `elf/math_test.elf` |
+| `dma/` | `dma_xform.v`, `cosim_top.sv` | AXI4-Lite control + AXI4 master DMA (`dst = src*scale + offset`), IRQ; used with `elf/dma_test.elf` + `elf/dma_cpu1.elf` |
+| `board/` | `gpio_ctrl.v`, `cosim_top.sv` (+ `dma/dma_xform.v`) | the "virtual Zybo" demo: LEDs, switches, buttons (IRQ), interactive UART shell, DMA image filter; used with `elf/board_test.elf`. The testbench reads switches/buttons with `tel_ctrl` and reports LED pins with `tel_event`, which `xsim-dpi` maps to the board |
