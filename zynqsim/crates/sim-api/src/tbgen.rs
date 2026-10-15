@@ -563,7 +563,9 @@ pub fn detect_axi_lite(m: &ModuleInfo) -> Result<AxiLite, String> {
     }
     let (prefix_lc, roles) = groups
         .into_iter()
-        .filter(|(_, r)| r.len() >= 8)
+        // Slave interfaces take addresses in; a group whose address is an
+        // output is a master (see `detect_axi_master`).
+        .filter(|(_, r)| r.len() >= 8 && r.get("awaddr").is_none_or(|p| p.dir == Dir::In))
         .max_by_key(|(prefix, r)| (r.len(), prefix.len()))
         .ok_or_else(|| {
             format!(
@@ -659,6 +661,157 @@ fn decl(width: u32) -> String {
     }
 }
 
+const MASTER_ROLES: [&str; 25] = [
+    "araddr", "arlen", "arsize", "arburst", "arvalid", "arready", "rdata", "rresp", "rlast",
+    "rvalid", "rready", "awaddr", "awlen", "awsize", "awburst", "awvalid", "awready", "wdata",
+    "wstrb", "wlast", "wvalid", "wready", "bresp", "bvalid", "bready",
+];
+
+/// An AXI4 master interface (the IP reads and writes memory through it).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AxiMaster {
+    /// Common name prefix of the interface signals (`m_`).
+    pub prefix: String,
+    /// Port names by role, in the module's own case.
+    pub signals: HashMap<&'static str, String>,
+}
+
+/// Finds an AXI4 master interface, if the module has one. `Err` when there is
+/// one but it cannot be driven (missing signals, not 32 bits).
+pub fn detect_axi_master(m: &ModuleInfo) -> Result<Option<AxiMaster>, String> {
+    let mut groups: HashMap<String, HashMap<&'static str, &Port>> = HashMap::new();
+    for p in &m.ports {
+        let lower = p.name.to_ascii_lowercase();
+        for role in MASTER_ROLES {
+            if let Some(prefix) = lower.strip_suffix(role) {
+                groups
+                    .entry(prefix.to_string())
+                    .or_default()
+                    .insert(role, p);
+            }
+        }
+    }
+    let Some((prefix_lc, roles)) = groups
+        .into_iter()
+        .filter(|(_, r)| r.get("awaddr").is_some_and(|p| p.dir == Dir::Out) && r.len() >= 8)
+        .max_by_key(|(prefix, r)| (r.len(), prefix.len()))
+    else {
+        return Ok(None);
+    };
+    let missing: Vec<&str> = MASTER_ROLES
+        .iter()
+        .copied()
+        .filter(|r| !roles.contains_key(r))
+        .collect();
+    if !missing.is_empty() {
+        return Err(format!(
+            "the AXI4 master interface `{prefix_lc}*` of `{}` lacks: {}",
+            m.name,
+            missing.join(", ")
+        ));
+    }
+    for r in ["rdata", "wdata"] {
+        if roles[r].width != 32 {
+            return Err(format!(
+                "the AXI4 master data width is {}: only 32 bits are supported",
+                roles[r].width
+            ));
+        }
+    }
+    let signals = roles.iter().map(|(r, p)| (*r, p.name.clone())).collect();
+    let prefix = roles["awaddr"].name[..prefix_lc.len()].to_string();
+    Ok(Some(AxiMaster { prefix, signals }))
+}
+
+/// The memory bridge: AXI4 bursts of the IP's master become remote-port
+/// accesses to the PS (S_AXI_HP0), with a modelled DDR latency.
+fn master_bridge(mst: &AxiMaster) -> String {
+    let g = |r: &str| mst.signals[r].clone();
+    format!(
+        "
+    // ---- {prefix}* (AXI4 master) -> PS memory through S_AXI_HP0 ----
+    localparam int HP0_DEV = 2;     // remote-port device of S_AXI_HP0
+    localparam int DDR_LAT = 16;    // modelled DDR latency seen by the IP, in clocks
+
+    reg [31:0] ra; reg [7:0] rl; integer rslot, rst, ri;
+    initial begin
+        wait (connected);
+        forever begin
+            @(posedge aclk);
+            if ({arvalid} && !{arready}) begin
+                ra = {araddr}; rl = {arlen};
+                {arready} <= 1'b1;
+                @(posedge aclk);
+                {arready} <= 1'b0;
+                rslot = rp_mem_start($time, HP0_DEV, 0, ra, (rl + 1) * 4);
+                rst = rp_mem_wait(rslot);
+                repeat (DDR_LAT) @(posedge aclk);
+                for (ri = 0; ri <= rl; ri = ri + 1) begin
+                    {rdata}  <= (rst == 1) ? rp_mem_get(rslot, ri) : 32'hBAD0_BAD0;
+                    {rresp}  <= (rst == 1) ? 2'b00 : 2'b10;
+                    {rvalid} <= 1'b1;
+                    {rlast}  <= (ri == rl);
+                    @(posedge aclk);
+                    while (!{rready}) @(posedge aclk);
+                    {rvalid} <= 1'b0; {rlast} <= 1'b0;
+                end
+                rp_mem_free(rslot);
+            end
+        end
+    end
+
+    reg [31:0] wa; reg [7:0] wl; integer wslot, wst, wi;
+    initial begin
+        wait (connected);
+        forever begin
+            @(posedge aclk);
+            if ({awvalid} && !{awready}) begin
+                wa = {awaddr}; wl = {awlen};
+                {awready} <= 1'b1;
+                @(posedge aclk);
+                {awready} <= 1'b0;
+                for (wi = 0; wi <= wl; wi = wi + 1) begin
+                    {wready} <= 1'b1;
+                    @(posedge aclk);
+                    while (!{wvalid}) @(posedge aclk);
+                    rp_mem_put(wi, {wdata});
+                    {wready} <= 1'b0;
+                end
+                wslot = rp_mem_start($time, HP0_DEV, 1, wa, (wl + 1) * 4);
+                wst = rp_mem_wait(wslot);
+                repeat (DDR_LAT) @(posedge aclk);
+                rp_mem_free(wslot);
+                {bvalid} <= 1'b1; {bresp} <= (wst == 1) ? 2'b00 : 2'b10;
+                @(posedge aclk);
+                while (!{bready}) @(posedge aclk);
+                {bvalid} <= 1'b0;
+            end
+        end
+    end
+",
+        prefix = mst.prefix,
+        arvalid = g("arvalid"),
+        arready = g("arready"),
+        araddr = g("araddr"),
+        arlen = g("arlen"),
+        rdata = g("rdata"),
+        rresp = g("rresp"),
+        rvalid = g("rvalid"),
+        rlast = g("rlast"),
+        rready = g("rready"),
+        awvalid = g("awvalid"),
+        awready = g("awready"),
+        awaddr = g("awaddr"),
+        awlen = g("awlen"),
+        wready = g("wready"),
+        wvalid = g("wvalid"),
+        wdata = g("wdata"),
+        bvalid = g("bvalid"),
+        bresp = g("bresp"),
+        bready = g("bready"),
+    )
+}
+
 /// One-bit outputs that look like interrupt lines (`irq`, `interrupt`,
 /// `intr` in the name), in declaration order. They become `IRQ_F2P[0..]`.
 pub fn detect_irqs(m: &ModuleInfo, axi: &AxiLite) -> Vec<String> {
@@ -678,6 +831,7 @@ pub fn detect_irqs(m: &ModuleInfo, axi: &AxiLite) -> Vec<String> {
 /// The testbench text for `m` and its interface `axi`.
 pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
     let irqs = detect_irqs(m, axi);
+    let master = detect_axi_master(m).ok().flatten();
     let sig = |r: &str| axi.signals.get(r).cloned();
     let mut s = String::new();
     let _ = writeln!(
@@ -697,7 +851,13 @@ pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
          \x20   import \"DPI-C\" function longint rp_sync_target();\n\
          \x20   import \"DPI-C\" function void rp_sync_ack(input longint now_ns);\n\
          \x20   import \"DPI-C\" function longint rp_req_ts();\n\
-         \x20   import \"DPI-C\" function void rp_irq(input longint now_ns, input int line, input int val);\n",
+         \x20   import \"DPI-C\" function void rp_irq(input longint now_ns, input int line, input int val);\n\
+         \x20   import \"DPI-C\" function void rp_mem_put(input int idx, input int word);\n\
+         \x20   import \"DPI-C\" function int  rp_mem_start(input longint now_ns, input int dev,\n\
+         \x20                                             input int is_write, input int addr, input int len);\n\
+         \x20   import \"DPI-C\" function int  rp_mem_wait(input int slot);\n\
+         \x20   import \"DPI-C\" function int  rp_mem_get(input int slot, input int idx);\n\
+         \x20   import \"DPI-C\" function void rp_mem_free(input int slot);\n",
         m.name, axi.prefix
     );
     let _ = writeln!(
@@ -706,7 +866,13 @@ pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
     );
 
     // Signal declarations for every port.
-    let role_of: HashMap<&str, &str> = axi.signals.iter().map(|(r, n)| (n.as_str(), *r)).collect();
+    let mut role_of: HashMap<&str, &str> =
+        axi.signals.iter().map(|(r, n)| (n.as_str(), *r)).collect();
+    if let Some(mst) = &master {
+        for (r, n) in &mst.signals {
+            role_of.insert(n.as_str(), *r);
+        }
+    }
     for p in &m.ports {
         let n = &p.name;
         if *n == axi.clock || axi.reset.as_ref().is_some_and(|(r, _)| r == n) {
@@ -816,6 +982,7 @@ pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
         end
     endtask
 
+{master}
     integer a_i, wd_i, ws_i, iw_i, st;
     longint tgt, rts;
 
@@ -863,6 +1030,7 @@ pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
     end
 endmodule
 ",
+        master = master.as_ref().map(master_bridge).unwrap_or_default(),
         irq_blocks = irq_blocks,
         irq_init = irq_init,
         awaddr = g("awaddr"),
@@ -914,6 +1082,7 @@ pub fn generate_project(
     rtl_files: &[String],
     testbench: &str,
     elf: &str,
+    elf1: Option<&str>,
     ip_name: &str,
     base_hint: u64,
 ) -> String {
@@ -921,6 +1090,9 @@ pub fn generate_project(
     // too) and no quotes, so a Windows path cannot break the file.
     let esc = |p: &str| p.replace('\\', "/").replace('"', "");
     let elf = esc(elf);
+    let cpu1 = elf1
+        .map(|e| format!("\n[cpu1]\nelf = \"{}\"\n", esc(e)))
+        .unwrap_or_default();
     let files: Vec<String> = rtl_files
         .iter()
         .map(|f| f.as_str())
@@ -949,7 +1121,7 @@ pub fn generate_project(
          \n\
          [cpu0]\n\
          elf = \"{elf}\"\n\
-         \n\
+         {cpu1}\n\
          [rtl]\n\
          files = [\n{}\n]\n\
          top = \"cosim_top\"\n\
@@ -959,7 +1131,8 @@ pub fn generate_project(
          # [debug]\n\
          # enabled = true\n\
          # breakpoints = [\"main\"]\n",
-        files.join("\n")
+        files.join("\n"),
+        cpu1 = cpu1.trim_start_matches('\n'),
     )
 }
 
@@ -1129,12 +1302,52 @@ mod tests {
             &["C:\\ip dir\\my_ip.v".to_string()],
             "tb/cosim_top.sv",
             "C:\\fw\\app.elf",
+            None,
             "my_ip",
             0x43C0_0000,
         );
         let p = crate::Project::from_toml(&toml).expect("valid TOML and schema");
         assert_eq!(p.cpu0.unwrap().elf, "C:/fw/app.elf");
         assert_eq!(p.rtl.unwrap().files[0], "C:/ip dir/my_ip.v");
+    }
+
+    #[test]
+    fn a_dma_ip_gets_a_slave_a_master_bridge_and_an_interrupt() {
+        let m = parse_module(&fixture("dma/dma_xform.v"), None).unwrap();
+        let axi = detect_axi_lite(&m).unwrap();
+        assert_eq!(axi.prefix, "s_", "the slave, not the master");
+        assert_eq!(axi.addr_width, 6);
+        let mst = detect_axi_master(&m).unwrap().expect("a master interface");
+        assert_eq!(mst.prefix, "m_");
+        assert_eq!(mst.signals["araddr"], "m_araddr");
+        assert_eq!(detect_irqs(&m, &axi), vec!["irq".to_string()]);
+
+        let tb = generate_testbench(&m, &axi);
+        assert!(tb.contains("rp_mem_start($time, HP0_DEV, 0, ra,"), "{tb}");
+        assert!(tb.contains("rp_mem_start($time, HP0_DEV, 1, wa,"));
+        // The IP's master outputs are wires, the response inputs are regs the
+        // bridge drives.
+        assert!(tb.contains("wire [31:0] m_araddr;"), "{tb}");
+        assert!(
+            tb.contains("reg  m_arready = 0;") || tb.contains("reg  m_arready"),
+            "{tb}"
+        );
+        assert!(tb.contains("reg  [31:0] m_rdata = 0;"));
+        assert!(tb.contains("s_awaddr <= a[5:0];"));
+        assert!(tb.contains("rp_irq($time, 0, irq ? 1 : 0);"));
+        // A slave-only IP gets no bridge.
+        let m = parse_module(&fixture("math/my_math_ip.v"), None).unwrap();
+        let axi = detect_axi_lite(&m).unwrap();
+        assert_eq!(detect_axi_master(&m), Ok(None));
+        assert!(!generate_testbench(&m, &axi).contains("HP0_DEV = 2"));
+    }
+
+    #[test]
+    fn an_incomplete_master_interface_is_reported() {
+        let src = fixture("dma/dma_xform.v").replace("m_wlast", "m_wlast_x");
+        let m = parse_module(&src, None).unwrap();
+        let e = detect_axi_master(&m).unwrap_err();
+        assert!(e.contains("wlast"), "{e}");
     }
 
     #[test]

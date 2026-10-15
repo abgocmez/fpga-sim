@@ -946,3 +946,55 @@ fn init_ip_forwards_interrupts_to_a_firmware_handler() {
     assert!(uart.contains("events=3 handled=3"), "{uart}");
     assert!(uart.contains("RESULT: ALL PASS"), "{uart}");
 }
+
+/// An IP with an AXI4 master, a slave and an interrupt: the generated testbench
+/// runs the two-core DMA regression and produces *the same trace digest* as
+/// the hand-written testbench of `examples/dma-regression`.
+#[test]
+fn init_ip_generates_the_dma_testbench_with_a_memory_bridge() {
+    if !qemu_available() || !xsim_available() {
+        eprintln!("SKIPPED: needs the Xilinx QEMU and Vivado XSim");
+        return;
+    }
+    ensure_dpi_lib();
+    let d = temp("init-ip-dma");
+    let ip = fixtures().join("rtl/dma/dma_xform.v");
+    let o = zynqsim(&[
+        "--json",
+        "init",
+        d.to_str().unwrap(),
+        "--ip",
+        ip.to_str().unwrap(),
+        "--elf",
+        fixtures().join("elf/dma_test.elf").to_str().unwrap(),
+        "--elf1",
+        fixtures().join("elf/dma_cpu1.elf").to_str().unwrap(),
+    ]);
+    assert_eq!(o.status.code(), Some(0), "{}", stdout(&o));
+    let v: Value = serde_json::from_str(&stdout(&o)).unwrap();
+    assert_eq!(v["axi_master"], "m_");
+    assert_eq!(v["interrupts"], serde_json::json!(["irq"]));
+
+    let run = |project: &str| -> Value {
+        let o = zynqsim(&["--json", "run", "--project", project, "--for", "3ms"]);
+        assert_eq!(
+            o.status.code(),
+            Some(0),
+            "{} {}",
+            stdout(&o),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        serde_json::from_str(&stdout(&o)).unwrap()
+    };
+    let generated = run(d.join("project.toml").to_str().unwrap());
+    let uart = generated["uart"]["1"].as_str().unwrap();
+    assert!(uart.contains("RESULT: ALL PASS"), "{uart}");
+    assert!(uart.matches("PASS ").count() >= 6, "{uart}");
+
+    let hand = run(&example("dma-regression"));
+    assert_eq!(generated["bus_accesses"], hand["bus_accesses"]);
+    assert_eq!(
+        generated["trace_hash"], hand["trace_hash"],
+        "generated and hand-written testbenches behave identically"
+    );
+}

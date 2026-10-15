@@ -37,8 +37,8 @@ pub use recording::{
 pub use server::SimClient;
 pub use sim::Simulator;
 pub use tbgen::{
-    AxiLite, Dir, ModuleInfo, Port, detect_axi_lite, detect_irqs, generate_project,
-    generate_testbench, parse_module, relative_path,
+    AxiLite, AxiMaster, Dir, ModuleInfo, Port, detect_axi_lite, detect_axi_master, detect_irqs,
+    generate_project, generate_testbench, parse_module, relative_path,
 };
 pub use tools::{
     BackendInfo, BackendKind, BackendRole, detect_backends, find_dpi_lib, find_on_path,

@@ -106,6 +106,9 @@ enum Cmd {
         /// With --ip: firmware ELF the project runs (default fw/app.elf).
         #[arg(long)]
         elf: Option<String>,
+        /// With --ip: firmware ELF for core 1 (optional).
+        #[arg(long)]
+        elf1: Option<String>,
         /// With --ip: the IP's base address, for the comment in project.toml.
         #[arg(long)]
         base: Option<String>,
@@ -233,6 +236,7 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
             ip,
             module,
             elf,
+            elf1,
             base,
         } => cmd_init(
             json,
@@ -243,6 +247,7 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
                 ip,
                 module,
                 elf,
+                elf1,
                 base,
             },
         ),
@@ -644,6 +649,7 @@ struct InitIp {
     ip: Vec<PathBuf>,
     module: Option<String>,
     elf: Option<String>,
+    elf1: Option<String>,
     base: Option<String>,
 }
 
@@ -665,6 +671,7 @@ fn init_from_ip(json: bool, dir: &Path, o: InitIp) -> Result<u8, Failure> {
     let m = found.ok_or_else(|| fail(2, last_err))?;
     let axi = sim_api::detect_axi_lite(&m).map_err(|e| fail(2, e))?;
     let irqs = sim_api::detect_irqs(&m, &axi);
+    let master = sim_api::detect_axi_master(&m).map_err(|e| fail(2, e))?;
     let base = match o.base.as_deref() {
         Some(b) => parse_addr(b)?,
         None => 0x43C0_0000,
@@ -689,7 +696,15 @@ fn init_from_ip(json: bool, dir: &Path, o: InitIp) -> Result<u8, Failure> {
     let elf = o.elf.unwrap_or_else(|| "fw/app.elf".to_string());
     write_file(
         &file,
-        sim_api::generate_project(&rtl, "tb/cosim_top.sv", &elf, &m.name, base).as_bytes(),
+        sim_api::generate_project(
+            &rtl,
+            "tb/cosim_top.sv",
+            &elf,
+            o.elf1.as_deref(),
+            &m.name,
+            base,
+        )
+        .as_bytes(),
     )?;
     let elf_exists = dir.join(&elf).is_file();
     if json {
@@ -700,6 +715,7 @@ fn init_from_ip(json: bool, dir: &Path, o: InitIp) -> Result<u8, Failure> {
                 "module": m.name,
                 "interface": axi.prefix,
                 "interrupts": irqs,
+                "axi_master": master.as_ref().map(|x| &x.prefix),
                 "addr_width": axi.addr_width,
                 "clock": axi.clock,
                 "reset": axi.reset.as_ref().map(|r| &r.0),
@@ -721,6 +737,12 @@ fn init_from_ip(json: bool, dir: &Path, o: InitIp) -> Result<u8, Failure> {
                 if r.1 { "low" } else { "high" }
             ))
         );
+        if let Some(x) = &master {
+            println!(
+                "master    : {}* (AXI4) -> PS memory through S_AXI_HP0",
+                x.prefix
+            );
+        }
         for (i, n) in irqs.iter().enumerate() {
             println!("interrupt : {n} -> IRQ_F2P[{i}] (GIC ID {})", 61 + i);
         }

@@ -53,12 +53,17 @@ In Rust firmware, `rt::irq` does the GIC setup and vector table
 (`irq::install(); irq::set_handler(61, isr); irq::enable_spi(61); irq::enable();`); see
 `firmware/irq_demo`. Clear the interrupt source in your IP from the handler, or the level stays high.
 
-What it does **not** generate: IPs with an AXI master (DMA), other AXI flavours, DDR access, board
-pins, audio/video. For those start from the hand-written testbenches:
+An **AXI4 master** on the IP (a 32-bit `*ARADDR` ... `*BREADY` interface, as on a DMA engine) is
+bridged to the PS's memory through `S_AXI_HP0`, so the IP reads and writes the same DDR the
+firmware sees, with a modelled 16-clock latency. Give the second core's firmware with `--elf1`.
+For `dma_xform.v` the generated testbench reproduces the hand-written regression's trace digest.
+
+What it does **not** generate: a full AXI4 slave or AXI-Stream, AXI masters that are not 32 bits
+wide, board pins, audio/video. For those start from the hand-written testbenches:
 
 | Need | Start from |
 |---|---|
-| Master ports into DDR, interrupt lines | `fixtures/rtl/dma/cosim_top.sv` (`rp_mem_*`, `rp_irq`) |
+| Statistics, custom DDR latency, several masters | `fixtures/rtl/dma/cosim_top.sv` (`rp_mem_*`, `rp_irq`) |
 | Switches, buttons, LEDs | `fixtures/rtl/board/cosim_top.sv` (`tel_ctrl`, `tel_event`) |
 | Codec and HDMI | `fixtures/rtl/media/` |
 
