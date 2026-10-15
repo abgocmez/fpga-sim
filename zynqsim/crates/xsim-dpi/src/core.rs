@@ -1369,7 +1369,7 @@ mod tests {
             host
         });
         for i in 0..N {
-            let lv = (i % 251) as u32;
+            let lv = i % 251;
             assert_eq!(dpi.pin_xchg(1, lv, u64::from(i)), !(lv as u8));
         }
         let _ = t.join().unwrap();

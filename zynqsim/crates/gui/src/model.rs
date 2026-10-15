@@ -78,6 +78,9 @@ pub struct Model {
     /// The newest picture of each attached Pmod device: `(port, kind, state,
     /// width, height, rgba)`.
     pub device_images: Vec<(u8, String, String, u32, u32, Vec<u8>)>,
+    /// The quantities the host may set on each attached device (a sensor's
+    /// temperature...): `(port, quantities)`.
+    pub device_values: Vec<(u8, Vec<sim_api::DeviceValueInfo>)>,
     device_polled: Option<Instant>,
     /// An engine being built in the background.
     pub load: Option<LoadJob>,
@@ -115,6 +118,7 @@ impl Model {
             generation: 0,
             cpu_regs: [None, None],
             device_images: Vec::new(),
+            device_values: Vec::new(),
             device_polled: None,
             load: None,
             load_error: None,
@@ -211,6 +215,7 @@ impl Model {
     fn refresh_devices(&mut self) {
         if self.status.devices.is_empty() {
             self.device_images.clear();
+            self.device_values.clear();
             return;
         }
         if self
@@ -222,7 +227,15 @@ impl Model {
         self.device_polled = Some(Instant::now());
         let ports: Vec<u8> = self.status.devices.iter().map(|d| d.port).collect();
         let mut images = Vec::new();
+        let mut values = Vec::new();
         for port in ports {
+            if let Ok(Response::DeviceState { values: v, .. }) =
+                self.client.query(Query::DeviceState { port })
+            {
+                if !v.is_empty() {
+                    values.push((port, v));
+                }
+            }
             if let Ok(Response::DeviceImage {
                 kind,
                 png,
@@ -240,6 +253,26 @@ impl Model {
             }
         }
         self.device_images = images;
+        self.device_values = values;
+    }
+
+    /// Sets a physical quantity of the device on Pmod port `port` (a
+    /// sensor's temperature); the firmware sees it at its next read.
+    pub fn set_device_value(&mut self, port: u8, name: &str, value: f64) {
+        let r = self.client.command(Command::SetDeviceValue {
+            port,
+            name: name.to_string(),
+            value,
+        });
+        // Show the new value at once, not after the next poll.
+        if r.is_ok() {
+            if let Some((_, vs)) = self.device_values.iter_mut().find(|(p, _)| *p == port) {
+                if let Some(v) = vs.iter_mut().find(|v| v.name == name) {
+                    v.value = value.clamp(v.min, v.max);
+                }
+            }
+        }
+        self.note(r);
     }
 
     /// Reads the registers when (and only when) the guest is stopped.
@@ -501,6 +534,19 @@ mod tests {
         assert_eq!(m.status.ps_backend, "demo");
         assert_eq!(m.state.switches.len(), 4);
         assert!(m.trace_total > 0 && !m.trace_tail.is_empty());
+    }
+
+    #[test]
+    fn device_values_go_through_the_simulation_and_errors_are_shown() {
+        let mut m = model();
+        // The demo engine has no Pmod pins: the request reaches it and its
+        // explanation is surfaced, nothing is invented.
+        m.set_device_value(0, "temperature", 21.0);
+        let e = m.last_error.clone().expect("an explanation");
+        assert!(e.contains("pmod devices"), "{e}");
+        assert!(m.device_values.is_empty());
+        m.refresh();
+        assert!(m.device_values.is_empty() && m.device_images.is_empty());
     }
 
     #[test]

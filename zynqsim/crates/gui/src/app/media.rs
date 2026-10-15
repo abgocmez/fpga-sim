@@ -320,6 +320,25 @@ impl App {
                 egui::vec2(width, width * h as f32 / w as f32),
             )));
             ui.label(RichText::new(state).small().color(Color32::GRAY));
+            // What a sensor measures is yours to set.
+            let values = self
+                .model
+                .device_values
+                .iter()
+                .find(|(p, _)| *p == port)
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default();
+            for q in values {
+                let mut v = q.value;
+                let r = ui.add(
+                    egui::Slider::new(&mut v, q.min..=q.max)
+                        .text(format!("{} ({})", q.name, q.unit))
+                        .clamping(egui::SliderClamping::Always),
+                );
+                if r.changed() {
+                    self.model.set_device_value(port, &q.name, v);
+                }
+            }
         }
     }
 

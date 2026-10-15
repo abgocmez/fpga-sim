@@ -36,8 +36,6 @@ use crate::{BoardDevice, DeviceImage, DeviceRegister, PinDrive, readout};
 
 /// SCCB address of the OV5640 (7 bit).
 pub const ADDRESS: u8 = 0x3C;
-/// The group the camera connector's pins are reported on.
-pub const GROUP: u8 = 5;
 const GPIO_BIT: u8 = 0;
 const SCL_BIT: u8 = 2;
 const SDA_BIT: u8 = 3;
