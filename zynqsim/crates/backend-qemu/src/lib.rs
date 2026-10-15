@@ -15,6 +15,8 @@
 //! Fidelity is F0 plus instruction-count timing (prompt §2.4/§5): QEMU is a
 //! functional model, not a cycle-accurate Cortex-A9.
 
+pub mod dtb;
+
 use interop::{
     BusAccess, BusCmd, Interrupt, Packet, Session, SessionError, Sync, cap, flags, resp,
 };
@@ -46,6 +48,69 @@ pub enum UartMode {
     Tcp,
 }
 
+/// What is attached to the SD slot (PS SDIO0) and the QSPI flash socket.
+///
+/// With the default `writable = false` both images are opened with QEMU's
+/// `snapshot=on`: the guest may write (the card and the flash accept
+/// programming), but writes go to a throw-away overlay in the run directory
+/// and the host file is never modified.
+#[derive(Clone, Debug, Default)]
+pub struct StorageConfig {
+    /// Raw SD card image bound to `sdhci@e0100000`. QEMU requires a
+    /// power-of-two size.
+    pub sd_image: Option<PathBuf>,
+    /// Raw 16 MiB QSPI flash image. Setting it also maps the linear read
+    /// window at `0xFC000000` (the co-sim tree leaves it unmapped).
+    pub qspi_image: Option<PathBuf>,
+    /// QEMU model for the flash, such as `s25fl129p0`. `None` keeps the
+    /// device tree's own chip (`n25q128a13`).
+    pub qspi_model: Option<String>,
+    /// Apply guest writes to the image files themselves.
+    pub writable: bool,
+}
+
+impl StorageConfig {
+    /// True when any image is attached.
+    pub fn any(&self) -> bool {
+        self.sd_image.is_some() || self.qspi_image.is_some()
+    }
+}
+
+/// The device-tree `compatible` string QEMU's fdt-generic machine turns into
+/// the named flash model (it strips the vendor prefix).
+fn flash_compatible(model: &str) -> String {
+    let vendor = if model.starts_with("s25") {
+        "spansion"
+    } else if model.starts_with("w25") {
+        "winbond"
+    } else if model.starts_with("mx25") {
+        "macronix"
+    } else {
+        "micron"
+    };
+    format!("{vendor},{model}")
+}
+
+/// Doubles commas, which QEMU's option parser treats as separators.
+fn qemu_value(s: &str) -> String {
+    s.replace(',', ",,")
+}
+
+/// The `-drive` argument for an image.
+fn drive_arg(interface: &str, path: &Path, writable: bool) -> String {
+    let mut a = format!(
+        "if={interface},file={},format=raw",
+        qemu_value(&path.display().to_string())
+    );
+    if interface == "sd" {
+        a.push_str(",index=0");
+    }
+    if !writable {
+        a.push_str(",snapshot=on");
+    }
+    a
+}
+
 /// How to start QEMU.
 #[derive(Clone, Debug)]
 pub struct QemuConfig {
@@ -68,6 +133,8 @@ pub struct QemuConfig {
     pub uart: UartMode,
     /// How long to wait for QEMU to open its sockets.
     pub connect_timeout: Duration,
+    /// SD card and QSPI flash images.
+    pub storage: StorageConfig,
 }
 
 impl QemuConfig {
@@ -83,6 +150,7 @@ impl QemuConfig {
             work_dir,
             uart: UartMode::File,
             connect_timeout: Duration::from_secs(20),
+            storage: StorageConfig::default(),
         }
     }
 
@@ -227,12 +295,34 @@ impl QemuMachine {
                 return Err(QemuError::MissingFile(p.clone()));
             }
         }
+        for p in [&cfg.storage.sd_image, &cfg.storage.qspi_image]
+            .into_iter()
+            .flatten()
+        {
+            if !p.is_file() {
+                return Err(QemuError::MissingFile(p.clone()));
+            }
+        }
         std::fs::create_dir_all(&cfg.work_dir).map_err(QemuError::Io)?;
         let rp_port = free_port().map_err(QemuError::Io)?;
         let uart_port = free_port().map_err(QemuError::Io)?;
         let uart_log = cfg.work_dir.join("uart1.log");
         // A stale log from a previous run would be read as new output.
         let _ = std::fs::remove_file(&uart_log);
+
+        // With a flash image attached the tree is adapted (linear window,
+        // flash part), see `dtb`. The patched copy lives in the run directory.
+        let dtb_path = if cfg.storage.qspi_image.is_some() {
+            let src = std::fs::read(&cfg.dtb).map_err(QemuError::Io)?;
+            let compat = cfg.storage.qspi_model.as_deref().map(flash_compatible);
+            let patched = dtb::patch_qspi(&src, compat.as_deref())
+                .map_err(|e| QemuError::Io(std::io::Error::other(e.to_string())))?;
+            let p = cfg.work_dir.join("zynq-cosim-qspi.dtb");
+            std::fs::write(&p, &patched.dtb).map_err(QemuError::Io)?;
+            p
+        } else {
+            cfg.dtb.clone()
+        };
 
         // Same shape as the prototype's run_cosim_win.ps1. Windows QEMU has no
         // unix sockets, and the co-sim DTB has no chrdev-id, so the
@@ -243,7 +333,7 @@ impl QemuMachine {
             "-display".into(),
             "none".into(),
             "-hw-dtb".into(),
-            cfg.dtb.display().to_string(),
+            dtb_path.display().to_string(),
             "-serial".into(),
             "null".into(),
             "-serial".into(),
@@ -268,6 +358,17 @@ impl QemuMachine {
             args.push("-device".into());
             args.push(format!("loader,file={},cpu-num=1", e.display()));
         }
+        // `if=sd,index=0` binds to the card of `sdhci@e0100000` (PS SDIO0) and
+        // `if=mtd` to the flash child of the QSPI node: verified with
+        // `info qtree` (ADR-012).
+        if let Some(p) = &cfg.storage.sd_image {
+            args.push("-drive".into());
+            args.push(drive_arg("sd", p, cfg.storage.writable));
+        }
+        if let Some(p) = &cfg.storage.qspi_image {
+            args.push("-drive".into());
+            args.push(drive_arg("mtd", p, cfg.storage.writable));
+        }
 
         let out_log = cfg.work_dir.join("qemu.out.log");
         let err_log = cfg.work_dir.join("qemu.err.log");
@@ -276,6 +377,14 @@ impl QemuMachine {
             .stdin(Stdio::null())
             .stdout(File::create(&out_log).map_err(QemuError::Io)?)
             .stderr(File::create(&err_log).map_err(QemuError::Io)?);
+        if cfg.storage.any() && !cfg.storage.writable {
+            // `snapshot=on` makes QEMU create its overlays in the system
+            // temporary directory, and a killed QEMU cannot delete them. Point
+            // them at the run directory, which is removed with the engine.
+            cmd.env("TMPDIR", &cfg.work_dir)
+                .env("TMP", &cfg.work_dir)
+                .env("TEMP", &cfg.work_dir);
+        }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -804,3 +913,43 @@ fn tail(path: &Path) -> String {
 
 #[doc(hidden)]
 pub const _PS_TO_PL_DEVICE: u32 = DEV_WIRES_PS_TO_PL;
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+
+    #[test]
+    fn images_are_read_only_unless_asked_otherwise() {
+        let p = Path::new(r"C:\data\my,card.img");
+        assert_eq!(
+            drive_arg("sd", p, false),
+            r"if=sd,file=C:\data\my,,card.img,format=raw,index=0,snapshot=on"
+        );
+        assert_eq!(
+            drive_arg("mtd", p, true),
+            r"if=mtd,file=C:\data\my,,card.img,format=raw"
+        );
+    }
+
+    #[test]
+    fn flash_models_map_to_vendor_prefixed_compatibles() {
+        assert_eq!(flash_compatible("s25fl129p0"), "spansion,s25fl129p0");
+        assert_eq!(flash_compatible("n25q128a13"), "micron,n25q128a13");
+        assert_eq!(flash_compatible("w25q64"), "winbond,w25q64");
+    }
+
+    #[test]
+    fn a_missing_image_is_reported_before_qemu_starts() {
+        let dir = std::env::temp_dir().join(format!("zs-qemu-missing-{}", std::process::id()));
+        let some = std::env::current_exe().unwrap();
+        let mut cfg = QemuConfig::new(some.clone(), some.clone(), some, dir);
+        cfg.storage.sd_image = Some(PathBuf::from("definitely-not-here.img"));
+        match QemuMachine::spawn(&cfg) {
+            Err(QemuError::MissingFile(p)) => {
+                assert!(p.ends_with("definitely-not-here.img"), "{}", p.display());
+            }
+            Err(other) => panic!("wrong error: {other}"),
+            Ok(_) => panic!("spawn succeeded without the image"),
+        }
+    }
+}

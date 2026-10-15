@@ -1,0 +1,37 @@
+# QSPI flash on the Zybo Z7 (S25FL128S, 16 MiB), read by Rust firmware
+# (firmware/qspi_demo): the JEDEC ID through the controller's FIFOs, 64 bytes of
+# data through the FIFOs, then the same 64 bytes through the linear
+# (memory-mapped) window at 0xFC000000.
+#
+#   zynqsim run --project examples/qspi-demo/project.toml --for 60ms
+#
+# The flash image is built when the simulation starts: `flash-data.bin` packed
+# at 0x100000 of an erased (0xFF) 16 MiB image. Use `zynqsim qspi-image --file
+# flash-data.bin --offset 0x100000 --out flash.bin` and `qspi_image = "flash.bin"`
+# for an image file you keep. Programming the flash from the guest never
+# changes the host files unless `writable = true`.
+#
+# Needs only the Xilinx QEMU (Vitis); no Vivado.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "demo"          # no PL
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_qspi.elf"
+
+[storage]
+qspi_data = "flash-data.bin"
+qspi_offset = 0x100000
+qspi_model = "s25fl129p0"

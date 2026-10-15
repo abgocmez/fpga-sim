@@ -114,6 +114,40 @@ enum Cmd {
         #[arg(long)]
         perfetto: Option<PathBuf>,
     },
+    /// Build an SD card image (MBR plus one FAT16/FAT32 volume) from a folder.
+    SdImage {
+        /// Folder whose files (recursively) are put on the card.
+        #[arg(long)]
+        dir: PathBuf,
+        /// Image file to write.
+        #[arg(long)]
+        out: PathBuf,
+        /// Card size in MiB: a power of two from 8 to 1024. Default: the
+        /// smallest that holds the files.
+        #[arg(long = "size-mb")]
+        size_mb: Option<u32>,
+        /// `auto` (FAT16 below 64 MiB, else FAT32), `16` or `32`.
+        #[arg(long, default_value = "auto")]
+        fat: String,
+        /// Volume label (up to 11 characters of A-Z 0-9 _ - space).
+        #[arg(long, default_value = "ZYNQSIM")]
+        label: String,
+    },
+    /// Pack a file at an offset into an erased 16 MiB QSPI flash image.
+    QspiImage {
+        /// File to place in the flash.
+        #[arg(long)]
+        file: PathBuf,
+        /// Byte offset of the file in the flash (123 or 0x7b).
+        #[arg(long, default_value = "0")]
+        offset: String,
+        /// Image file to write.
+        #[arg(long)]
+        out: PathBuf,
+        /// Flash size in MiB (the board has 16).
+        #[arg(long = "size-mb", default_value_t = 16)]
+        size_mb: u32,
+    },
     /// Start the MCP server on stdio (arguments are passed to zynqsim-mcp).
     Mcp {
         /// Arguments for zynqsim-mcp.
@@ -220,9 +254,105 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
             vcd,
             perfetto,
         } => cmd_trace(json, &recording, vcd, perfetto),
+        Cmd::SdImage {
+            dir,
+            out,
+            size_mb,
+            fat,
+            label,
+        } => cmd_sd_image(json, &dir, &out, size_mb, &fat, label),
+        Cmd::QspiImage {
+            file,
+            offset,
+            out,
+            size_mb,
+        } => cmd_qspi_image(json, &file, &offset, &out, size_mb),
         Cmd::Mcp { args } => launch("zynqsim-mcp", &args),
         Cmd::Gui { args } => launch("zynqsim-gui", &args),
     }
+}
+
+fn cmd_sd_image(
+    json: bool,
+    dir: &Path,
+    out: &Path,
+    size_mb: Option<u32>,
+    fat: &str,
+    label: String,
+) -> Result<u8, Failure> {
+    use sim_api::storage::{FatKind, SdImageOptions};
+    let fat = match fat {
+        "auto" => FatKind::Auto,
+        "16" => FatKind::Fat16,
+        "32" => FatKind::Fat32,
+        other => {
+            return Err(fail(
+                2,
+                format!("--fat `{other}` is not valid; expected auto, 16 or 32"),
+            ));
+        }
+    };
+    let opts = SdImageOptions {
+        size_mb,
+        fat,
+        label,
+    };
+    let image = sim_api::storage::build_sd_image(dir, &opts)?;
+    let files = sim_api::storage::read_sd_image(&image)?;
+    let kind = sim_api::storage::sd_image_fat_type(&image)?;
+    write_file(out, &image)?;
+    if json {
+        println!(
+            "{}",
+            json!({
+                "image": out.display().to_string(),
+                "bytes": image.len(),
+                "fat": kind,
+                "files": files.len(),
+            })
+        );
+    } else {
+        println!(
+            "wrote {} ({} MiB, {kind}, {} file(s))",
+            out.display(),
+            image.len() >> 20,
+            files.len()
+        );
+    }
+    Ok(0)
+}
+
+fn cmd_qspi_image(
+    json: bool,
+    file: &Path,
+    offset: &str,
+    out: &Path,
+    size_mb: u32,
+) -> Result<u8, Failure> {
+    let offset = parse_addr(offset)?;
+    let data =
+        std::fs::read(file).map_err(|e| fail(2, format!("cannot read {}: {e}", file.display())))?;
+    let image = sim_api::storage::build_qspi_image(&data, offset, size_mb)?;
+    write_file(out, &image)?;
+    if json {
+        println!(
+            "{}",
+            json!({
+                "image": out.display().to_string(),
+                "bytes": image.len(),
+                "offset": offset,
+                "file_bytes": data.len(),
+            })
+        );
+    } else {
+        println!(
+            "wrote {} ({} MiB flash, {} byte(s) at {offset:#x})",
+            out.display(),
+            image.len() >> 20,
+            data.len()
+        );
+    }
+    Ok(0)
 }
 
 struct RunArgs {
@@ -350,6 +480,7 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
     }
     engine.command(Command::RunUntil { time_ps: total.0 })?;
 
+    let mut no_recording = String::from("the session outgrew its journal");
     let recording = match engine.query(&Query::Recording, false) {
         Ok(Response::Recording(mut r)) => {
             // A session of a real engine can only be replayed with the project
@@ -363,13 +494,17 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
             }
             Some(*r)
         }
+        Err(e) => {
+            no_recording = e.message;
+            None
+        }
         _ => None,
     };
     if let Some(p) = &a.record {
         let rec = recording.as_ref().ok_or_else(|| {
             fail(
                 3,
-                "--record is not available on this backend (the session outgrew its journal)",
+                format!("--record is not available on this backend ({no_recording})"),
             )
         })?;
         let text = serde_json::to_string_pretty(rec).map_err(|e| fail(2, e.to_string()))?;
@@ -488,6 +623,7 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
                 "bus_accesses": bus_accesses,
                 "trace_dropped": engine.trace().dropped(),
                 "media": st.media,
+                "storage": st.storage,
                 "leds": leds,
                 "uart": { "0": u0, "1": u1 },
                 "inputs": recording.as_ref().map(|r| r.entries.len()),
@@ -506,6 +642,23 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
         println!("trace     : {} records, {}", st.trace_len, st.trace_hash);
         if bus_accesses > 0 {
             println!("pl bus    : {bus_accesses} access(es)");
+        }
+        if let Some(s) = &st.storage {
+            for (label, dev) in [("sd card   ", &s.sd), ("qspi flash", &s.qspi)] {
+                if let Some(d) = dev {
+                    println!(
+                        "{label}: {} ({} bytes, {}, {})",
+                        d.source,
+                        d.bytes,
+                        d.model,
+                        if d.writable {
+                            "writable"
+                        } else {
+                            "read-only: writes are discarded"
+                        }
+                    );
+                }
+            }
         }
         if let Some(m) = &st.media {
             println!(

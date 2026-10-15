@@ -155,6 +155,7 @@ impl Simulator {
             trace_hash: self.st.trace.hash_string(),
             pending_events: self.st.sched.len(),
             media: None,
+            storage: None,
         }
     }
 

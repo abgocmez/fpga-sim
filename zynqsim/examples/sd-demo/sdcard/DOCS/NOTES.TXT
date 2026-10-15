@@ -1,0 +1,1 @@
+A file in a sub-directory, to show that directory traversal works.

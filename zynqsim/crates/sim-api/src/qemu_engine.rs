@@ -10,7 +10,7 @@ use crate::engine::Engine;
 use crate::error::ApiError;
 use crate::types::{
     AudioSpec, Capability, Command, Fidelity, Input, MediaStatus, Query, Response, Status,
-    TraceFormat, VideoSpec,
+    StorageDevice, StorageStatus, TraceFormat, VideoSpec,
 };
 use backend_qemu::{QemuConfig, QemuError, QemuMachine, RunEnd, UartMode};
 use board_zybo::{BoardDef, BoardState};
@@ -22,6 +22,7 @@ use pl_native::{MathIp, NativePl, RegisterBlock};
 use sim_core::Ps;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use trace::{TraceEvent, TraceLog};
 
@@ -69,6 +70,62 @@ pub struct RtlSpec {
     pub waves: bool,
 }
 
+/// Where the contents of the SD card or the QSPI flash come from.
+#[derive(Clone)]
+pub enum ImageSource {
+    /// A raw image file on the host (opened read-only unless the storage is
+    /// `writable`).
+    File(PathBuf),
+    /// An image built in memory at project load from a host folder (SD card)
+    /// or file (flash). Each engine writes it into its own run directory, so
+    /// guest writes never reach the host and a restart begins from the same
+    /// contents.
+    Generated {
+        /// What it was built from, for the status.
+        name: String,
+        /// The image.
+        image: Arc<Vec<u8>>,
+    },
+}
+
+impl std::fmt::Debug for ImageSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ImageSource::File(p) => write!(f, "File({})", p.display()),
+            ImageSource::Generated { name, image } => {
+                write!(f, "Generated({name}, {} bytes)", image.len())
+            }
+        }
+    }
+}
+
+/// The board's microSD card and QSPI flash.
+#[derive(Clone, Debug, Default)]
+pub struct StorageSpec {
+    /// The card.
+    pub sd: Option<ImageSource>,
+    /// The 16 MiB QSPI flash contents.
+    pub qspi: Option<ImageSource>,
+    /// QEMU flash model; [`crate::storage::DEFAULT_QSPI_MODEL`] when `None`.
+    pub qspi_model: Option<String>,
+    /// Let guest writes reach the host image files.
+    pub writable: bool,
+}
+
+impl StorageSpec {
+    /// True when anything is attached.
+    pub fn any(&self) -> bool {
+        self.sd.is_some() || self.qspi.is_some()
+    }
+
+    /// True when a guest write would change a host file, which makes the
+    /// session impossible to re-execute from the same starting point.
+    pub fn mutates_host_files(&self) -> bool {
+        let file = |s: &Option<ImageSource>| matches!(s, Some(ImageSource::File(_)));
+        self.writable && (file(&self.sd) || file(&self.qspi))
+    }
+}
+
 /// Everything needed to start the QEMU engine.
 #[derive(Clone, Debug)]
 pub struct QemuSpec {
@@ -96,6 +153,8 @@ pub struct QemuSpec {
     pub board: String,
     /// Name to report as the PL backend.
     pub pl_name: String,
+    /// SD card and QSPI flash.
+    pub storage: StorageSpec,
 }
 
 struct BusEvent {
@@ -231,6 +290,13 @@ fn model(name: &str) -> Option<Box<dyn RegisterBlock>> {
 
 /// Names accepted for `[native]` models.
 pub const NATIVE_MODELS: &[&str] = &["my_math_ip"];
+
+/// QEMU's SD model reports a card above 2 GiB as high capacity (block
+/// addressing) and anything else as standard capacity (byte addressing).
+fn sd_model(bytes: u64) -> String {
+    let kind = if bytes > 2 << 30 { "SDHC" } else { "SDSC" };
+    format!("sd-card ({kind})")
+}
 
 fn check_size(w: u32, h: u32) -> Result<(), ApiError> {
     if w == 0 || h == 0 || w > 4096 || h > 4096 {
@@ -419,6 +485,11 @@ pub struct QemuEngine {
     snapshots: Vec<Snapshot>,
     /// Engines this one has been rebuilt from (names run directories).
     generation: u32,
+    /// What is attached to the SD slot and QSPI socket, for the status.
+    storage: Option<StorageStatus>,
+    /// Guest writes reach host image files: re-execution cannot reproduce the
+    /// session, so snapshot restore, reset and recording are refused.
+    non_repeatable: bool,
 }
 
 /// A named point in the journal, with what a faithful restore must reproduce.
@@ -494,6 +565,7 @@ impl QemuEngine {
         cfg.quantum_ns = spec.quantum_ns;
         cfg.icount_shift = Some(spec.icount_shift);
         cfg.uart = spec.uart;
+        let storage = Self::attach_storage(spec, &mut cfg)?;
         let machine = QemuMachine::spawn(&cfg).map_err(map_err)?;
 
         let mut trace = TraceLog::with_limit(TRACE_RETAIN);
@@ -511,6 +583,25 @@ impl QemuEngine {
                 ),
             },
         );
+        if let Some(s) = &storage {
+            // The part of the configuration that changes what the guest sees
+            // belongs in the digest. Names only: host paths differ per machine.
+            let part = |d: &Option<StorageDevice>| match d {
+                Some(d) => format!("{}:{}:{}B", d.model, d.source, d.bytes),
+                None => "none".to_string(),
+            };
+            trace.push(
+                Ps::ZERO,
+                TraceEvent::Marker {
+                    text: format!(
+                        "storage sd={} qspi={} writable={}",
+                        part(&s.sd),
+                        part(&s.qspi),
+                        spec.storage.writable
+                    ),
+                },
+            );
+        }
         Ok(QemuEngine {
             board: BoardState::new(&def),
             def,
@@ -536,7 +627,81 @@ impl QemuEngine {
             journal_ok: true,
             snapshots: Vec::new(),
             generation: 0,
+            storage,
+            non_repeatable: spec.storage.mutates_host_files(),
         })
+    }
+
+    /// Resolves the storage spec into QEMU arguments and the status report.
+    /// A folder card is written into the run directory here.
+    fn attach_storage(
+        spec: &QemuSpec,
+        cfg: &mut QemuConfig,
+    ) -> Result<Option<StorageStatus>, ApiError> {
+        let st = &spec.storage;
+        if !st.any() {
+            return Ok(None);
+        }
+        let mut status = StorageStatus::default();
+        cfg.storage.writable = st.writable;
+        // Resolves one source to the file QEMU opens, its size and the name
+        // shown in the status. A generated image goes into the run directory.
+        let resolve = |src: &ImageSource,
+                       what: &str,
+                       file: &str|
+         -> Result<(PathBuf, u64, String, bool), ApiError> {
+            match src {
+                ImageSource::File(p) => {
+                    let bytes = std::fs::metadata(p)
+                        .map_err(|e| {
+                            ApiError::not_found(format!("{what} image {}: {e}", p.display()))
+                        })?
+                        .len();
+                    let name = p
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    Ok((p.clone(), bytes, name, st.writable))
+                }
+                ImageSource::Generated { name, image } => {
+                    std::fs::create_dir_all(&spec.work_dir).map_err(|e| {
+                        ApiError::io(format!("cannot create the run directory: {e}"))
+                    })?;
+                    let p = spec.work_dir.join(file);
+                    std::fs::write(&p, image.as_slice())
+                        .map_err(|e| ApiError::io(format!("cannot write the {what} image: {e}")))?;
+                    // Rebuilt for every run: writes live for the run only and
+                    // never reach the host file or folder.
+                    Ok((p, image.len() as u64, name.clone(), false))
+                }
+            }
+        };
+        if let Some(src) = &st.sd {
+            let (path, bytes, source, writable) = resolve(src, "SD", "sdcard.img")?;
+            cfg.storage.sd_image = Some(path);
+            status.sd = Some(StorageDevice {
+                source,
+                bytes,
+                model: sd_model(bytes),
+                writable,
+            });
+        }
+        if let Some(src) = &st.qspi {
+            let (path, bytes, source, writable) = resolve(src, "QSPI", "qspi.bin")?;
+            let model = st
+                .qspi_model
+                .clone()
+                .unwrap_or_else(|| crate::storage::DEFAULT_QSPI_MODEL.to_string());
+            cfg.storage.qspi_image = Some(path);
+            cfg.storage.qspi_model = Some(model.clone());
+            status.qspi = Some(StorageDevice {
+                source,
+                bytes,
+                model,
+                writable,
+            });
+        }
+        Ok(Some(status))
     }
 
     /// Builds a fresh engine from the same spec and applies `steps` to it.
@@ -561,6 +726,9 @@ impl QemuEngine {
     }
 
     fn journal_needed(&self, what: &str) -> Result<(), ApiError> {
+        if self.non_repeatable {
+            return Err(self.repeatability_error(what));
+        }
         if self.journal_ok {
             Ok(())
         } else {
@@ -646,8 +814,20 @@ impl QemuEngine {
         Ok(Response::Ok)
     }
 
+    fn repeatability_error(&self, what: &str) -> ApiError {
+        self.unsupported(
+            what,
+            "this session writes to host image files (`[storage] writable = true`), so \
+             re-executing it would start from a different disk than the original run did; \
+             use the default read-only storage for snapshots, reset and recording",
+        )
+    }
+
     /// Starts over from time zero with the same firmware and PL design.
     fn reset_in_place(&mut self) -> Result<Response, ApiError> {
+        if self.non_repeatable {
+            return Err(self.repeatability_error("reset"));
+        }
         let mut fresh = self.rebuild(&[])?;
         std::mem::swap(self, &mut fresh);
         // `fresh` holds the old machine and is dropped here.
@@ -893,9 +1073,14 @@ impl Engine for QemuEngine {
             Capability::Trace,
             Capability::Screenshot,
             Capability::MemoryAccess,
-            Capability::Snapshot,
-            Capability::Replay,
         ];
+        if !self.non_repeatable {
+            caps.push(Capability::Snapshot);
+            caps.push(Capability::Replay);
+        }
+        if self.storage.is_some() {
+            caps.push(Capability::Storage);
+        }
         if self.pl.has_board_pins() {
             caps.push(Capability::BoardIo);
         }
@@ -917,6 +1102,7 @@ impl Engine for QemuEngine {
             trace_hash: self.trace.hash_string(),
             pending_events: 0,
             media: self.pl.has_media().then(|| self.media.status()),
+            storage: self.storage.clone(),
         }
     }
 
