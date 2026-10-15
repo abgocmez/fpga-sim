@@ -87,6 +87,18 @@ RTL is cached so a firmware change does not recompile it). **Save project.tomlâ€
 result. The **3D board** tab shows the board in perspective: drag to rotate, wheel to zoom, click
 the switches and buttons.
 
+### Debugging the CPU
+
+```
+zynqsim-mcp            # then: project_open examples/math-debug, sim_run 1ms, cpu_regs
+```
+
+A project with `[debug] enabled = true` runs the Cortex-A9 under QEMU's gdb stub. `sim_run` stops
+at a breakpoint (`[debug] breakpoints = ["main"]` or `breakpoint_set`), `cpu_regs` reads r0-r15
+and the CPSR there, `symbol_lookup` maps addresses to ELF symbols, and the next `sim_run`
+continues. Registers exist at stops, not at an arbitrary time, and timing under the debugger is not
+reproducible (docs/adr/007-debugger-on-guest-stops.md).
+
 ### MCP
 
 ```json
@@ -107,7 +119,7 @@ what the board receives.
 | `crates/` | `sim-core`, `trace`, `board-zybo`, `sim-api`, `mcp`, `cli`, `gui`, `xtask`, `interop`, `pl-api`, `pl-native`, `backend-qemu`, `backend-rtl-xsim`, `xsim-dpi` |
 | `boards/` | board descriptions (TOML) |
 | `docs/` | `DESIGN.md`, `STATUS.md`, `TESTPLAN.md`, `adr/` |
-| `examples/` | `demo`, `math-qemu`, `dma-regression`, `board-demo`, `audio-demo`, `hdmi-demo`, `rust-hello` projects |
+| `examples/` | `demo`, `math-qemu`, `math-debug`, `dma-regression`, `board-demo`, `audio-demo`, `hdmi-demo`, `rust-hello` projects |
 | `firmware/` | Rust `no_std` Cortex-A9 firmware (`hello`, `audio_demo`, `hdmi_demo`); its own workspace, built by `cargo xtask firmware` |
 | `fixtures/` | prototype firmware ELFs, the prebuilt Rust ELFs (`rust_*.elf`) and the RTL used by the examples and tests |
 

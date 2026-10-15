@@ -286,15 +286,50 @@ impl App {
         ui.separator();
 
         for core in 0..2usize {
-            egui::CollapsingHeader::new(format!("CPU {core}"))
-                .id_salt(("cpu", core))
-                .show(ui, |ui| {
+            let stopped = self.model.cpu_regs[core].is_some();
+            egui::CollapsingHeader::new(format!(
+                "CPU {core}{}",
+                if stopped { " (stopped)" } else { "" }
+            ))
+            .id_salt(("cpu", core))
+            .default_open(stopped)
+            .show(ui, |ui| match &self.model.cpu_regs[core] {
+                Some(r) => {
+                    if let Some(s) = &r.pc_symbol {
+                        ui.label(RichText::new(format!("pc in {s}")).strong());
+                    }
+                    for row in r.r.chunks(4).enumerate() {
+                        let text: Vec<String> = row
+                            .1
+                            .iter()
+                            .enumerate()
+                            .map(|(i, v)| {
+                                let n = row.0 * 4 + i;
+                                let name = match n {
+                                    13 => "sp".to_string(),
+                                    14 => "lr".to_string(),
+                                    15 => "pc".to_string(),
+                                    n => format!("r{n}"),
+                                };
+                                format!("{name:>3} {v:08x}")
+                            })
+                            .collect();
+                        ui.label(RichText::new(text.join("  ")).monospace().small());
+                    }
+                    ui.label(
+                        RichText::new(format!("cpsr {:08x}  mode {}", r.cpsr, r.mode))
+                            .monospace()
+                            .small(),
+                    );
+                }
+                None => {
                     ui.label(
                         RichText::new(&self.cpu_reason[core])
                             .color(Color32::GRAY)
                             .small(),
                     );
-                });
+                }
+            });
         }
         egui::CollapsingHeader::new("PL (bus accesses)").show(ui, |ui| {
             let bus: Vec<&TraceRecord> = self

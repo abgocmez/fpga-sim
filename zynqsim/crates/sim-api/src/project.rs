@@ -122,6 +122,20 @@ pub struct MediaSection {
     pub audio_in: Option<String>,
 }
 
+/// `[debug]` section: run the CPUs under QEMU's gdb stub.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DebugSection {
+    /// Attach the debugger. Breakpoints, watchpoints and `cpu_regs` then work,
+    /// but timing is no longer reproducible between runs.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Execution breakpoints planted before the first instruction: addresses
+    /// (`0x100614`) or ELF symbols (`main`).
+    #[serde(default)]
+    pub breakpoints: Vec<String>,
+}
+
 /// A `project.toml` (prompt §12).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -163,6 +177,9 @@ pub struct Project {
     /// HDMI RX and audio LINE IN sources.
     #[serde(default)]
     pub media: Option<MediaSection>,
+    /// Debugger.
+    #[serde(default)]
+    pub debug: Option<DebugSection>,
 }
 
 /// Parses a video source description (see [`MediaSection::video_in`]).
@@ -423,7 +440,10 @@ impl Project {
                     Some("tcp") => backend_qemu::UartMode::Tcp,
                     _ => backend_qemu::UartMode::File,
                 };
+                let debug = self.debug.clone().unwrap_or_default();
                 let spec = crate::QemuSpec {
+                    debug: debug.enabled,
+                    breakpoints: debug.breakpoints.clone(),
                     qemu,
                     dtb,
                     elf0,

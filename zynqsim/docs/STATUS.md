@@ -69,14 +69,14 @@ control plane drive it). Caveats are listed under *Known limits of the P1 engine
 * **The RTL testbench top is user-supplied** (it imports the `rp_*` DPI functions). Generation of a
   testbench from `[connect]`, `[connect]` for RTL ports, XSA/HWH ingestion and globs in
   `rtl.files` are not implemented (milestone P3).
-* **QEMU sessions cannot** read CPU registers (`cpu_regs`), set breakpoints or change the
-  quantum. Registers are not observable while paused: with `-icount` QEMU's sync wait holds the
-  global lock, so neither the monitor nor the gdb stub can answer until the machine runs again,
-  and asking while it runs would sample at a non-deterministic point. Measured: with the machine
-  held at a sync, QEMU's `-gdb` port accepts the TCP connection and never answers `qSupported`
-  (5 s timeout). Fixing this needs a change
-  inside QEMU's remote-port device (release the lock while waiting) or the native PS backend (P5).
-  (Memory works because it uses the remote-port path.)
+* **QEMU sessions cannot** change the quantum, and cannot read registers *at an arbitrary
+  time*. A machine that is merely paused sits in QEMU's sync wait holding the global lock, so
+  neither the monitor nor the gdb stub can answer (measured: the `-gdb` port accepts the TCP
+  connection and never answers). What works is a stop caused by the guest itself: with
+  `[debug] enabled = true` QEMU starts under its gdb stub, a breakpoint or watchpoint stops the
+  vCPUs, the lock is released and registers can be read (see *Debugger*). Registers at an
+  arbitrary simulated time would need a change inside QEMU's remote-port device or the native PS
+  backend (P5). (Memory works because it uses the remote-port path.)
 * **Snapshots and replays re-execute**, so they cost wall time proportional to the simulated time
   so far (XSim runs at 0.3-0.6 s per simulated millisecond). They are exact only when the session
   is deterministic: interactive (TCP) UART *input* is not, and then a restore is refused with the
@@ -111,6 +111,35 @@ control plane drive it). Caveats are listed under *Known limits of the P1 engine
 | Waveforms from XSim (`.wdb`) | implemented-untested | `[rtl] waves = true` records a database in the run directory; not exercised by a test |
 | FST export | not-planned | VCD is sufficient for now |
 | AXI protocol checkers, latency histograms | stub | not implemented |
+
+## Debugger (`[debug] enabled = true`)
+
+Needs the Xilinx QEMU. The CPUs run under QEMU's gdb stub: `-gdb` and `-S`, a debugger client in
+`backend-qemu::gdb`, breakpoints planted before the first instruction.
+
+| Feature | Status | Evidence / note |
+|---|---|---|
+| Execution breakpoints (`[debug] breakpoints = ["main", "0x100614"]`, `breakpoint_set`), run stops there, next run continues (steps off the breakpoint first) | verified | `backend-qemu::e2e::a_breakpoint_stops_the_guest_and_its_registers_are_exact`, `sim-api::qemu_debug::*`, `mcp::debugger_through_mcp` |
+| `cpu_regs`: r0-r15, CPSR, mode, flags, pc symbol, while stopped; refused (with the reason) while not stopped | verified | same tests; `gui::model::registers_appear_in_the_model_when_the_guest_stops` |
+| Guest state at every stop is reproducible between sessions (4 consecutive stops, 2 sessions: identical registers) | verified | `backend-qemu::e2e::registers_are_the_same_in_every_debug_session` |
+| `watchpoint_set` (write/read/access), `breakpoint_list`, `symbol_lookup` (ELF symbols, both directions) | `breakpoint_list`, `symbol_lookup`: verified; **watchpoint: implemented-untested** | no test makes a watchpoint fire: QEMU's behaviour for MMIO regions is not established |
+| `Play` stops at a breakpoint and reports why instead of running past it | verified | `sim-api::qemu_debug::continuous_running_stops_at_a_breakpoint_instead_of_running_past_it` |
+| ELF symbol reader (ELF32 LE `.symtab`, no DWARF) | verified | `sim-api::elf::tests::*` on the C and the Rust firmware |
+| Core 1 stops and registers (`cpu_regs core=1`) | implemented-untested | thread selection is generic; no test runs a second core to a breakpoint |
+| `cpu_disasm`, single-step, reverse debugging, DWARF source lines | stub / not-planned | `cpu_disasm` is `Planned("P5")`; there is no disassembler |
+
+Limits that matter:
+
+* **Timing under the debugger is not reproducible.** Attaching shifts virtual time by up to a
+  few microseconds and by a few hundred nanoseconds between two sessions (measured: first PL
+  access at 13.9 vs 14.9 us, finish 114.98 vs 115.16 us). The guest's *state* at each stop is
+  identical, the trace digest is not: snapshots and replays of a debug session may be refused
+  for a digest mismatch.
+* Breakpoints set while the machine is only paused are queued in the stub and take effect
+  within the next quantum at a wall-clock-dependent instant; the project's `[debug] breakpoints`
+  are exact.
+* A stop is only observed when no remote-port traffic arrives for 100 ms of wall time, so a stop
+  is reported with up to that much latency.
 
 ## Audio, video and the project loader
 
@@ -177,7 +206,8 @@ missing. See ADR-006.
 | MCP: QEMU + PL projects (open, run, UART, trace with bus events, gating) | verified | `mcp::tests::scenario::{qemu_project_through_mcp, dma_project_through_mcp}` |
 | MCP streamable HTTP transport | stub | stdio only |
 | MCP `mem_read`, `mem_write` on a QEMU engine; board tools, `uart_*` with an RTL board design | verified | `mcp::board_demo_through_mcp` |
-| MCP tools needing CPU registers/PL signals/network | stub | `unsupported` naming the missing capability |
+| MCP `cpu_regs`, `breakpoint_set`, `watchpoint_set`, `breakpoint_list`, `symbol_lookup` | verified for QEMU projects with `[debug]` | `mcp::scenario::debugger_through_mcp`; without `[debug]` they say how to enable it |
+| MCP tools needing PL signals/network/`cpu_disasm` | stub | `unsupported` naming the missing capability |
 | `project_create_from_xsa`, `pmod_attach` | stub | milestones P3 / P2 |
 | CLI: `run` (any engine, `--at` inputs incl. `uartN:`/`swN:`/`btnN:`, `--dump-mem`, `--dump-image`), `inspect`, `init`, `trace`, `test` (exit codes 0/1/2/3, `--json`) | verified | `crates/cli/tests/cli.rs` |
 | CLI: `mcp`, `gui` launchers | implemented-untested | not covered by a test |
@@ -204,7 +234,7 @@ missing. See ADR-006.
 | Item | Status | Note |
 |---|---|---|
 | `cargo fmt --check`, `clippy --all-targets -D warnings`, `cargo test --workspace` | verified locally | Windows, Rust stable GNU toolchain (MinGW from Qt). Harmless `.drectve` linker warning |
-| `cargo xtask ci` (fmt, clippy, freestanding DPI clippy + build, tests, release build) | verified locally | exited 0 on 2026-10-15 (after snapshot/replay), 183 tests, 0 skipped, QEMU and XSim tests included |
+| `cargo xtask ci` (fmt, clippy, freestanding DPI clippy + build, tests, release build) | verified locally | exited 0 on 2026-10-15 (after the debugger), 202 tests, 0 skipped, QEMU and XSim tests included |
 | `cargo xtask dpi`, `third-party`, `golden`, `release` | verified | each run |
 | `THIRD_PARTY.md` | verified | generated from `Cargo.lock`; licences as declared, not audited. Re-generate after dependency changes |
 | Linux and macOS | verified (build, lints, tests without Xilinx tools) | GitHub Actions run 38731290203 on `ubuntu-latest`, `windows-latest` and `macos-latest`: fmt, clippy `-D warnings` (incl. the freestanding DPI crate), `cargo test --workspace --no-fail-fast` and the release build all pass. Hosted runners have no QEMU or Vivado, so every test that needs them **skips**; those are verified only on the Windows development machine. The first hosted run found three real problems (workflow in the wrong directory, `freestanding` feature broken off Windows, a CRLF-dependent test) and the Linux WSL run earlier found an ordering bug in the XSim adapter |

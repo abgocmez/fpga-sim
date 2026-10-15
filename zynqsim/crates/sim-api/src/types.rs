@@ -132,6 +132,81 @@ pub enum AudioSpec {
     },
 }
 
+/// What a breakpoint or watchpoint reacts to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BreakKind {
+    /// An instruction at the address is about to execute.
+    Exec,
+    /// The guest writes the watched bytes.
+    Write,
+    /// The guest reads the watched bytes.
+    Read,
+    /// The guest reads or writes the watched bytes.
+    Access,
+}
+
+/// A breakpoint or watchpoint that is set.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BreakpointInfo {
+    /// Address.
+    pub addr: u64,
+    /// Kind.
+    pub kind: BreakKind,
+    /// Length in bytes (watchpoints).
+    pub len: u32,
+    /// ELF symbol at the address, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+}
+
+/// Registers of one core, read while it is stopped.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CpuRegs {
+    /// Core index.
+    pub core: u8,
+    /// r0..r15 (`r[13]` sp, `r[14]` lr, `r[15]` pc).
+    pub r: [u32; 16],
+    /// Current program status register.
+    pub cpsr: u32,
+    /// Processor mode decoded from the CPSR (`svc`, `sys`, `irq`...).
+    pub mode: String,
+    /// ELF symbol and offset of the pc, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pc_symbol: Option<String>,
+}
+
+/// An ELF symbol.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SymbolInfo {
+    /// Symbol name.
+    pub name: String,
+    /// Start address.
+    pub addr: u64,
+    /// Size in bytes (0 when the ELF does not say).
+    pub size: u64,
+    /// Offset of the queried address into the symbol (0 for a name query).
+    pub offset: u64,
+}
+
+/// Debugger state of an engine started with a debugger attached.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DebugStatus {
+    /// True while the guest is stopped at a breakpoint, watchpoint or step.
+    pub stopped: bool,
+    /// The core that stopped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub core: Option<u8>,
+    /// Its program counter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pc: Option<u32>,
+    /// Why it stopped, in words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Stops so far.
+    pub stops: u32,
+}
+
 /// A request that changes the simulation.
 ///
 /// Adjacently tagged (`{"type": .., "args": ..}`) because `Input` is itself
@@ -160,6 +235,18 @@ pub enum Command {
     },
     /// Stop continuous running.
     Pause,
+    /// Set or clear a breakpoint or watchpoint. Needs [`Capability::CpuState`]
+    /// (a project started with `[debug]`).
+    SetBreakpoint {
+        /// Address.
+        addr: u64,
+        /// Kind.
+        kind: BreakKind,
+        /// Watched length in bytes (ignored for execution breakpoints).
+        len: u32,
+        /// False removes it.
+        enable: bool,
+    },
     /// Choose the HDMI RX picture and/or the codec LINE IN audio.
     /// Needs [`Capability::Video`] or [`Capability::Audio`].
     SetMediaSource {
@@ -268,6 +355,14 @@ pub enum Query {
         /// Core index.
         core: u8,
     },
+    /// Breakpoints and watchpoints. Needs [`Capability::CpuState`].
+    Breakpoints,
+    /// Resolve an address (`0x...`) or a name against the core 0 ELF. Needs
+    /// [`Capability::CpuState`].
+    Symbol {
+        /// Address or symbol name.
+        query: String,
+    },
     /// Physical memory. Needs [`Capability::MemoryAccess`].
     MemRead {
         /// Physical address.
@@ -309,6 +404,9 @@ pub struct Status {
     pub trace_hash: String,
     /// Events waiting in the scheduler.
     pub pending_events: usize,
+    /// Debugger state, when the engine was started with one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debug: Option<DebugStatus>,
     /// Audio and video activity, when the PL carries the board's media models.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media: Option<MediaStatus>,
@@ -409,6 +507,12 @@ pub enum Response {
         /// WAV file bytes.
         wav: Vec<u8>,
     },
+    /// Registers of a stopped core.
+    CpuRegs(CpuRegs),
+    /// The breakpoints and watchpoints that are set.
+    Breakpoints(Vec<BreakpointInfo>),
+    /// A resolved symbol.
+    Symbol(SymbolInfo),
     /// Guest memory contents.
     Memory {
         /// Physical address of the first byte.

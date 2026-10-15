@@ -45,6 +45,7 @@ release build). Regenerate golden images: `cargo xtask golden` (review the diff)
 | `zynqsim` `qemu_*` (3, incl. record/replay/tamper), `mcp` `qemu_project_through_mcp` (incl. snapshot/restore/replay/reset), `sim-api` `qemu_journal` (2) | Xilinx QEMU | same |
 | `backend-rtl-xsim` `math` (3+1, plus the build cache), `dma_golden`, `zynqsim` `dma_*`, `mcp` `dma_project_through_mcp` | Xilinx QEMU + Vivado XSim (+ builds the DPI library on demand) | same |
 | `backend-rtl-xsim` `media` (4: build, codec, HDMI, polling stress) | Vivado XSim | same |
+| `backend-qemu` `e2e` debugger (2), `sim-api` `qemu_debug` (3), `mcp` `debugger_through_mcp`, `gui` `registers_appear_in_the_model...` | Xilinx QEMU | same |
 | `zynqsim` `audio_demo_*`, `hdmi_demo_*`; `mcp` `audio_and_hdmi_demos_through_mcp` | Xilinx QEMU + Vivado XSim + the DPI library | same (the MCP test asserts the library exists) |
 | `zynqsim-gui` `model` e2e (2: project load + audio, HDMI frame) | Xilinx QEMU + Vivado XSim + the DPI library | same |
 
@@ -64,7 +65,8 @@ Rust has no stable runtime-skip, so a skipped test is reported as passed. Run wi
 * **Third-party viewers**: VCD was not opened in GTKWave and Perfetto JSON was not loaded in the
   Perfetto UI; only their formats are checked.
 * **Hardware correctness**: nothing is compared with a real board. Pin assignments are unverified.
-* **QEMU session features**: CPU register inspection and breakpoints (not possible, see
-  STATUS.md). Snapshot, restore, reset and replay are covered, by re-execution, on the native-PL
-  math project and (replay only) on the RTL board demo by hand.
+* **QEMU session features**: registers at an arbitrary time (not possible, see STATUS.md);
+  watchpoints that actually fire; core 1 breakpoints; debug sessions' trace digests (not
+  reproducible). Snapshot, restore, reset and replay are covered, by re-execution, on the
+  native-PL math project and (replay only) on the RTL board demo by hand.
 * **Verilator / Icarus backends** and **Linux / macOS XSim**: not implemented.

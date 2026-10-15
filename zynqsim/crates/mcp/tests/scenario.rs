@@ -734,3 +734,120 @@ fn audio_and_hdmi_demos_through_mcp() {
         "PNG in base64"
     );
 }
+
+/// Debugging through MCP: stop at a symbol breakpoint, read registers and
+/// symbols, set and clear breakpoints, continue.
+#[test]
+fn debugger_through_mcp() {
+    let mut server = zynqsim_mcp::McpServer::new(vec![
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
+    ])
+    .unwrap();
+    let mut call = |name: &str, args: serde_json::Value| -> serde_json::Value {
+        server
+            .handle(
+                json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                        "params": { "name": name, "arguments": args } }),
+                &mut zynqsim_mcp::NoControl,
+            )
+            .unwrap()["result"]
+            .clone()
+    };
+    let backends = call("backend_list", json!({}))["structuredContent"]["backends"].clone();
+    if !backends
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|b| b["name"] == "qemu" && b["found"] == true)
+    {
+        eprintln!("SKIPPED: Xilinx QEMU not found");
+        return;
+    }
+
+    // Without [debug] the tools explain what to do.
+    let open = call("project_open", json!({ "path": "examples/math-qemu" }));
+    assert_eq!(open["isError"], false, "{open}");
+    let r = call("cpu_regs", json!({}));
+    assert_eq!(r["isError"], true);
+    assert!(
+        r["structuredContent"]["error"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("[debug]"),
+        "{r}"
+    );
+
+    let open = call("project_open", json!({ "path": "examples/math-debug" }));
+    assert_eq!(open["isError"], false, "{open}");
+    let st = call("status_get", json!({}))["structuredContent"]["status"].clone();
+    let caps: Vec<&str> = st["capabilities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c.as_str())
+        .collect();
+    assert!(caps.contains(&"cpu_state"), "{caps:?}");
+
+    // Not stopped yet: a precise refusal.
+    let r = call("cpu_regs", json!({}));
+    assert_eq!(r["isError"], true, "{r}");
+
+    let run = call("sim_run", json!({ "duration": "1ms" }));
+    assert_eq!(run["isError"], false, "{run}");
+    let dbg = &run["structuredContent"]["debug"];
+    assert_eq!(dbg["stopped"], true, "{run}");
+    assert_eq!(dbg["pc"], 0x0010_058c);
+    assert!(dbg["reason"].as_str().unwrap().contains("Xil_Out32"));
+    // The call ended at the stop, long before 1 ms.
+    assert!(run["structuredContent"]["now_ps"].as_u64().unwrap() < 200_000_000);
+
+    let regs = call("cpu_regs", json!({ "core": 0 }));
+    assert_eq!(regs["isError"], false, "{regs}");
+    let sc = &regs["structuredContent"];
+    assert_eq!(sc["regs"]["pc"], "0x0010058c");
+    assert_eq!(sc["regs"]["r0"], "0xf8000008");
+    assert_eq!(sc["regs"]["r1"], "0x0000df0d");
+    assert_eq!(sc["mode"], "sys");
+    assert_eq!(sc["pc_symbol"], "Xil_Out32");
+
+    let sym = call("symbol_lookup", json!({ "query": "main" }));
+    assert_eq!(sym["structuredContent"]["addr_hex"], "0x100614");
+    let sym = call("symbol_lookup", json!({ "query": "0x10061c" }));
+    assert_eq!(sym["structuredContent"]["name"], "main");
+    assert_eq!(sym["structuredContent"]["offset"], 8);
+
+    // Move the breakpoint to main's neighbour and add a watch on the PL.
+    let list = call("breakpoint_list", json!({}));
+    assert_eq!(
+        list["structuredContent"]["breakpoints"][0]["symbol"],
+        "Xil_Out32"
+    );
+    let r = call(
+        "breakpoint_set",
+        json!({ "addr": 0x10058c, "enable": false }),
+    );
+    assert_eq!(r["isError"], false, "{r}");
+    let list = call("breakpoint_list", json!({}));
+    assert!(
+        list["structuredContent"]["breakpoints"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    // Continue to the end.
+    let run = call("sim_run", json!({ "duration": "2ms" }));
+    assert_eq!(run["isError"], false, "{run}");
+    assert_eq!(run["structuredContent"]["debug"]["stopped"], false);
+    let uart = call("uart_read", json!({ "port": 1 }));
+    assert!(
+        uart["structuredContent"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("RESULT: ALL PASS"),
+        "{uart}"
+    );
+    // Planned features stay honest.
+    let r = call("cpu_disasm", json!({ "addr": 0x100000 }));
+    assert_eq!(r["isError"], true);
+}

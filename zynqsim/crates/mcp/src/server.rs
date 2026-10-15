@@ -4,8 +4,8 @@ use crate::util::{parse_hex, to_hex};
 use base64::Engine as _;
 use serde_json::{Value, json};
 use sim_api::{
-    ApiError, Command, ErrorCode, Input, Project, Ps, Query, Recording, Response, Severity,
-    SimClient, SimConfig, Simulator, TraceFormat, detect_backends, parse_duration,
+    ApiError, BreakKind, Command, ErrorCode, Input, Project, Ps, Query, Recording, Response,
+    Severity, SimClient, SimConfig, Simulator, TraceFormat, detect_backends, parse_duration,
 };
 use std::path::{Path, PathBuf};
 
@@ -249,9 +249,12 @@ impl McpServer {
                          backend set (fidelity {:?}) does not provide",
                         st.ps_backend, st.pl_backend, st.fidelity
                     ))
-                    .with_hint(
-                        "see docs/STATUS.md; QEMU and RTL backends arrive in milestone P1",
-                    ));
+                    .with_hint(match cap {
+                        sim_api::Capability::CpuState => {
+                            "use the qemu backend with `[debug] enabled = true` in project.toml"
+                        }
+                        _ => "see docs/STATUS.md for which backends provide this",
+                    }));
                 }
             }
         }
@@ -426,6 +429,79 @@ impl McpServer {
                 }
             }
             "media_source_set" => self.media_source_set(a),
+            "cpu_regs" => {
+                let core = a.get("core").and_then(Value::as_u64).unwrap_or(0) as u8;
+                match self.client.query(Query::CpuRegs { core })? {
+                    Response::CpuRegs(r) => {
+                        let mut regs = serde_json::Map::new();
+                        for (i, v) in r.r.iter().enumerate() {
+                            let name = match i {
+                                13 => "sp".to_string(),
+                                14 => "lr".to_string(),
+                                15 => "pc".to_string(),
+                                n => format!("r{n}"),
+                            };
+                            regs.insert(name, json!(format!("{v:#010x}")));
+                        }
+                        let f = |bit: u32| r.cpsr & (1 << bit) != 0;
+                        Ok(Out::json(json!({
+                            "core": r.core,
+                            "mode": r.mode,
+                            "pc_symbol": r.pc_symbol,
+                            "regs": regs,
+                            "cpsr": format!("{:#010x}", r.cpsr),
+                            "flags": { "N": f(31), "Z": f(30), "C": f(29), "V": f(28) },
+                            "irq_masked": f(7),
+                            "fiq_masked": f(6),
+                            "thumb": f(5),
+                        })))
+                    }
+                    r => Err(unexpected(&r)),
+                }
+            }
+            "breakpoint_set" | "watchpoint_set" => {
+                let addr = a.get("addr").and_then(Value::as_u64).unwrap_or(0);
+                let enable = a.get("enable").and_then(Value::as_bool).unwrap_or(true);
+                let (kind, len) = if name == "breakpoint_set" {
+                    (BreakKind::Exec, 4)
+                } else {
+                    let kind = match a.get("access").and_then(Value::as_str) {
+                        Some("read") => BreakKind::Read,
+                        Some("access") => BreakKind::Access,
+                        _ => BreakKind::Write,
+                    };
+                    (
+                        kind,
+                        a.get("len").and_then(Value::as_u64).unwrap_or(4) as u32,
+                    )
+                };
+                self.client.command(Command::SetBreakpoint {
+                    addr,
+                    kind,
+                    len,
+                    enable,
+                })?;
+                Ok(Out::json(
+                    json!({ "addr": addr, "kind": kind, "len": len, "set": enable }),
+                ))
+            }
+            "breakpoint_list" => match self.client.query(Query::Breakpoints)? {
+                Response::Breakpoints(list) => Ok(Out::json(json!({ "breakpoints": list }))),
+                r => Err(unexpected(&r)),
+            },
+            "symbol_lookup" => {
+                let query = str_arg(a, "query")?.to_string();
+                match self.client.query(Query::Symbol { query })? {
+                    Response::Symbol(s) => Ok(Out::json(json!({
+                        "name": s.name,
+                        "addr": s.addr,
+                        "addr_hex": format!("{:#x}", s.addr),
+                        "size": s.size,
+                        "offset": s.offset,
+                    }))),
+                    r => Err(unexpected(&r)),
+                }
+            }
             "board_screenshot" => {
                 let scale = a.get("scale").and_then(Value::as_f64).unwrap_or(1.0) as f32;
                 match self.client.query(Query::Screenshot { scale })? {
@@ -468,6 +544,7 @@ impl McpServer {
             "trace_len": st.trace_len,
             "trace_hash": st.trace_hash,
             "fidelity": st.fidelity,
+            "debug": st.debug,
         })))
     }
 
@@ -491,6 +568,10 @@ impl McpServer {
             let step = CHUNK_PS.min(total - done);
             self.client.command(Command::Run { duration_ps: step })?;
             done += step;
+            // A breakpoint ends the call: the next one continues.
+            if self.client.status()?.debug.is_some_and(|d| d.stopped) {
+                break;
+            }
             if let Some(tok) = &call.progress_token {
                 call.ctl
                     .progress(tok, done as f64 / 1e12, total as f64 / 1e12);

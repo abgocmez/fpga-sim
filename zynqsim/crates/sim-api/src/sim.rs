@@ -154,6 +154,7 @@ impl Simulator {
             trace_len: self.st.trace.len(),
             trace_hash: self.st.trace.hash_string(),
             pending_events: self.st.sched.len(),
+            debug: None,
             media: None,
         }
     }
@@ -315,6 +316,10 @@ impl Simulator {
                 self.snapshot_restore(&name)?;
                 Ok(Response::Ok)
             }
+            Command::SetBreakpoint { .. } => Err(self.unsupported(
+                "breakpoints",
+                "the demo engine runs no CPU (use the qemu backend with [debug])",
+            )),
             Command::SetMediaSource { .. } => Err(self.unsupported(
                 "media sources",
                 "audio and video need a PL with the board's media models (qemu + xsim)",
@@ -410,6 +415,10 @@ impl Simulator {
                     .map(Response::Png)
                     .map_err(ApiError::internal)
             }
+            Query::Breakpoints | Query::Symbol { .. } => Err(self.unsupported(
+                "breakpoints and symbols",
+                "the demo engine runs no CPU (use the qemu backend with [debug])",
+            )),
             Query::VideoFrame => Err(self.unsupported(
                 "video_frame",
                 "video needs a PL with an HDMI model (qemu + xsim)",

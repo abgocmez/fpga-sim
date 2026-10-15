@@ -1,0 +1,35 @@
+# The math example under QEMU's debugger: the CPU stops at `Xil_Out32` (every register write)
+# and `cpu_regs` / `breakpoint_set` / `symbol_lookup` work while it is stopped.
+#
+#   zynqsim-mcp, then: project_open -> sim_run 1ms -> cpu_regs -> sim_run 1ms -> cpu_regs
+#
+# Timing under the debugger is NOT reproducible between runs (it shifts by hundreds of
+# nanoseconds); the guest's state at each stop is. Needs the Xilinx QEMU (Vitis).
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "native"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/math_test.elf"
+
+[debug]
+enabled = true
+breakpoints = ["Xil_Out32"]
+
+[native]
+u_math = "my_math_ip"
+
+[connect]
+"u_math.s_axi" = "M_AXI_GP0@0x43C00000"

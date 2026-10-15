@@ -6,13 +6,14 @@
 //! this engine reports.
 
 use crate::bytelog::ByteLog;
+use crate::elf::Symbols;
 use crate::engine::Engine;
 use crate::error::ApiError;
 use crate::types::{
-    AudioSpec, Capability, Command, Fidelity, Input, MediaStatus, Query, Response, Status,
-    TraceFormat, VideoSpec,
+    AudioSpec, BreakKind, BreakpointInfo, Capability, Command, CpuRegs, DebugStatus, Fidelity,
+    Input, MediaStatus, Query, Response, Status, SymbolInfo, TraceFormat, VideoSpec,
 };
-use backend_qemu::{QemuConfig, QemuError, QemuMachine, RunEnd, UartMode};
+use backend_qemu::{BreakKind as GdbKind, QemuConfig, QemuError, QemuMachine, RunEnd, UartMode};
 use board_zybo::{BoardDef, BoardState};
 use pl_api::media::{SAMPLE_RATE, wav_bytes};
 use pl_api::{
@@ -96,6 +97,10 @@ pub struct QemuSpec {
     pub board: String,
     /// Name to report as the PL backend.
     pub pl_name: String,
+    /// Attach QEMU's gdb stub (see `[debug]` in `project.toml`).
+    pub debug: bool,
+    /// Execution breakpoints to plant at start (addresses or ELF symbols).
+    pub breakpoints: Vec<String>,
 }
 
 struct BusEvent {
@@ -419,6 +424,61 @@ pub struct QemuEngine {
     snapshots: Vec<Snapshot>,
     /// Engines this one has been rebuilt from (names run directories).
     generation: u32,
+    debug: Option<DebugState>,
+}
+
+/// Debugger bookkeeping of an engine started with `[debug]`.
+struct DebugState {
+    symbols: Symbols,
+    breakpoints: Vec<BreakpointInfo>,
+    /// Where the guest is stopped, if it is.
+    stopped: Option<StopNote>,
+    stops: u32,
+}
+
+struct StopNote {
+    core: u8,
+    pc: u32,
+    reason: String,
+}
+
+fn cpsr_mode(cpsr: u32) -> &'static str {
+    match cpsr & 0x1F {
+        0x10 => "usr",
+        0x11 => "fiq",
+        0x12 => "irq",
+        0x13 => "svc",
+        0x16 => "mon",
+        0x17 => "abt",
+        0x1A => "hyp",
+        0x1B => "und",
+        0x1F => "sys",
+        _ => "?",
+    }
+}
+
+fn gdb_kind(k: BreakKind) -> GdbKind {
+    match k {
+        BreakKind::Exec => GdbKind::Exec,
+        BreakKind::Write => GdbKind::Write,
+        BreakKind::Read => GdbKind::Read,
+        BreakKind::Access => GdbKind::Access,
+    }
+}
+
+/// An address (`0x100614`, `1049108`) or an ELF symbol name.
+fn resolve_location(text: &str, symbols: &Symbols) -> Result<u32, ApiError> {
+    let t = text.trim();
+    let num = match t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+        Some(h) => u32::from_str_radix(h, 16).ok(),
+        None => t.parse::<u32>().ok(),
+    };
+    num.or_else(|| symbols.by_name(t).map(|s| s.addr))
+        .ok_or_else(|| {
+            ApiError::not_found(format!(
+                "`{t}` is neither an address nor a symbol of the ELF"
+            ))
+        })
 }
 
 /// A named point in the journal, with what a faithful restore must reproduce.
@@ -494,7 +554,37 @@ impl QemuEngine {
         cfg.quantum_ns = spec.quantum_ns;
         cfg.icount_shift = Some(spec.icount_shift);
         cfg.uart = spec.uart;
-        let machine = QemuMachine::spawn(&cfg).map_err(map_err)?;
+        cfg.debug = spec.debug;
+        let mut machine = QemuMachine::spawn(&cfg).map_err(map_err)?;
+        let mut pl = TracedPl {
+            inner: pl,
+            events: Vec::new(),
+        };
+        let debug = if spec.debug {
+            machine.attach_debugger(&mut pl).map_err(map_err)?;
+            let symbols = Symbols::load(&spec.elf0).unwrap_or_default();
+            let mut breakpoints = Vec::new();
+            for b in &spec.breakpoints {
+                let addr = resolve_location(b, &symbols)?;
+                machine
+                    .debug_break(GdbKind::Exec, true, addr, 4)
+                    .map_err(|e| ApiError::io(e.to_string()))?;
+                breakpoints.push(BreakpointInfo {
+                    addr: u64::from(addr),
+                    kind: BreakKind::Exec,
+                    len: 4,
+                    symbol: symbols.containing(addr).map(|(s, _)| s.name.clone()),
+                });
+            }
+            Some(DebugState {
+                symbols,
+                breakpoints,
+                stopped: None,
+                stops: 0,
+            })
+        } else {
+            None
+        };
 
         let mut trace = TraceLog::with_limit(TRACE_RETAIN);
         let elf = spec
@@ -515,10 +605,7 @@ impl QemuEngine {
             board: BoardState::new(&def),
             def,
             machine,
-            pl: TracedPl {
-                inner: pl,
-                events: Vec::new(),
-            },
+            pl,
             trace,
             uart1: ByteLog::default(),
             target_ns: 0,
@@ -536,6 +623,7 @@ impl QemuEngine {
             journal_ok: true,
             snapshots: Vec::new(),
             generation: 0,
+            debug,
         })
     }
 
@@ -777,6 +865,15 @@ impl QemuEngine {
             return Err(ApiError::io(f.clone()));
         }
         self.target_ns = self.target_ns.max(end_ns);
+        if self.debug.is_some() {
+            // Running again (also the very first start): leaves any stop.
+            self.machine
+                .resume()
+                .map_err(|e| ApiError::io(e.to_string()))?;
+            if let Some(d) = &mut self.debug {
+                d.stopped = None;
+            }
+        }
         while !self.exited && self.machine.now_ns() < self.target_ns {
             let boundary = (self.machine.now_ns() / CHUNK_NS + 1) * CHUNK_NS;
             let t = boundary.min(self.target_ns);
@@ -784,6 +881,10 @@ impl QemuEngine {
             self.flush();
             match end {
                 Ok(RunEnd::ReachedTime) => {}
+                Ok(RunEnd::Stopped(stop)) => {
+                    self.note_stop(stop);
+                    break;
+                }
                 Ok(RunEnd::PeerClosed) => {
                     self.exited = true;
                     let now = self.now_ps();
@@ -803,6 +904,58 @@ impl QemuEngine {
         }
         self.settle_uart();
         Ok(())
+    }
+
+    /// Records where the guest stopped and marks the trace.
+    fn note_stop(&mut self, stop: backend_qemu::Stop) {
+        let core = stop.thread.saturating_sub(1);
+        let regs = self.machine.debug_regs(core).ok();
+        let pc = regs.as_ref().map_or(0, |r| r.r[15]);
+        let Some(d) = &mut self.debug else { return };
+        let sym = d
+            .symbols
+            .containing(pc)
+            .map(|(s, off)| {
+                if off == 0 {
+                    s.name.clone()
+                } else {
+                    format!("{}+{off:#x}", s.name)
+                }
+            })
+            .unwrap_or_default();
+        let reason = match stop.watch_addr {
+            Some(a) => format!("watchpoint at {a:#x}"),
+            None if d.breakpoints.iter().any(|b| b.addr == u64::from(pc)) => {
+                "breakpoint".to_string()
+            }
+            None => "stop".to_string(),
+        };
+        let text = format!(
+            "core {core} stopped: {reason} at pc={pc:#010x}{}",
+            if sym.is_empty() {
+                String::new()
+            } else {
+                format!(" ({sym})")
+            }
+        );
+        d.stops += 1;
+        d.stopped = Some(StopNote {
+            core,
+            pc,
+            reason: text.clone(),
+        });
+        let now = self.now_ps();
+        self.trace.push(now, TraceEvent::Marker { text });
+    }
+
+    fn debug_needed(&self, what: &str) -> Result<&DebugState, ApiError> {
+        self.debug.as_ref().ok_or_else(|| {
+            self.unsupported(
+                what,
+                "the debugger is not attached: set `[debug] enabled = true` in project.toml \
+                 (timing is then not reproducible between runs)",
+            )
+        })
     }
 
     /// In TCP UART mode the host reads the socket asynchronously, so bytes the
@@ -896,6 +1049,9 @@ impl Engine for QemuEngine {
             Capability::Snapshot,
             Capability::Replay,
         ];
+        if self.debug.is_some() {
+            caps.push(Capability::CpuState);
+        }
         if self.pl.has_board_pins() {
             caps.push(Capability::BoardIo);
         }
@@ -916,6 +1072,13 @@ impl Engine for QemuEngine {
             trace_len: self.trace.len(),
             trace_hash: self.trace.hash_string(),
             pending_events: 0,
+            debug: self.debug.as_ref().map(|d| DebugStatus {
+                stopped: d.stopped.is_some(),
+                core: d.stopped.as_ref().map(|s| s.core),
+                pc: d.stopped.as_ref().map(|s| s.pc),
+                reason: d.stopped.as_ref().map(|s| s.reason.clone()),
+                stops: d.stops,
+            }),
             media: self.pl.has_media().then(|| self.media.status()),
         }
     }
@@ -955,6 +1118,13 @@ impl Engine for QemuEngine {
 
     fn run_for(&mut self, d: Ps) -> Result<(), ApiError> {
         self.command(Command::Run { duration_ps: d.0 }).map(|_| ())
+    }
+
+    fn halted(&self) -> Option<String> {
+        self.debug
+            .as_ref()
+            .and_then(|d| d.stopped.as_ref())
+            .map(|s| s.reason.clone())
     }
 }
 
@@ -1060,6 +1230,49 @@ impl QemuEngine {
                     },
                 );
                 self.push_board_inputs();
+                Ok(Response::Ok)
+            }
+            Command::SetBreakpoint {
+                addr,
+                kind,
+                len,
+                enable,
+            } => {
+                self.debug_needed("breakpoint_set")?;
+                let a = u32::try_from(addr).map_err(|_| {
+                    ApiError::invalid_argument("addresses above 4 GiB do not exist on this core")
+                })?;
+                if kind != BreakKind::Exec && !(1..=64).contains(&len) {
+                    return Err(ApiError::invalid_argument(
+                        "a watchpoint covers 1 to 64 bytes",
+                    ));
+                }
+                self.machine
+                    .debug_break(gdb_kind(kind), enable, a, len)
+                    .map_err(|e| ApiError::io(e.to_string()))?;
+                if let Some(d) = &mut self.debug {
+                    d.breakpoints
+                        .retain(|b| !(b.addr == addr && b.kind == kind));
+                    if enable {
+                        let symbol = d.symbols.containing(a).map(|(s, _)| s.name.clone());
+                        d.breakpoints.push(BreakpointInfo {
+                            addr,
+                            kind,
+                            len: if kind == BreakKind::Exec { 4 } else { len },
+                            symbol,
+                        });
+                    }
+                }
+                let now = self.now_ps();
+                self.trace.push(
+                    now,
+                    TraceEvent::Input {
+                        what: format!(
+                            "{} {kind:?} breakpoint at {addr:#x}",
+                            if enable { "set" } else { "clear" }
+                        ),
+                    },
+                );
                 Ok(Response::Ok)
             }
             Command::SetMediaSource { video, audio } => {
@@ -1263,10 +1476,73 @@ impl QemuEngine {
                     .slice(*from_frame, (*max_frames).max(1) as usize)
                     .into_response())
             }
+            Query::Breakpoints => {
+                let d = self.debug_needed("breakpoint_list")?;
+                Ok(Response::Breakpoints(d.breakpoints.clone()))
+            }
+            Query::Symbol { query } => {
+                let d = self.debug_needed("symbol_lookup")?;
+                if d.symbols.is_empty() {
+                    return Err(ApiError::not_found("the ELF has no symbols"));
+                }
+                let t = query.trim();
+                let addr = t
+                    .strip_prefix("0x")
+                    .and_then(|h| u32::from_str_radix(h, 16).ok());
+                let found = match addr {
+                    Some(a) => d.symbols.containing(a).map(|(s, off)| (s, u64::from(off))),
+                    None => d.symbols.by_name(t).map(|s| (s, 0)),
+                };
+                let (s, offset) = found
+                    .ok_or_else(|| ApiError::not_found(format!("no symbol for `{t}`")))?;
+                Ok(Response::Symbol(SymbolInfo {
+                    name: s.name.clone(),
+                    addr: u64::from(s.addr),
+                    size: u64::from(s.size),
+                    offset,
+                }))
+            }
+            Query::CpuRegs { core } if self.debug.is_some() => {
+                if *core > 1 {
+                    return Err(ApiError::invalid_argument("core must be 0 or 1"));
+                }
+                let stopped = self
+                    .debug
+                    .as_ref()
+                    .is_some_and(|d| d.stopped.is_some());
+                if !stopped {
+                    return Err(self.unsupported(
+                        "cpu_regs",
+                        "registers can only be read while the guest is stopped at a \
+                         breakpoint or watchpoint (set one with breakpoint_set and run)",
+                    ));
+                }
+                let r = self
+                    .machine
+                    .debug_regs(*core)
+                    .map_err(|e| ApiError::io(e.to_string()))?;
+                let pc_symbol = self.debug.as_ref().and_then(|d| {
+                    d.symbols.containing(r.r[15]).map(|(s, off)| {
+                        if off == 0 {
+                            s.name.clone()
+                        } else {
+                            format!("{}+{off:#x}", s.name)
+                        }
+                    })
+                });
+                Ok(Response::CpuRegs(CpuRegs {
+                    core: *core,
+                    r: r.r,
+                    cpsr: r.cpsr,
+                    mode: cpsr_mode(r.cpsr).to_string(),
+                    pc_symbol,
+                }))
+            }
             Query::CpuRegs { .. } => Err(self.unsupported(
                 "cpu_regs",
-                "while the machine is paused at a sync QEMU holds its global lock, so its \
-                 monitor cannot answer; registers are not observable deterministically",
+                "registers are only readable under the debugger: set `[debug] enabled = true` \
+                 in project.toml, set a breakpoint and run until the guest stops (a machine \
+                 that is merely paused holds QEMU's global lock and cannot be asked)",
             )),
             Query::MemRead { addr, len } => {
                 if *len == 0 || *len > 1 << 20 {

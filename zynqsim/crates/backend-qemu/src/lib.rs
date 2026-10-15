@@ -15,6 +15,9 @@
 //! Fidelity is F0 plus instruction-count timing (prompt §2.4/§5): QEMU is a
 //! functional model, not a cycle-accurate Cortex-A9.
 
+mod gdb;
+pub use gdb::{BreakKind, GdbClient, GdbError, Regs, Stop};
+
 use interop::{
     BusAccess, BusCmd, Interrupt, Packet, Session, SessionError, Sync, cap, flags, resp,
 };
@@ -68,6 +71,12 @@ pub struct QemuConfig {
     pub uart: UartMode,
     /// How long to wait for QEMU to open its sockets.
     pub connect_timeout: Duration,
+    /// Attach QEMU's gdb stub (`-gdb`) and start with the CPUs stopped
+    /// (`-S`): breakpoints are planted before the first instruction, so every
+    /// stop is a function of the guest alone. A machine under a debugger is
+    /// **not** timing-reproducible: attaching shifts virtual time by up to a
+    /// few microseconds and between runs by a few hundred nanoseconds.
+    pub debug: bool,
 }
 
 impl QemuConfig {
@@ -83,6 +92,7 @@ impl QemuConfig {
             work_dir,
             uart: UartMode::File,
             connect_timeout: Duration::from_secs(20),
+            debug: false,
         }
     }
 
@@ -127,6 +137,8 @@ pub enum QemuError {
     },
     /// A memory access through the remote-port path failed.
     Memory(String),
+    /// The debugger connection failed.
+    Debug(GdbError),
 }
 
 impl fmt::Display for QemuError {
@@ -145,10 +157,11 @@ impl fmt::Display for QemuError {
                 stats,
             } => write!(
                 f,
-                "timed out waiting for QEMU: reached {now_ns} ns of {target_ns} ns                  ({} syncs, {} reads, {} writes, {} errors)",
+                "timed out waiting for QEMU: reached {now_ns} ns of {target_ns} ns ({} syncs, {} reads, {} writes, {} errors)",
                 stats.syncs, stats.reads, stats.writes, stats.errors
             ),
             QemuError::Memory(m) => write!(f, "QEMU memory access: {m}"),
+            QemuError::Debug(e) => write!(f, "{e}"),
         }
     }
 }
@@ -168,6 +181,61 @@ pub enum RunEnd {
     ReachedTime,
     /// QEMU closed the connection (it exited).
     PeerClosed,
+    /// The guest stopped on a breakpoint, watchpoint or step under the
+    /// debugger. Virtual time is frozen until [`QemuMachine::resume`].
+    Stopped(Stop),
+}
+
+/// Where the debugged machine is in its run/stop cycle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DbgState {
+    /// CPUs stopped: at start-up or on a stop.
+    Stopped,
+    /// Free running.
+    Running,
+    /// Stepping off the breakpoint at this address; it is re-planted after.
+    StepOver(u32),
+}
+
+struct Dbg {
+    client: GdbClient,
+    state: DbgState,
+    last: Option<Stop>,
+    /// Execution breakpoints currently planted, for step-over on resume.
+    exec: Vec<u32>,
+}
+
+/// Errors of the debugging calls.
+#[derive(Debug)]
+pub enum DebugError {
+    /// The machine was not started with `QemuConfig::debug`.
+    NotAttached,
+    /// The machine has not stopped on its own: registers can only be read
+    /// while it is stopped at a breakpoint, watchpoint or step.
+    NotStopped,
+    /// The stub failed.
+    Gdb(GdbError),
+}
+
+impl fmt::Display for DebugError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DebugError::NotAttached => write!(f, "the machine was started without a debugger"),
+            DebugError::NotStopped => write!(
+                f,
+                "the machine is not stopped at a breakpoint; registers are only available there"
+            ),
+            DebugError::Gdb(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for DebugError {}
+
+impl From<GdbError> for DebugError {
+    fn from(e: GdbError) -> DebugError {
+        DebugError::Gdb(e)
+    }
 }
 
 /// Counters, for tests and the status view.
@@ -207,6 +275,9 @@ pub struct QemuMachine {
     err_log: PathBuf,
     exited: bool,
     stats: Stats,
+    dbg: Option<Dbg>,
+    /// Port of the stub until `attach_debugger` connects.
+    gdb_port: Option<u16>,
 }
 
 fn free_port() -> std::io::Result<u16> {
@@ -264,6 +335,15 @@ impl QemuMachine {
             args.push("-icount".into());
             args.push(format!("shift={shift},align=off,sleep=off"));
         }
+        let gdb_port = if cfg.debug {
+            let p = free_port().map_err(QemuError::Io)?;
+            args.push("-gdb".into());
+            args.push(format!("tcp:127.0.0.1:{p}"));
+            args.push("-S".into());
+            Some(p)
+        } else {
+            None
+        };
         if let Some(e) = &cfg.elf1 {
             args.push("-device".into());
             args.push(format!("loader,file={},cpu-num=1", e.display()));
@@ -356,7 +436,27 @@ impl QemuMachine {
             err_log,
             exited: false,
             stats: Stats::default(),
+            dbg: None,
+            gdb_port,
         })
+    }
+
+    /// Connects the debugger. Must be called once after `spawn` when
+    /// `QemuConfig::debug` is set, before the first `run_until`. The CPUs are
+    /// stopped (`-S`), which is when the stub answers.
+    pub fn attach_debugger(&mut self, pl: &mut dyn PlTarget) -> Result<(), QemuError> {
+        let Some(port) = self.gdb_port.take() else {
+            return Ok(());
+        };
+        let _ = pl;
+        let client = GdbClient::connect(port).map_err(QemuError::Debug)?;
+        self.dbg = Some(Dbg {
+            client,
+            state: DbgState::Stopped,
+            last: None,
+            exec: Vec::new(),
+        });
+        Ok(())
     }
 
     /// QEMU virtual time in nanoseconds: the timestamp of the sync it is
@@ -424,6 +524,14 @@ impl QemuMachine {
         if self.exited {
             return Ok(RunEnd::PeerClosed);
         }
+        if let Some(d) = &self.dbg {
+            if d.state == DbgState::Stopped {
+                if let Some(stop) = d.last {
+                    // Stopped on a breakpoint: nothing can run until `resume`.
+                    return Ok(RunEnd::Stopped(stop));
+                }
+            }
+        }
         let start = Instant::now();
         loop {
             if let Some(s) = self.held_sync.take() {
@@ -441,6 +549,9 @@ impl QemuMachine {
                     Ok(Some(p)) => p,
                     Ok(None) => {
                         self.check_alive()?;
+                        if let Some(stop) = self.poll_debugger()? {
+                            return Ok(RunEnd::Stopped(stop));
+                        }
                         if start.elapsed() > wall {
                             return Err(self.timeout(target_ns));
                         }
@@ -480,6 +591,130 @@ impl QemuMachine {
             target_ns,
             stats: self.stats,
         }
+    }
+
+    /// Looks for a stop reply from the debugger. A stop that only finishes a
+    /// step off a breakpoint re-plants it and continues (not reported).
+    fn poll_debugger(&mut self) -> Result<Option<Stop>, QemuError> {
+        let Some(d) = &mut self.dbg else {
+            return Ok(None);
+        };
+        if d.state == DbgState::Stopped {
+            return Ok(None);
+        }
+        let Some(stop) = d.client.poll_stop().map_err(QemuError::Debug)? else {
+            return Ok(None);
+        };
+        if let DbgState::StepOver(addr) = d.state {
+            d.client
+                .set_break(BreakKind::Exec, true, addr, 4)
+                .map_err(QemuError::Debug)?;
+            d.client.cont().map_err(QemuError::Debug)?;
+            d.state = DbgState::Running;
+            return Ok(None);
+        }
+        d.state = DbgState::Stopped;
+        d.last = Some(stop);
+        Ok(Some(stop))
+    }
+
+    /// Port of the gdb stub before `attach_debugger` has connected.
+    pub fn debug_port(&self) -> Option<u16> {
+        self.gdb_port
+    }
+
+    /// True when the machine was started under the debugger.
+    pub fn debug_attached(&self) -> bool {
+        self.dbg.is_some()
+    }
+
+    /// The stop the machine is sitting at, if it stopped on its own.
+    pub fn debug_stop(&self) -> Option<Stop> {
+        self.dbg
+            .as_ref()
+            .filter(|d| d.state == DbgState::Stopped)
+            .and_then(|d| d.last)
+    }
+
+    /// Starts or continues the CPUs. From a breakpoint it first steps off it,
+    /// as gdb does, so the same breakpoint does not fire again at once.
+    pub fn resume(&mut self) -> Result<(), DebugError> {
+        let d = self.dbg.as_mut().ok_or(DebugError::NotAttached)?;
+        if d.state != DbgState::Stopped {
+            return Ok(());
+        }
+        let thread = d.last.map_or(1, |s| s.thread);
+        let at_break = match d.last {
+            Some(_) => {
+                let pc = d.client.regs(thread)?.r[15];
+                d.exec.contains(&pc).then_some(pc)
+            }
+            None => None,
+        };
+        d.last = None;
+        match at_break {
+            Some(pc) => {
+                d.client.set_break(BreakKind::Exec, false, pc, 4)?;
+                d.client.step()?;
+                d.state = DbgState::StepOver(pc);
+            }
+            None => {
+                d.client.cont()?;
+                d.state = DbgState::Running;
+            }
+        }
+        Ok(())
+    }
+
+    /// Plants (`insert`) or removes a breakpoint or watchpoint. While the
+    /// machine is stopped this is exact; otherwise the request is queued in
+    /// the stub and takes effect as soon as its main loop runs, within the
+    /// next quantum but at a wall-clock-dependent instant.
+    pub fn debug_break(
+        &mut self,
+        kind: BreakKind,
+        insert: bool,
+        addr: u32,
+        len: u32,
+    ) -> Result<(), DebugError> {
+        let d = self.dbg.as_mut().ok_or(DebugError::NotAttached)?;
+        if d.state == DbgState::Stopped {
+            d.client.set_break(kind, insert, addr, len)?;
+        } else {
+            let op = if insert { 'Z' } else { 'z' };
+            let len = if kind == BreakKind::Exec {
+                4
+            } else {
+                len.max(1)
+            };
+            let code = match kind {
+                BreakKind::Exec => 0,
+                BreakKind::Write => 2,
+                BreakKind::Read => 3,
+                BreakKind::Access => 4,
+            };
+            d.client
+                .send_async(&format!("{op}{code},{addr:x},{len:x}"))?;
+        }
+        if kind == BreakKind::Exec {
+            if insert {
+                if !d.exec.contains(&addr) {
+                    d.exec.push(addr);
+                }
+            } else {
+                d.exec.retain(|&a| a != addr);
+            }
+        }
+        Ok(())
+    }
+
+    /// Registers of `core` (0 or 1). Only while stopped.
+    pub fn debug_regs(&mut self, core: u8) -> Result<Regs, DebugError> {
+        let d = self.dbg.as_mut().ok_or(DebugError::NotAttached)?;
+        if d.state != DbgState::Stopped || d.last.is_none() {
+            return Err(DebugError::NotStopped);
+        }
+        Ok(d.client.regs(core + 1)?)
     }
 
     fn check_alive(&mut self) -> Result<(), QemuError> {

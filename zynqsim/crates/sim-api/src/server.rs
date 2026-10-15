@@ -219,6 +219,13 @@ fn serve(mut sim: Box<dyn Engine>, rx: Receiver<Msg>) {
                         break;
                     }
                     done += chunk;
+                    if let Some(why) = sim.halted() {
+                        // A breakpoint is a stop, not something to run past.
+                        playing = None;
+                        broadcast(&mut subs, &Event::Playing { playing: false });
+                        broadcast(&mut subs, &Event::Fault { message: why });
+                        break;
+                    }
                     if started.elapsed() > TICK_BUDGET {
                         break;
                     }

@@ -297,6 +297,7 @@ fn dma_results_equal_the_rust_golden_model() {
         {
             RunEnd::ReachedTime => {}
             RunEnd::PeerClosed => panic!("QEMU exited early; uart: {uart}"),
+            RunEnd::Stopped(s) => panic!("stopped without a debugger: {s:?}"),
         }
         uart.push_str(&String::from_utf8_lossy(&m.uart_take()));
         if uart.contains("COSIM_DONE") {

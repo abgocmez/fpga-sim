@@ -221,6 +221,18 @@ re-apply the journal; a restore is accepted only if it reproduces the stored dig
 non-determinism is reported instead of hidden. `Recording` carries the journal and the project
 path so `zynqsim test`, `zynqsim trace` and MCP `session_replay` can rebuild the engine.
 
+## 12. Debugging a QEMU guest
+
+Why registers are not available on a paused machine, and what is: see ADR-007. In short, the
+lock-step holds QEMU's global lock while the vCPU waits for our sync, and every QEMU
+introspection channel needs that lock. A stop *caused by the guest* releases it. So debugging is
+built on guest-caused stops: with `[debug] enabled = true` QEMU is started with `-gdb tcp:...
+-S`, `backend-qemu::gdb` speaks the remote serial protocol, breakpoints are planted before the
+first instruction, `QemuMachine::run_until` returns `RunEnd::Stopped` when a stop reply shows up
+(polled while the link is idle), and `resume` steps off the breakpoint before continuing, as gdb
+does. `QemuEngine` keeps the stop (`Status.debug`), makes `cpu_regs` available only then, and the
+server's `Play` ends at a stop (`Engine::halted`).
+
 ## 8. Known limitations at P0
 
 See [STATUS.md](STATUS.md). In short: no CPU, no RTL, no AXI; pins unverified; layout

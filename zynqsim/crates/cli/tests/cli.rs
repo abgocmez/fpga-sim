@@ -505,9 +505,19 @@ fn board_demo_shell_leds_switches_and_button_interrupt() {
         uart.contains("[button event 0x4"),
         "button IRQ handled: {uart}"
     );
-    // LED5 = 0b0101, then the button handler toggled LED2: only LED0 is left on.
+    // `led 5` sets 0b0101 and the button handler toggles LED2. Typed UART input
+    // is delivered on the host's schedule, not virtual time's, so on a loaded
+    // machine the button can be handled first (then `led 5` leaves LED2 on):
+    // both orders are correct, and LED1/LED3 are off either way.
     let duty = |i: usize| v["leds"][i]["duty"].as_u64().unwrap();
-    assert_eq!((duty(0), duty(1), duty(2), duty(3)), (255, 0, 0, 0), "{v}");
+    assert_eq!((duty(0), duty(1), duty(3)), (255, 0, 0), "{v}");
+    let toggled_after_led5 = duty(2) == 0 && uart.find("LED=5") < uart.find("[button event");
+    let led5_after_toggle = duty(2) == 255 && uart.find("[button event") < uart.find("LED=5");
+    assert!(
+        toggled_after_led5 || led5_after_toggle,
+        "LED2 {} vs order in {uart:?}",
+        duty(2)
+    );
 }
 
 /// "0 mismatches of 4096 pixels" against a golden model, in Rust, with the

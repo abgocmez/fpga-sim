@@ -202,7 +202,10 @@ pub fn tool_defs() -> Vec<ToolDef> {
         // --- PS inspection (need a PS backend) -----------------------------
         t(
             "cpu_regs",
-            "Read the registers, CPSR, mode and WFI/WFE state of a Cortex-A9 core.",
+            "Read r0-r15, CPSR and the mode of a Cortex-A9 core. Only possible while the guest is \
+             stopped at a breakpoint or watchpoint (the project must have `[debug] enabled = \
+             true`): set one with `breakpoint_set`, `sim_run`, and read the registers when the \
+             result says `debug.stopped`. A paused-but-not-stopped machine cannot be read.",
             Needs(C::CpuState),
             object(
                 vec![("core", integer("Core index.", Some(0), Some(1), &[0]))],
@@ -212,7 +215,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
         t(
             "cpu_disasm",
             "Disassemble instructions at an address, annotated with ELF symbols.",
-            Needs(C::CpuState),
+            Planned("P5"),
             object(
                 vec![
                     (
@@ -274,21 +277,37 @@ pub fn tool_defs() -> Vec<ToolDef> {
         ),
         t(
             "breakpoint_set",
-            "Set an execution breakpoint.",
+            "Set (or clear, with `enable` false) an execution breakpoint. `sim_run` then stops \
+             when the guest reaches it and reports `debug.stopped`; the next `sim_run` continues. \
+             Needs a project with `[debug] enabled = true`. Setting one while the machine is \
+             merely paused takes effect within the next quantum, at a wall-clock-dependent \
+             instant; breakpoints listed in `[debug] breakpoints` are exact.",
             Needs(C::CpuState),
             object(
-                vec![("addr", integer("Address.", Some(0), None, &[0x100000]))],
+                vec![
+                    ("addr", integer("Address.", Some(0), None, &[0x100000])),
+                    ("enable", boolean("False clears it (default true).")),
+                ],
                 &["addr"],
             ),
         ),
         t(
             "watchpoint_set",
-            "Set a data watchpoint.",
+            "Set (or clear) a data watchpoint that stops the guest on a read or write of the \
+             bytes. Needs a project with `[debug] enabled = true`.",
             Needs(C::CpuState),
             object(
                 vec![
                     ("addr", integer("Address.", Some(0), None, &[0x43C00000])),
                     ("len", integer("Length in bytes.", Some(1), Some(64), &[4])),
+                    (
+                        "access",
+                        enumeration(
+                            "What triggers it (default `write`).",
+                            &["write", "read", "access"],
+                        ),
+                    ),
+                    ("enable", boolean("False clears it (default true).")),
                 ],
                 &["addr"],
             ),

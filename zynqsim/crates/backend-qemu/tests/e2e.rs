@@ -122,6 +122,7 @@ fn run_math(cfg: &QemuConfig) -> Outcome {
         {
             RunEnd::ReachedTime => {}
             RunEnd::PeerClosed => panic!("QEMU exited early; uart so far: {uart:?}"),
+            RunEnd::Stopped(s) => panic!("stopped without a debugger: {s:?}"),
         }
         uart.push_str(&String::from_utf8_lossy(&m.uart_take()));
         if uart.contains("COSIM_DONE") {
@@ -258,4 +259,133 @@ fn memory_is_readable_and_writable_while_the_machine_is_paused() {
     m.write_memory(scratch, &pattern).expect("write");
     assert_eq!(m.read_memory(scratch, pattern.len()).unwrap(), pattern);
     assert!(m.read_memory(0, 0).unwrap().is_empty());
+}
+
+// ------------------------------------------------------------------ debugger
+
+/// `Xil_Out32` in `math_test.elf`: called for every register write.
+const XIL_OUT32: u32 = 0x0010_058c;
+
+fn debug_config(tag: &str) -> Option<QemuConfig> {
+    let mut c = config(tag, "math_test.elf")?;
+    c.debug = true;
+    Some(c)
+}
+
+fn math_pl() -> NativePl {
+    let mut pl = NativePl::new();
+    pl.map(0, 0x43C0_0000, Box::new(MathIp::new()));
+    pl
+}
+
+/// Runs until the machine stops or `limit_ns` is reached.
+fn run_to_stop(
+    m: &mut QemuMachine,
+    pl: &mut NativePl,
+    limit_ns: u64,
+) -> Option<backend_qemu::Stop> {
+    let mut target = m.now_ns();
+    while target < limit_ns {
+        target += 1_000;
+        match m
+            .run_until(target, pl, Duration::from_secs(30))
+            .expect("run")
+        {
+            RunEnd::ReachedTime => {}
+            RunEnd::Stopped(s) => return Some(s),
+            RunEnd::PeerClosed => panic!("QEMU exited"),
+        }
+    }
+    None
+}
+
+#[test]
+fn a_breakpoint_stops_the_guest_and_its_registers_are_exact() {
+    let Some(cfg) = debug_config("dbg-bp") else {
+        eprintln!("SKIPPED: Xilinx QEMU not found");
+        return;
+    };
+    let mut m = QemuMachine::spawn(&cfg).expect("QEMU starts under the debugger");
+    let mut pl = math_pl();
+    m.attach_debugger(&mut pl).expect("debugger attaches");
+    assert!(m.debug_attached());
+    assert!(m.debug_stop().is_none(), "no stop before the first run");
+    assert!(matches!(
+        m.debug_regs(0),
+        Err(backend_qemu::DebugError::NotStopped)
+    ));
+
+    m.debug_break(backend_qemu::BreakKind::Exec, true, XIL_OUT32, 4)
+        .unwrap();
+    m.resume().unwrap();
+    let stop = run_to_stop(&mut m, &mut pl, 5_000_000).expect("hit the breakpoint");
+    assert_eq!((stop.thread, stop.signal), (1, 5));
+    assert_eq!(m.debug_stop(), Some(stop));
+    // The first call: Xil_Out32(SLCR_UNLOCK = 0xF8000008, 0xDF0D).
+    let r = m.debug_regs(0).unwrap();
+    assert_eq!(r.r[15], XIL_OUT32, "pc is the breakpoint address");
+    assert_eq!((r.r[0], r.r[1]), (0xF800_0008, 0xDF0D));
+    assert_eq!(
+        r.cpsr & 0x1F,
+        0x1F,
+        "the firmware runs in system mode: {:#x}",
+        r.cpsr
+    );
+
+    // Resuming steps off the breakpoint and stops at the next call.
+    m.resume().unwrap();
+    let stop2 = run_to_stop(&mut m, &mut pl, 5_000_000).expect("second hit");
+    assert_eq!(stop2.signal, 5);
+    let r2 = m.debug_regs(0).unwrap();
+    assert_eq!(r2.r[15], XIL_OUT32);
+    assert_eq!((r2.r[0], r2.r[1]), (0xF800_0900, 0xF), "level shifters");
+    assert!(m.now_ns() >= 1_000, "time advanced between stops");
+
+    // Remove it and let the program finish: same output as without a debugger.
+    m.debug_break(backend_qemu::BreakKind::Exec, false, XIL_OUT32, 4)
+        .unwrap();
+    m.resume().unwrap();
+    let mut uart = String::new();
+    let mut target = m.now_ns();
+    while !uart.contains("COSIM_DONE") {
+        target += 100_000;
+        assert!(target < 50_000_000, "never finished: {uart:?}");
+        match m
+            .run_until(target, &mut pl, Duration::from_secs(30))
+            .unwrap()
+        {
+            RunEnd::PeerClosed => panic!("exited"),
+            RunEnd::Stopped(s) => panic!("unexpected stop {s:?}"),
+            RunEnd::ReachedTime => {}
+        }
+        uart.push_str(&String::from_utf8_lossy(&m.uart_take()));
+    }
+    assert!(uart.contains("RESULT: ALL PASS"), "{uart}");
+}
+
+#[test]
+fn registers_are_the_same_in_every_debug_session() {
+    let Some(cfg) = debug_config("dbg-det") else {
+        eprintln!("SKIPPED: Xilinx QEMU not found");
+        return;
+    };
+    let mut seen = Vec::new();
+    for tag in ["a", "b"] {
+        let mut c = cfg.clone();
+        c.work_dir = work_dir(&format!("dbg-det-{tag}"));
+        let mut m = QemuMachine::spawn(&c).unwrap();
+        let mut pl = math_pl();
+        m.attach_debugger(&mut pl).unwrap();
+        m.debug_break(backend_qemu::BreakKind::Exec, true, XIL_OUT32, 4)
+            .unwrap();
+        m.resume().unwrap();
+        let mut regs = Vec::new();
+        for _ in 0..4 {
+            run_to_stop(&mut m, &mut pl, 5_000_000).expect("stop");
+            regs.push(m.debug_regs(0).unwrap());
+            m.resume().unwrap();
+        }
+        seen.push(regs);
+    }
+    assert_eq!(seen[0], seen[1], "guest state at each stop is reproducible");
 }

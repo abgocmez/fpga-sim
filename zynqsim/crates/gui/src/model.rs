@@ -73,6 +73,8 @@ pub struct Model {
     pub audio_wanted: bool,
     /// Counts engine swaps, so views can drop what they cached.
     pub generation: u32,
+    /// Registers of each core while the guest is stopped under the debugger.
+    pub cpu_regs: [Option<sim_api::CpuRegs>; 2],
     /// An engine being built in the background.
     pub load: Option<LoadJob>,
     /// Why the last load failed.
@@ -107,6 +109,7 @@ impl Model {
             audio_level: 0.0,
             audio_wanted: false,
             generation: 0,
+            cpu_regs: [None, None],
             load: None,
             load_error: None,
             cursors: [0; 2],
@@ -196,6 +199,21 @@ impl Model {
     /// Takes the audio fetched since the last call (interleaved stereo, 48 kHz).
     pub fn take_audio(&mut self) -> Vec<i16> {
         std::mem::take(&mut self.audio_pending)
+    }
+
+    /// Reads the registers when (and only when) the guest is stopped.
+    fn refresh_cpu(&mut self) {
+        let stopped = self.status.debug.as_ref().is_some_and(|d| d.stopped);
+        if !stopped {
+            self.cpu_regs = [None, None];
+            return;
+        }
+        for core in 0..2u8 {
+            self.cpu_regs[usize::from(core)] = match self.client.query(Query::CpuRegs { core }) {
+                Ok(Response::CpuRegs(r)) => Some(r),
+                _ => None,
+            };
+        }
     }
 
     /// Fetches new HDMI frames and DAC audio when the status says there are some.
@@ -294,6 +312,7 @@ impl Model {
             }
         }
         self.refresh_media();
+        self.refresh_cpu();
         let total = self.status.trace_len;
         let from = total.saturating_sub(TRACE_TAIL);
         if let Ok(Response::Trace { records, .. }) = self.client.query(Query::Trace {
@@ -611,6 +630,39 @@ mod tests {
             height: 240,
         });
         assert!(m.last_error.is_none(), "{:?}", m.last_error);
+    }
+
+    #[test]
+    fn registers_appear_in_the_model_when_the_guest_stops() {
+        let qemu = std::env::var_os("ZYNQSIM_QEMU").is_some()
+            || sim_api::locate_binary("qemu-system-aarch64").is_some();
+        if !qemu {
+            eprintln!("SKIPPED: needs the Xilinx QEMU");
+            return;
+        }
+        let file = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/math-debug/project.toml");
+        let draft = crate::loader::ProjectDraft::load(&file).unwrap();
+        let mut m = model();
+        m.start_load(draft.to_project().unwrap(), draft.dir.clone(), "dbg".into());
+        let start = std::time::Instant::now();
+        while m.generation == 0 {
+            m.refresh();
+            assert!(m.load_error.is_none(), "{:?}", m.load_error);
+            assert!(start.elapsed().as_secs() < 60, "load did not finish");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(m.cpu_regs[0].is_none(), "nothing before the first stop");
+        m.run_for(Ps::PER_MS);
+        m.refresh();
+        let r = m.cpu_regs[0].clone().expect("registers while stopped");
+        assert_eq!(r.r[15], 0x0010_058c);
+        assert_eq!(r.pc_symbol.as_deref(), Some("Xil_Out32"));
+        assert!(m.status.debug.as_ref().unwrap().stopped);
+        // Continuing clears them.
+        m.run_for(Ps::PER_MS);
+        m.refresh();
+        assert_eq!(m.cpu_regs[0].as_ref().unwrap().r[0], 0xF800_0900);
     }
 
     #[test]

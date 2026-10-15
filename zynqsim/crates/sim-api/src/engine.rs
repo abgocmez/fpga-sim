@@ -27,6 +27,11 @@ pub trait Engine: Send {
     fn query(&mut self, q: &Query, playing: bool) -> Result<Response, ApiError>;
     /// Advances by `d`; used by the server for continuous running.
     fn run_for(&mut self, d: Ps) -> Result<(), ApiError>;
+    /// Why the engine is stopped under its debugger, if it is. Continuous
+    /// running stops and reports this instead of silently continuing.
+    fn halted(&self) -> Option<String> {
+        None
+    }
 }
 
 impl Engine for Simulator {
