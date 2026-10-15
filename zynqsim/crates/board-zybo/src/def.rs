@@ -335,7 +335,10 @@ mod tests {
 
     #[test]
     fn validation_reports_every_problem() {
-        let text = ZYBO_Z7_20_TOML.replace("id = \"sw1\"", "id = \"sw0\"");
+        // The built-in file has CRLF endings on Windows checkouts (autocrlf),
+        // so normalise before matching the multi-line pattern.
+        let text = ZYBO_Z7_20_TOML.replace("\r\n", "\n");
+        let text = text.replace("id = \"sw1\"", "id = \"sw0\"");
         let text = text.replace("x = 160\ny = 515", "x = 5000\ny = 515");
         let err = BoardDef::from_toml(&text).unwrap_err().to_string();
         assert!(err.contains("duplicate id `sw0`"), "{err}");
