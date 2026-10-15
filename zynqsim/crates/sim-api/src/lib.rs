@@ -19,6 +19,7 @@ mod qemu_engine;
 mod recording;
 mod server;
 pub mod sim;
+pub mod storage;
 mod tbgen;
 mod tools;
 mod types;
@@ -28,10 +29,12 @@ pub use engine::Engine;
 pub use error::{ApiError, ErrorCode};
 pub use project::{
     BackendsSection, BoardSection, BootSection, CpuSection, DebugSection, Diagnostic, MediaSection,
-    NetworkSection, Project, RtlSection, Severity, SimSection, parse_audio_spec, parse_video_spec,
-    starter_project_toml,
+    NetworkSection, Project, RtlSection, Severity, SimSection, StorageSection, parse_audio_spec,
+    parse_video_spec, starter_project_toml,
 };
-pub use qemu_engine::{NATIVE_MODELS, NativeInstance, QemuEngine, QemuSpec, RtlSpec};
+pub use qemu_engine::{
+    ImageSource, NATIVE_MODELS, NativeInstance, QemuEngine, QemuSpec, RtlSpec, StorageSpec,
+};
 pub use recording::{
     RecEntry, Recording, ReplayReport, SimConfig, replay_engine, replay_recording,
 };
@@ -49,8 +52,8 @@ pub use tools::{
 pub use types::{
     AudioSpec, BreakKind, BreakpointInfo, Capability, Command, CpuRegs, DebugStatus,
     DeviceRegisterInfo, DeviceStatus, DeviceValueInfo, DisasmLine, Event, Fidelity, Input,
-    MediaStatus, NetDirection, NetFrame, NetStatus, Query, Response, Status, SymbolInfo,
-    TraceFormat, VideoSpec,
+    MediaStatus, NetDirection, NetFrame, NetStatus, Query, Response, Status, StorageDevice,
+    StorageStatus, SymbolInfo, TraceFormat, VideoSpec,
 };
 
 /// Board definition, state, rendering and hit-testing.

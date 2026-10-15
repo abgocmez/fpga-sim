@@ -1,0 +1,12 @@
+[package]
+name = "sd_demo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "microSD demo: SDHCI driver (Zynq SDIO0) plus a FAT reader, in Rust"
+
+[dependencies]
+rt = { path = "../rt" }
+# The FAT driver. The project authors no C, so this Rust crate stands in for
+# the prompt's "FatFs" (see docs/adr/012-storage.md). `log` is left off.
+embedded-sdmmc = { version = "0.10.0", default-features = false }

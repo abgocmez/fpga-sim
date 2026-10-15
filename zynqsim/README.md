@@ -93,6 +93,19 @@ section (`mac`, `subnet`, `gateway`, `restrict`); the network is QEMU's user-mod
 answers ARP, ping and DHCP itself and every run produces the same frames. In the GUI the
 **Ethernet (GEM0)** panel shows the counters; in MCP `net_capture` returns the frames.
 Design and limits: [docs/adr/011-ethernet.md](docs/adr/011-ethernet.md).
+### SD card and QSPI flash
+
+```
+zynqsim sd-image --dir examples/sd-demo/sdcard --out sd.img      # FAT card from a folder
+zynqsim qspi-image --file data.bin --offset 0x100000 --out flash.bin
+zynqsim run --project examples/sd-demo/project.toml --for 2ms    # reads HELLO.TXT over SDHCI + FAT
+zynqsim run --project examples/qspi-demo/project.toml --for 2ms  # JEDEC ID, FIFO and linear reads
+```
+
+`[storage]` in `project.toml` attaches the card (`sd_image` or `sd_dir`) and the flash
+(`qspi_image` or `qspi_data`). Both are read-only unless `writable = true`, which writes guest
+changes into the image file and refuses snapshot, reset and recording (ADR-012). The firmware
+(`firmware/sd_demo`, `firmware/qspi_demo`) is verified against QEMU's models only.
 
 ### Load your own PS firmware and PL design
 
@@ -155,8 +168,8 @@ what the board receives.
 | `crates/` | `sim-core`, `trace`, `board-zybo`, `devices`, `sim-api`, `mcp`, `cli`, `gui`, `xtask`, `interop`, `pl-api`, `pl-native`, `backend-qemu`, `backend-rtl-xsim`, `xsim-dpi` |
 | `boards/` | board descriptions (TOML) |
 | `docs/` | `DESIGN.md`, `STATUS.md`, `TESTPLAN.md`, `adr/` |
-| `examples/` | `demo`, `math-qemu`, `math-debug`, `dma-regression`, `board-demo`, `audio-demo`, `hdmi-demo`, `irq-demo`, `oled-demo`, `rgb-demo`, `rust-hello`, `net-demo` projects |
-| `firmware/` | Rust `no_std` Cortex-A9 firmware (`hello`, `audio_demo`, `hdmi_demo`, `irq_demo`, `oled_demo`, `rgb_demo`, `net_demo`); its own workspace, built by `cargo xtask firmware` |
+| `examples/` | `demo`, `math-qemu`, `math-debug`, `dma-regression`, `board-demo`, `audio-demo`, `hdmi-demo`, `irq-demo`, `oled-demo`, `rgb-demo`, `rust-hello`, `net-demo`, `sd-demo`, `qspi-demo` projects |
+| `firmware/` | Rust `no_std` Cortex-A9 firmware (`hello`, `audio_demo`, `hdmi_demo`, `irq_demo`, `oled_demo`, `rgb_demo`, `net_demo`, `sd_demo`, `qspi_demo`); its own workspace, built by `cargo xtask firmware` |
 | `fixtures/` | prototype firmware ELFs, the prebuilt Rust ELFs (`rust_*.elf`) and the RTL used by the examples and tests |
 
 Requirements: [../docs/RUST_SOC_SIM_PROMPT.md](../docs/RUST_SOC_SIM_PROMPT.md).

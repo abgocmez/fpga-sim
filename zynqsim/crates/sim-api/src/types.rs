@@ -51,6 +51,8 @@ pub enum Capability {
     /// Pmod ports and the RGB LEDs driven by the PL design, and the devices
     /// attached to them.
     Pmod,
+    /// An SD card image and/or QSPI flash image is attached to the board.
+    Storage,
 }
 
 /// An input applied to the simulated system at the current simulation time.
@@ -583,6 +585,33 @@ pub struct Status {
     /// Audio and video activity, when the PL carries the board's media models.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media: Option<MediaStatus>,
+    /// The SD card and QSPI flash attached to the board, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage: Option<StorageStatus>,
+}
+
+/// What is attached to the board's microSD slot and QSPI flash socket.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StorageStatus {
+    /// The card in the microSD slot.
+    pub sd: Option<StorageDevice>,
+    /// The QSPI flash.
+    pub qspi: Option<StorageDevice>,
+}
+
+/// One attached storage device.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StorageDevice {
+    /// Where the contents come from: an image file name, or `dir:NAME` for a
+    /// host folder presented as a card.
+    pub source: String,
+    /// Size of the device in bytes.
+    pub bytes: u64,
+    /// The simulated part (QEMU device model name).
+    pub model: String,
+    /// True when guest writes reach the host file itself. Otherwise they go to
+    /// a throw-away overlay and the host file is never modified.
+    pub writable: bool,
 }
 
 /// What the media models have produced so far.

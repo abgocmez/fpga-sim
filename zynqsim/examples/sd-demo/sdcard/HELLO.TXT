@@ -1,0 +1,3 @@
+Hello from the simulated microSD card!
+This file was put on the card by the host (zynqsim sd-image) and read back by
+Rust firmware through the SDHCI controller and a FAT driver.

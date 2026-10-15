@@ -32,6 +32,7 @@ release build). Regenerate golden images: `cargo xtask golden` (review the diff)
 | `zynqsim-mcp` | handshake and version negotiation, tool/resource/prompt listing, full scenario, gating messages, argument validation, path confinement, diagnostics, parse errors, progress and cancellation, real binary over pipes, 1500 random tool calls + 500 garbage messages | the MCP surface is safe, bounded and honest |
 | `zynqsim` (CLI) | run output and JSON, fidelity statement, record/test/trace round trip and tamper (exit 1), init, unsupported (exit 3), usage errors (exit 2), inspect, 5-process determinism, `--at` grammar | the CLI is scriptable with stable exit codes |
 | `zynqsim-gui` | model actions reach the simulation, console accumulation and restore, error surfacing, reset seed, key bindings, trace line formatting; project draft round trip, PS-only and PL-only edits, validation messages; speaker queue, resampler and (with a device) real-time drain; synthetic-input tests of clicks, holds, keys, 3D orbit/zoom/pick and the project window | GUI behaviour is correct without a window; the sound device is exercised when present |
+| `sim-api` `storage` | SD image round trip of files and directories, reproducible bytes, FAT16/FAT32 choice, card size and label rules, QSPI packing at an offset, image checks naming the failed rule | the SD and QSPI images are valid and reproducible (host only) |
 | `board-zybo` (3D) | deterministic render, camera clamps, picking at three cameras, state shows in pixels | the 3D view draws and picks what the state says |
 | `backend-qemu` `net::tests` (13) | RFC 1071 checksum vectors, ARP/ICMP/UDP summaries and direction, corrupted checksums reported, malformed/truncated/random frames never panic, Ethernet padding ignored, pcap reader across partial writes and garbage, virtual-time recovery, pcap writer, config validation, QEMU arguments, MAC/CIDR parsers | the Ethernet frame decoder and capture reader are right without QEMU |
 | `sim-api` `netlog::tests` (3), `project::tests::network_*` (3) | counters, direction, paging, bounded retention, digest depends on the payload; `[network]` defaults/overrides, every problem with its field, needs a CPU backend | the engine's capture record and the `[network]` section behave as documented |
@@ -62,6 +63,7 @@ smoltcp) that must report four ICMP echo replies with the payload unchanged, aga
 so they were not run. QEMU's model accepted this driver; which GEM features it models was not
 audited, and interrupt-driven operation, checksum offload and jumbo frames are not exercised
 (see STATUS.md, Ethernet).
+| `zynqsim` `storage` (the cases that boot firmware; the rest are host-only), `sim-api` `storage_session` (2), `mcp` `sd_and_qspi_demo_projects_through_mcp` | Xilinx QEMU | same |
 
 Rust has no stable runtime-skip, so a skipped test is reported as passed. Run with
 `cargo test -- --nocapture | findstr SKIPPED` to see which ones did not actually run.

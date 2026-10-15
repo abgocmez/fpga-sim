@@ -136,6 +136,44 @@ pub struct DebugSection {
     pub breakpoints: Vec<String>,
 }
 
+/// `[storage]` section: what sits in the board's microSD slot (PS SDIO0) and
+/// QSPI flash socket. See ADR-012.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StorageSection {
+    /// A raw SD card image (MBR plus FAT; power-of-two size), relative to the
+    /// project file. Build one with `zynqsim sd-image`.
+    #[serde(default)]
+    pub sd_image: Option<String>,
+    /// Alternative to `sd_image`: a folder that is turned into a card image
+    /// when the simulation starts (the folder is never written to).
+    #[serde(default)]
+    pub sd_dir: Option<String>,
+    /// Card size in MiB for `sd_dir` (power of two, 8..=1024); the smallest
+    /// that fits when absent.
+    #[serde(default)]
+    pub sd_size_mb: Option<u32>,
+    /// A raw 16 MiB QSPI flash image. Build one with `zynqsim qspi-image`.
+    #[serde(default)]
+    pub qspi_image: Option<String>,
+    /// Alternative to `qspi_image`: a file that is packed into an erased
+    /// 16 MiB flash image at `qspi_offset` when the simulation starts.
+    #[serde(default)]
+    pub qspi_data: Option<String>,
+    /// Byte offset of `qspi_data` in the flash (default 0; TOML allows
+    /// `0x100000`).
+    #[serde(default)]
+    pub qspi_offset: Option<u64>,
+    /// QEMU flash model: `s25fl129p0` (default, Spansion 128 Mbit),
+    /// `s25fl129p1` or `n25q128a13` (Micron).
+    #[serde(default)]
+    pub qspi_model: Option<String>,
+    /// Let guest writes change the image files. Default `false`: writes go to a
+    /// throw-away overlay and the files are never modified.
+    #[serde(default)]
+    pub writable: bool,
+}
+
 /// `[network]` section: the board's PS Gigabit Ethernet (GEM0) and the
 /// simulated LAN it is plugged into (ADR-011).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -277,6 +315,9 @@ pub struct Project {
     /// The board's Ethernet and its simulated LAN.
     #[serde(default)]
     pub network: Option<NetworkSection>,
+    /// microSD card and QSPI flash.
+    #[serde(default)]
+    pub storage: Option<StorageSection>,
 }
 
 /// Parses a video source description (see [`MediaSection::video_in`]).
@@ -586,6 +627,7 @@ impl Project {
                         })?),
                         _ => None,
                     },
+                    storage: self.storage_spec(base)?,
                 };
                 let mut engine = crate::QemuEngine::new(&spec)?;
                 if let Some(m) = &self.media {
@@ -917,7 +959,169 @@ impl Project {
                 }
             }
         }
+        if let Some(s) = &self.storage {
+            self.validate_storage(s, base, &mut d);
+        }
         d
+    }
+
+    fn validate_storage(&self, s: &StorageSection, base: &Path, d: &mut Vec<Diagnostic>) {
+        use crate::storage as st;
+        if self.backends.ps != "qemu" {
+            d.push(warn(
+                "storage",
+                "ignored: only the `qemu` PS backend has an SD slot and QSPI flash",
+            ));
+        }
+        if s.sd_image.is_some() && s.sd_dir.is_some() {
+            d.push(err(
+                "storage.sd_dir",
+                "cannot be combined with `sd_image`: give one card source",
+            ));
+        }
+        if let Some(f) = &s.sd_image {
+            if let Err(why) = st::check_sd_file(&resolve(base, f)) {
+                d.push(err("storage.sd_image", format!("`{f}` {why}")));
+            }
+        }
+        if let Some(f) = &s.sd_dir {
+            if !resolve(base, f).is_dir() {
+                d.push(err(
+                    "storage.sd_dir",
+                    format!("`{f}` is not a directory (or does not exist)"),
+                ));
+            }
+        }
+        if let Some(mb) = s.sd_size_mb {
+            if s.sd_dir.is_none() {
+                d.push(warn(
+                    "storage.sd_size_mb",
+                    "ignored: it applies to `sd_dir`",
+                ));
+            } else if let Err(e) = st::check_card_size(mb) {
+                d.push(err("storage.sd_size_mb", e.message));
+            }
+        }
+        if s.qspi_image.is_some() && s.qspi_data.is_some() {
+            d.push(err(
+                "storage.qspi_data",
+                "cannot be combined with `qspi_image`: give one flash source",
+            ));
+        }
+        if let Some(f) = &s.qspi_image {
+            if let Err(why) = st::check_qspi_file(&resolve(base, f)) {
+                d.push(err("storage.qspi_image", format!("`{f}` {why}")));
+            }
+        }
+        if let Some(f) = &s.qspi_data {
+            match std::fs::metadata(resolve(base, f)) {
+                Ok(m) if m.is_file() => {
+                    let end = s.qspi_offset.unwrap_or(0).saturating_add(m.len());
+                    if end > st::QSPI_BYTES as u64 {
+                        d.push(err(
+                            "storage.qspi_data",
+                            format!(
+                                "`{f}` ({} bytes) at offset {:#x} ends past the 16 MiB flash",
+                                m.len(),
+                                s.qspi_offset.unwrap_or(0)
+                            ),
+                        ));
+                    }
+                }
+                _ => d.push(err(
+                    "storage.qspi_data",
+                    format!("`{f}` does not exist or is not a file"),
+                )),
+            }
+        } else if s.qspi_offset.is_some() {
+            d.push(warn(
+                "storage.qspi_offset",
+                "ignored: it applies to `qspi_data`",
+            ));
+        }
+        let has_qspi = s.qspi_image.is_some() || s.qspi_data.is_some();
+        if let Some(m) = &s.qspi_model {
+            if !st::QSPI_MODELS.contains(&m.as_str()) {
+                d.push(err(
+                    "storage.qspi_model",
+                    format!(
+                        "unknown flash model `{m}`; available: {}",
+                        st::QSPI_MODELS.join(", ")
+                    ),
+                ));
+            } else if !has_qspi {
+                d.push(warn(
+                    "storage.qspi_model",
+                    "ignored: no `qspi_image` or `qspi_data`",
+                ));
+            }
+        }
+        if s.writable {
+            if s.sd_image.is_none() && s.qspi_image.is_none() {
+                d.push(warn(
+                    "storage.writable",
+                    "no effect: a card or flash built from `sd_dir` / `qspi_data` is rebuilt \
+                     for every run and the host files are never written",
+                ));
+            } else {
+                d.push(warn(
+                    "storage.writable",
+                    "guest writes will change the image file(s); snapshot restore, reset and \
+                     recording are refused for such a session (it cannot be repeated)",
+                ));
+            }
+        }
+    }
+
+    /// The SD card and QSPI flash this project attaches. A folder card is
+    /// built into an image here, once.
+    fn storage_spec(&self, base: &Path) -> Result<crate::StorageSpec, ApiError> {
+        let mut spec = crate::StorageSpec::default();
+        let Some(s) = &self.storage else {
+            return Ok(spec);
+        };
+        let file_name = |p: &Path, fallback: &str| {
+            p.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| fallback.to_string())
+        };
+        spec.writable = s.writable;
+        spec.qspi_model = s.qspi_model.clone();
+        if let Some(f) = &s.sd_image {
+            spec.sd = Some(crate::ImageSource::File(resolve(base, f)));
+        }
+        if let Some(f) = &s.sd_dir {
+            let dir = resolve(base, f);
+            let image = crate::storage::build_sd_image(
+                &dir,
+                &crate::storage::SdImageOptions {
+                    size_mb: s.sd_size_mb,
+                    ..Default::default()
+                },
+            )?;
+            spec.sd = Some(crate::ImageSource::Generated {
+                name: format!("dir:{}", file_name(&dir, f)),
+                image: std::sync::Arc::new(image),
+            });
+        }
+        if let Some(f) = &s.qspi_image {
+            spec.qspi = Some(crate::ImageSource::File(resolve(base, f)));
+        }
+        if let Some(f) = &s.qspi_data {
+            let path = resolve(base, f);
+            let data = std::fs::read(&path)
+                .map_err(|e| ApiError::io(format!("cannot read {}: {e}", path.display())))?;
+            let image = crate::storage::build_qspi_image(
+                &data,
+                s.qspi_offset.unwrap_or(0),
+                (crate::storage::QSPI_BYTES >> 20) as u32,
+            )?;
+            spec.qspi = Some(crate::ImageSource::Generated {
+                name: format!("file:{}", file_name(&path, f)),
+                image: std::sync::Arc::new(image),
+            });
+        }
+        Ok(spec)
     }
 }
 
@@ -1274,6 +1478,97 @@ files = ["rtl/*.v"]
         let ps = d.iter().find(|x| x.field == "backends.ps").unwrap();
         assert!(ps.message.contains("not implemented in this build"));
         assert!(ps.message.contains("available: demo, qemu"));
+    }
+
+    fn storage_project(body: &str) -> Project {
+        Project::from_toml(&format!(
+            "schema_version = 1\n[board]\nname = \"zybo-z7-20\"\n[storage]\n{body}"
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn storage_section_is_validated_with_field_paths() {
+        let d = std::env::temp_dir().join(format!("zs-proj-storage-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("card")).unwrap();
+        std::fs::write(d.join("good.img"), vec![0u8; 8 << 20]).unwrap();
+        std::fs::write(d.join("odd.img"), vec![0u8; 10 << 20]).unwrap();
+        std::fs::write(d.join("flash.bin"), vec![0xFFu8; 16 << 20]).unwrap();
+        std::fs::write(d.join("short.bin"), vec![0xFFu8; 1 << 20]).unwrap();
+
+        // A good project has no findings apart from the ignored-by-demo-PS note.
+        let p = storage_project("sd_image = \"good.img\"\nqspi_image = \"flash.bin\"\n");
+        let findings = p.validate(&d);
+        assert!(
+            findings.iter().all(|f| f.severity == Severity::Warning),
+            "{findings:?}"
+        );
+
+        let p = storage_project(
+            "sd_image = \"missing.img\"\nsd_dir = \"card\"\nqspi_image = \"short.bin\"\n\
+             qspi_model = \"w99x\"\nsd_size_mb = 12\n",
+        );
+        let findings = p.validate(&d);
+        let field = |f: &str| findings.iter().find(|x| x.field == f);
+        assert!(
+            field("storage.sd_image")
+                .unwrap()
+                .message
+                .contains("does not exist")
+        );
+        assert!(
+            field("storage.sd_dir")
+                .unwrap()
+                .message
+                .contains("sd_image")
+        );
+        assert!(
+            field("storage.qspi_image")
+                .unwrap()
+                .message
+                .contains("16777216")
+        );
+        assert!(
+            field("storage.qspi_model")
+                .unwrap()
+                .message
+                .contains("s25fl129p0")
+        );
+        // `sd_size_mb` is only checked when `sd_dir` is the card source.
+        let p = storage_project("sd_dir = \"card\"\nsd_size_mb = 12\n");
+        assert!(
+            p.validate(&d)
+                .iter()
+                .any(|x| x.field == "storage.sd_size_mb" && x.severity == Severity::Error)
+        );
+
+        let p = storage_project("sd_image = \"odd.img\"\n");
+        let e = p.validate(&d);
+        assert!(
+            e.iter()
+                .any(|x| x.field == "storage.sd_image" && x.message.contains("power-of-two")),
+            "{e:?}"
+        );
+
+        let p = storage_project("sd_image = \"good.img\"\nwritable = true\n");
+        assert!(p.validate(&d).iter().any(|x| x.field == "storage.writable"
+            && x.severity == Severity::Warning
+            && x.message.contains("refused")));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn storage_round_trips_through_toml_and_rejects_unknown_keys() {
+        let p = storage_project("sd_dir = \"card\"\nwritable = false\n");
+        let back = Project::from_toml(&p.to_toml().unwrap()).unwrap();
+        assert_eq!(back.storage, p.storage);
+        assert!(
+            Project::from_toml(
+                "schema_version = 1\n[board]\nname = \"zybo-z7-20\"\n[storage]\nsd = \"x\"\n"
+            )
+            .is_err()
+        );
     }
 
     #[test]

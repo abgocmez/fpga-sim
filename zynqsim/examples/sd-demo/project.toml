@@ -1,0 +1,33 @@
+# microSD card on the Zybo Z7's PS SDIO0, read by Rust firmware (firmware/sd_demo):
+# SDHCI card bring-up, a raw block write/read-back, then a FAT mount through the
+# embedded-sdmmc crate that lists the card and prints HELLO.TXT.
+#
+#   zynqsim run --project examples/sd-demo/project.toml --for 60ms
+#
+# The card is built from the `sdcard/` folder every time the simulation starts
+# (MBR plus a FAT16 volume, 8 MiB). Use `zynqsim sd-image --dir sdcard --out
+# sd.img` and `sd_image = "sd.img"` instead for a card file you keep. Guest
+# writes never change the folder or an image file unless `writable = true`.
+#
+# Needs only the Xilinx QEMU (Vitis); no Vivado.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "demo"          # no PL
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_sd.elf"
+
+[storage]
+sd_dir = "sdcard"

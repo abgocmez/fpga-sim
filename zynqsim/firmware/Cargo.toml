@@ -3,7 +3,7 @@
 # Build: `cargo xtask firmware` (or `cargo build --release` in this directory).
 [workspace]
 resolver = "3"
-members = ["rt", "hello", "audio_demo", "hdmi_demo", "irq_demo", "oled_demo", "rgb_demo", "tmp2_demo", "als_demo", "acl_demo", "pcam_demo", "net_demo"]
+members = ["rt", "hello", "audio_demo", "hdmi_demo", "irq_demo", "oled_demo", "rgb_demo", "tmp2_demo", "als_demo", "acl_demo", "pcam_demo", "net_demo", "sd_demo", "qspi_demo"]
 
 [workspace.package]
 version = "0.1.0"

@@ -510,6 +510,35 @@ impl Model {
             .contains(&sim_api::Capability::MemoryAccess)
     }
 
+    /// One line per attached storage device, for the status area. Empty when
+    /// the engine has no SD card or QSPI flash attached.
+    pub fn storage_lines(&self) -> Vec<String> {
+        let Some(s) = &self.status.storage else {
+            return Vec::new();
+        };
+        let line = |label: &str, d: &sim_api::StorageDevice| {
+            format!(
+                "{label}: {} ({} KiB, {}, {})",
+                d.source,
+                d.bytes / 1024,
+                d.model,
+                if d.writable {
+                    "writable"
+                } else {
+                    "read-only, writes discarded"
+                }
+            )
+        };
+        let mut out = Vec::new();
+        if let Some(d) = &s.sd {
+            out.push(line("SD card", d));
+        }
+        if let Some(d) = &s.qspi {
+            out.push(line("QSPI flash", d));
+        }
+        out
+    }
+
     /// Why a CPU panel has nothing to show, in the backend's own words.
     pub fn cpu_unavailable_reason(&self, core: u8) -> String {
         match self.client.query(Query::CpuRegs { core }) {
@@ -803,6 +832,77 @@ mod tests {
         m.run_for(Ps::PER_MS);
         m.refresh();
         assert_eq!(m.cpu_regs[0].as_ref().unwrap().r[0], 0xF800_0900);
+    }
+
+    #[test]
+    fn storage_lines_describe_what_is_attached() {
+        let mut m = model();
+        assert!(
+            m.storage_lines().is_empty(),
+            "the demo engine has no storage"
+        );
+        m.status.storage = Some(sim_api::StorageStatus {
+            sd: Some(sim_api::StorageDevice {
+                source: "dir:sdcard".into(),
+                bytes: 8 << 20,
+                model: "sd-card (SDSC)".into(),
+                writable: false,
+            }),
+            qspi: Some(sim_api::StorageDevice {
+                source: "flash.bin".into(),
+                bytes: 16 << 20,
+                model: "s25fl129p0".into(),
+                writable: true,
+            }),
+        });
+        assert_eq!(
+            m.storage_lines(),
+            vec![
+                "SD card: dir:sdcard (8192 KiB, sd-card (SDSC), read-only, writes discarded)",
+                "QSPI flash: flash.bin (16384 KiB, s25fl129p0, writable)",
+            ]
+        );
+    }
+
+    /// The GUI path for a storage project: load in the background, run, see
+    /// the card in the status and the firmware's output in the console.
+    #[test]
+    fn a_storage_project_loads_and_reports_its_card() {
+        let qemu = std::env::var_os("ZYNQSIM_QEMU").is_some()
+            || sim_api::locate_binary("qemu-system-aarch64").is_some();
+        if !qemu {
+            eprintln!("SKIPPED: needs the Xilinx QEMU");
+            return;
+        }
+        let file = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/sd-demo/project.toml");
+        let draft = crate::loader::ProjectDraft::load(&file).unwrap();
+        let mut m = model();
+        m.start_load(
+            draft.to_project().unwrap(),
+            draft.dir.clone(),
+            "sd demo".into(),
+        );
+        let start = std::time::Instant::now();
+        while m.generation == 0 {
+            m.refresh();
+            assert!(m.load_error.is_none(), "{:?}", m.load_error);
+            assert!(start.elapsed().as_secs() < 120, "load did not finish");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        m.run_for(2 * Ps::PER_MS);
+        m.refresh();
+        let lines = m.storage_lines();
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(
+            lines[0].starts_with("SD card: dir:sdcard (8192 KiB, sd-card (SDSC)"),
+            "{lines:?}"
+        );
+        assert!(
+            m.console[1].contains("RESULT: ALL PASS"),
+            "{}",
+            m.console[1]
+        );
     }
 
     #[test]

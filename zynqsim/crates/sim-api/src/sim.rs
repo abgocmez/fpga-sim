@@ -157,6 +157,7 @@ impl Simulator {
             devices: Vec::new(),
             debug: None,
             media: None,
+            storage: None,
         }
     }
 
