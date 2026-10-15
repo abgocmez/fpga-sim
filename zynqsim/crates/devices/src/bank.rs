@@ -53,6 +53,14 @@ impl Bank {
         input
     }
 
+    /// A line of video from the device that drives the PL's video input, if
+    /// there is one (see [`BoardDevice::video_line`]).
+    pub fn video_line(&mut self, frame: u32, y: u32, w: u32, h: u32) -> Option<Vec<u8>> {
+        self.devs
+            .iter_mut()
+            .find_map(|(_, d)| d.video_line(frame, y, w, h))
+    }
+
     /// The device on `port`.
     pub fn get(&self, port: u8) -> Option<&dyn BoardDevice> {
         self.devs

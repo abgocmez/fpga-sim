@@ -14,6 +14,7 @@ mod adt7420;
 mod adxl345;
 mod bank;
 mod i2c;
+mod ov5640;
 mod readout;
 mod spi;
 mod ssd1306;
@@ -28,6 +29,7 @@ pub use adt7420::Adt7420;
 pub use adxl345::Adxl345;
 pub use bank::Bank;
 pub use i2c::{I2cDevice, I2cSlave, PointerSlave, Registers};
+pub use ov5640::{Ov5640, pattern_line};
 pub use readout::readout;
 pub use spi::{SpiDevice, SpiSlave};
 pub use ssd1306::Ssd1306;
@@ -102,6 +104,14 @@ pub trait BoardDevice: Send {
         PinDrive::NONE
     }
 
+    /// A device that drives the PL's video input (a camera) is asked for line
+    /// `y` of frame `frame` (`w` pixels of a `h`-line picture) and answers
+    /// with `3 * w` bytes of RGB, or `None` to let the host's video source
+    /// through.
+    fn video_line(&mut self, _frame: u32, _y: u32, _w: u32, _h: u32) -> Option<Vec<u8>> {
+        None
+    }
+
     /// What the device shows now, if it has a display.
     fn image(&self) -> Option<DeviceImage> {
         None
@@ -131,7 +141,7 @@ pub trait BoardDevice: Send {
 }
 
 /// Device kinds `[devices]` accepts.
-pub const KINDS: &[&str] = &["oled", "tmp2", "als", "acl"];
+pub const KINDS: &[&str] = &["oled", "tmp2", "als", "acl", "pcam"];
 
 /// Creates a device by kind.
 pub fn create(kind: &str) -> Option<Box<dyn BoardDevice>> {
@@ -140,7 +150,22 @@ pub fn create(kind: &str) -> Option<Box<dyn BoardDevice>> {
         "tmp2" => Some(Box::new(Adt7420::new())),
         "als" => Some(Box::new(Adc081::new())),
         "acl" => Some(Box::new(Adxl345::new())),
+        "pcam" => Some(Box::new(Ov5640::new())),
         _ => None,
+    }
+}
+
+/// The camera connector's pin group (`cam` in `[devices]`); the Pmod ports
+/// are groups 0..=4.
+pub const CAMERA_PORT: u8 = 5;
+
+/// True when a device of `kind` can plug into `port`: the Pcam into the
+/// camera connector, every other module into a Pmod port JA..JE (0..=4).
+pub fn fits_port(kind: &str, port: u8) -> bool {
+    if kind == "pcam" {
+        port == CAMERA_PORT
+    } else {
+        port < CAMERA_PORT
     }
 }
 

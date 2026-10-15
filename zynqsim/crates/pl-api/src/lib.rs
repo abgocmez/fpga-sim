@@ -141,6 +141,14 @@ pub trait PinSink: Send {
     /// levels the board drives into the PL's input pins of that group (1 =
     /// released or high, see `devices::PinDrive`).
     fn pin_change(&mut self, group: u8, t_ns: u64, levels: u8) -> u8;
+
+    /// The PL's video input asks for line `y` of frame `frame` (`w` pixels
+    /// of a `h`-line picture). A board device that drives that input (a
+    /// camera) answers with `3 * w` bytes of RGB; `None` leaves the host's
+    /// video source (`[media] video_in`) in charge.
+    fn video_line(&mut self, _frame: u32, _y: u32, _w: u32, _h: u32) -> Option<Vec<u8>> {
+        None
+    }
 }
 
 /// A change of the PL's board-facing output pins.

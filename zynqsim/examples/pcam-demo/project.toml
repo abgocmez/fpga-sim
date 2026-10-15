@@ -1,0 +1,48 @@
+# A Digilent Pcam 5C (OmniVision OV5640) on the camera connector. Rust firmware
+# (firmware/pcam_demo) talks SCCB (I2C 0x3C, 16-bit register addresses) to the sensor model
+# through fixtures/rtl/pmod/i2c_master.v, starts and stops the stream, selects test patterns,
+# and captures frames from the camera's pixel bus into DDR through video_fb.
+#
+# NOT simulated: the MIPI CSI-2 / D-PHY link. The sensor model hands the PL a parallel pixel
+# bus (the video input of zs_media.sv, the same path as HDMI RX); see
+# docs/adr/010-pcam.md. Frames are black while the sensor does not stream, a generated test
+# pattern (register 0x503D) or the host's image ([media] video_in) while it does.
+#
+#   zynqsim run --project examples/pcam-demo/project.toml --for 40ms
+#   zynqsim run --project examples/pcam-demo/project.toml --for 40ms --video-in photo.png
+#
+# Needs: Xilinx QEMU (Vitis), Vivado XSim, and the DPI library (`cargo xtask dpi`).
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "xsim"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_pcam.elf"
+
+[rtl]
+files = [
+    "../../fixtures/rtl/media/zs_media.sv",
+    "../../fixtures/rtl/media/video_fb.v",
+    "../../fixtures/rtl/pmod/i2c_master.v",
+    "../../fixtures/rtl/pcam/cosim_pcam.sv",
+]
+top = "cosim_pcam"
+
+[devices]
+cam = "pcam"
+
+# What the camera sees when its test pattern is off; 160x120 matches the PL's raster.
+[media]
+video_in = "gradient:160x120"

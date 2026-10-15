@@ -303,7 +303,7 @@ impl App {
 
     /// The pictures of the devices on the Pmod ports (the OLED display).
     pub(super) fn devices_panel(&mut self, ui: &mut egui::Ui) {
-        let ports = ["JA", "JB", "JC", "JD", "JE"];
+        let ports = ["JA", "JB", "JC", "JD", "JE", "CAM"];
         for (port, kind, state, w, h, rgba) in self.model.device_images.clone() {
             ui.strong(format!(
                 "{} {}",

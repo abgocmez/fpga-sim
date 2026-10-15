@@ -707,10 +707,21 @@ impl Project {
             match pmod_port(k) {
                 None => d.push(err(
                     &field,
-                    "unknown connector; Pmod ports are pmod_ja, pmod_jb, pmod_jc, pmod_jd, pmod_je",
+                    "unknown connector; Pmod ports are pmod_ja, pmod_jb, pmod_jc, pmod_jd, pmod_je, \
+                     the camera connector is cam",
                 )),
-                Some(_) => {
-                    if !devices::KINDS.contains(&v.as_str()) {
+                Some(port) => {
+                    if devices::KINDS.contains(&v.as_str()) && !devices::fits_port(v, port) {
+                        d.push(err(
+                            &field,
+                            if v == "pcam" {
+                                "the Pcam plugs into the camera connector: `[devices] cam = \"pcam\"`"
+                                    .to_string()
+                            } else {
+                                format!("`{v}` is a Pmod module: use pmod_ja..pmod_je")
+                            },
+                        ));
+                    } else if !devices::KINDS.contains(&v.as_str()) {
                         d.push(err(
                             &field,
                             format!(
@@ -732,7 +743,8 @@ impl Project {
             if pmod_port(k).is_none() {
                 d.push(err(
                     &field,
-                    "unknown connector; Pmod ports are pmod_ja, pmod_jb, pmod_jc, pmod_jd, pmod_je",
+                    "unknown connector; Pmod ports are pmod_ja, pmod_jb, pmod_jc, pmod_jd, pmod_je, \
+                     the camera connector is cam",
                 ));
                 continue;
             }
@@ -813,9 +825,11 @@ fn unique_run_name() -> String {
     )
 }
 
-/// `pmod_ja` .. `pmod_je` to the port index 0..=4.
+/// `pmod_ja` .. `pmod_je` to the port index 0..=4, `cam` (the camera
+/// connector) to 5.
 pub(crate) fn pmod_port(key: &str) -> Option<u8> {
     match key {
+        "cam" => Some(5),
         "pmod_ja" => Some(0),
         "pmod_jb" => Some(1),
         "pmod_jc" => Some(2),
@@ -994,6 +1008,40 @@ pmod_jc = \"oled\"
         // A valid device on a non-RTL PL is allowed but flagged.
         let (sev, _) = msg("devices.pmod_jc").expect("warning");
         assert_eq!(sev, Severity::Warning);
+    }
+
+    #[test]
+    fn the_pcam_plugs_into_the_camera_connector_only() {
+        let base = "schema_version = 1
+[board]
+name = \"zybo-z7-20\"
+[backends]
+ps = \"qemu\"
+pl = \"xsim\"
+";
+        let ok = Project::from_toml(&format!(
+            "{base}[devices]\ncam = \"pcam\"\npmod_jb = \"tmp2\"\n"
+        ))
+        .unwrap();
+        assert!(
+            ok.validate(Path::new("."))
+                .iter()
+                .all(|d| !d.field.starts_with("devices")),
+            "{:?}",
+            ok.validate(Path::new("."))
+        );
+        let bad = Project::from_toml(&format!(
+            "{base}[devices]\npmod_ja = \"pcam\"\ncam = \"oled\"\n"
+        ))
+        .unwrap();
+        let f = bad.validate(Path::new("."));
+        let m = |field: &str| {
+            f.iter()
+                .find(|d| d.field == field)
+                .map(|d| d.message.clone())
+        };
+        assert!(m("devices.pmod_ja").unwrap().contains("camera connector"));
+        assert!(m("devices.cam").unwrap().contains("Pmod module"));
     }
 
     #[test]

@@ -14,6 +14,9 @@
 //   0x10 DIV     RW clock cycles per quarter of an SCL period (reset 250:
 //                   100 MHz / (4 * 250) = 100 kHz)
 //   0x14 PINS    R  the eight pin levels as the board drives them (INT, CT, ...)
+//   0x18 GPO     RW levels this master drives on the pins that are not SCL/SDA
+//                   (bits 0,1,4..7; reset 0xFF = released/high). The Pcam demo
+//                   uses bit 0 as CAM_GPIO, the camera's power enable.
 //
 // Pins, Pmod order 1,2,3,4,7,8,9,10 = bit 0..7 (Digilent Pmod TMP2 / SCCB):
 //   bit2 SCL, bit3 SDA; bits 0,1 (INT, CT) are inputs from the module.
@@ -56,6 +59,7 @@ module i2c_master (
     reg [7:0]  shift;
     reg [15:0] cnt;
     reg        scl, sda;     // what this master drives (1 = released)
+    reg [7:0]  gpo;
 
     wire busy = (st != IDLE);
     wire tick = (cnt + 16'd1 >= div);
@@ -72,7 +76,7 @@ module i2c_master (
     assign S_AXI_RRESP   = 2'b00;
     assign S_AXI_RVALID  = rvalid_r;
 
-    assign pmod_ja_o = { 4'hF, sda, scl, 2'b11 };
+    assign pmod_ja_o = { gpo[7:4], sda, scl, gpo[1:0] };
 
     // The first phase after a command: START if asked, else the byte, else STOP.
     task begin_transfer(input [4:0] c);
@@ -90,7 +94,7 @@ module i2c_master (
             bvalid_r <= 0; rvalid_r <= 0; rdata_r <= 0;
             txdata <= 0; rxdata <= 0; div <= 16'd250; nack <= 0;
             cmd <= 0; st <= IDLE; q <= 0; bitn <= 0; shift <= 0; cnt <= 0;
-            scl <= 1'b1; sda <= 1'b1;
+            scl <= 1'b1; sda <= 1'b1; gpo <= 8'hFF;
         end else begin
             if (wr) begin
                 bvalid_r <= 1'b1;
@@ -101,6 +105,7 @@ module i2c_master (
                           end
                     3'd1: txdata <= S_AXI_WDATA[7:0];
                     3'd4: div    <= S_AXI_WDATA[15:0];
+                    3'd6: gpo    <= S_AXI_WDATA[7:0];
                     default: ;
                 endcase
             end else if (bvalid_r && S_AXI_BREADY) begin
@@ -115,6 +120,7 @@ module i2c_master (
                     3'd3:    rdata_r <= {30'd0, nack, busy};
                     3'd4:    rdata_r <= {16'd0, div};
                     3'd5:    rdata_r <= {24'd0, pmod_ja_i};
+                    3'd6:    rdata_r <= {24'd0, gpo};
                     default: rdata_r <= 32'd0;
                 endcase
             end else if (rvalid_r && S_AXI_RREADY) begin

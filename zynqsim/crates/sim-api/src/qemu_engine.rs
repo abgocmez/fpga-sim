@@ -270,13 +270,27 @@ impl pl_api::PinSink for BankSink {
             .unwrap_or_else(PoisonError::into_inner)
             .pins(group, t_ns, levels)
     }
+
+    fn video_line(&mut self, frame: u32, y: u32, w: u32, h: u32) -> Option<Vec<u8>> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .video_line(frame, y, w, h)
+    }
 }
 
 fn make_device(port: u8, kind: &str) -> Result<Box<dyn BoardDevice>, ApiError> {
-    if port > 4 {
+    if port > devices::CAMERA_PORT {
         return Err(ApiError::invalid_argument(
-            "Pmod ports with PL pins are JA..JE (0..=4)",
+            "ports with PL pins are JA..JE (0..=4) and the camera connector CAM (5)",
         ));
+    }
+    if !devices::fits_port(kind, port) && devices::KINDS.contains(&kind) {
+        return Err(ApiError::invalid_argument(if kind == "pcam" {
+            "the Pcam plugs into the camera connector CAM (port 5), not a Pmod port".to_string()
+        } else {
+            format!("`{kind}` is a Pmod module: use a port JA..JE (0..=4)")
+        }));
     }
     devices::create(kind).ok_or_else(|| {
         ApiError::invalid_argument(format!(
@@ -927,6 +941,15 @@ impl QemuEngine {
                     },
                 );
                 // The devices were fed when the event arrived (`BankSink`).
+            } else if ev.group == devices::CAMERA_PORT {
+                self.trace.push(
+                    t,
+                    TraceEvent::Signal {
+                        name: "cam.pins".to_string(),
+                        value: u64::from(ev.levels),
+                        width: 8,
+                    },
+                );
             }
         }
         // PWM duty of the RGB LEDs, from the pin activity so far. Once the

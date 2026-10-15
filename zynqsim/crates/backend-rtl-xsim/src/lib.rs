@@ -587,7 +587,14 @@ impl XsimPl {
             }
             (DEV_VIDEO_IN, BusCmd::Read) => {
                 let y = (b.addr & 0xFFFF) as u32;
-                let data = self.video_src.line(y, b.len / 3, b.width);
+                let (w, h) = (b.len / 3, b.width);
+                // A board device that drives the video input (a camera) first.
+                let from_device = self
+                    .pin_sink
+                    .as_mut()
+                    .and_then(|s| s.video_line((b.addr >> 16) as u32, y, w, h))
+                    .filter(|d| d.len() == (w * 3) as usize);
+                let data = from_device.unwrap_or_else(|| self.video_src.line(y, w, h));
                 let rsp = b.response(resp::OK, data, b.timestamp);
                 let _ = self.rp.send(&Packet::Bus(rsp));
                 true

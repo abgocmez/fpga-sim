@@ -1042,6 +1042,7 @@ fn pmod_index(s: &str) -> Result<u8, ApiError> {
         "JC" => Ok(2),
         "JD" => Ok(3),
         "JE" => Ok(4),
+        "CAM" => Ok(5),
         other => Err(ApiError::invalid_argument(format!(
             "`{other}` is not a Pmod port with PL pins (JA..JE)"
         ))),

@@ -1289,3 +1289,93 @@ fn device_set_arguments_are_checked() {
     let o = zynqsim(&["run", "--for", "1ms", "--device-set", "JA.temperature=1"]);
     assert_eq!(o.status.code(), Some(3));
 }
+
+// -------------------------------------------------------------- Pcam (OV5640)
+
+/// The Pcam's SCCB interface and frames end to end: power gating, chip ID,
+/// reset bits, and whole captured frames in DDR for every streaming state.
+/// The MIPI CSI-2 link is not simulated (docs/adr/010-pcam.md); the frames
+/// reach the PL as a pixel bus through the video input.
+#[test]
+fn pcam_demo_gates_frames_on_the_streaming_registers() {
+    if !qemu_available() || !xsim_available() {
+        eprintln!("SKIPPED: needs the Xilinx QEMU and Vivado XSim");
+        return;
+    }
+    ensure_dpi_lib();
+    const W: u32 = 160;
+    const H: u32 = 120;
+    let d = temp("pcam");
+    let cam_png = d.join("cam.png");
+    let v = run_sensor(
+        "pcam-demo",
+        "40ms",
+        &["--device-out", &format!("CAM={}", cam_png.display())],
+    );
+    let text = uart1(&v);
+    assert!(text.contains("RESULT: ALL PASS"), "{text}");
+    assert!(text.contains("POWER off ack=false\r\n"), "{text}");
+    assert!(text.contains("POWER on ack=true\r\n"), "{text}");
+    assert!(text.contains("CHIP ID 0x5640\r\n"), "{text}");
+    assert!(
+        text.contains("SYS_CTRL0 0x42\r\n"),
+        "stopped at power on: {text}"
+    );
+    assert!(
+        text.contains("RESET SYS_CTRL0 0x02\r\n"),
+        "the reset bit clears itself: {text}"
+    );
+
+    // What each captured frame must be.
+    const BARS: [[u32; 3]; 8] = [
+        [255, 255, 255],
+        [255, 255, 0],
+        [0, 255, 255],
+        [0, 255, 0],
+        [255, 0, 255],
+        [255, 0, 0],
+        [0, 0, 255],
+        [0, 0, 0],
+    ];
+    let word = |c: [u32; 3]| (c[0] << 16) | (c[1] << 8) | c[2];
+    let frame = |f: &dyn Fn(u32, u32) -> u32| {
+        word_checksum(
+            (0..H)
+                .flat_map(|y| (0..W).map(move |x| (x, y)))
+                .map(|(x, y)| f(x, y)),
+        )
+    };
+    let black = frame(&|_, _| 0);
+    let bars = frame(&|x, _| word(BARS[(x * 8 / W) as usize]));
+    let squares = frame(&|x, y| word(BARS[((x * 8 / W + y * 8 / H) % 8) as usize]));
+    let host = frame(&|x, y| {
+        // The gradient the project asks for (`[media] video_in`).
+        (x * 255 / W) << 16 | (y * 255 / H) << 8 | ((x + y) * 255 / (W + H))
+    });
+    for (label, sum, n) in [
+        ("stopped", black, 1),
+        ("bars", bars, 2),
+        ("squares", squares, 3),
+        ("host", host, 4),
+        ("gated", black, 5),
+    ] {
+        let want = format!("CAP {label} checksum {sum:#010x} frames={n}\r\n");
+        assert!(text.contains(&want), "want `{want}` in {text}");
+    }
+    assert_ne!(bars, squares);
+    assert_ne!(bars, host);
+
+    // The model state and its picture.
+    assert_eq!(v["devices"][0]["kind"], "pcam");
+    assert_eq!(v["devices"][0]["port"], 5);
+    let desc = v["devices"][0]["description"].as_str().unwrap();
+    assert!(desc.contains("MIPI CSI-2 not simulated"), "{desc}");
+    let regs = v["device_state"][0]["registers"].as_array().unwrap();
+    let reg = |n: &str| regs.iter().find(|r| r["name"] == n).unwrap()["value"].as_u64();
+    assert_eq!(reg("CHIP_ID_H"), Some(0x56));
+    assert_eq!(reg("CHIP_ID_L"), Some(0x40));
+    assert_eq!(reg("STREAM_CTRL"), Some(0x0F));
+    assert_eq!(reg("TEST_PATTERN"), Some(0x00));
+    let (w, h, _) = sim_api::board::decode_png_rgb(&std::fs::read(&cam_png).unwrap()).unwrap();
+    assert_eq!((w, h), (128, 32));
+}

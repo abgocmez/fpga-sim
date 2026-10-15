@@ -300,7 +300,11 @@ fn pmod_port(s: &str) -> Result<u8, Failure> {
         "JC" => Ok(2),
         "JD" => Ok(3),
         "JE" => Ok(4),
-        other => Err(fail(2, format!("`{other}` is not a Pmod port (JA..JE)"))),
+        "CAM" => Ok(5),
+        other => Err(fail(
+            2,
+            format!("`{other}` is not a Pmod port (JA..JE) or the camera connector (CAM)"),
+        )),
     }
 }
 
@@ -555,7 +559,13 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
             "JC" => 2,
             "JD" => 3,
             "JE" => 4,
-            other => return Err(fail(2, format!("`{other}` is not a Pmod port (JA..JE)"))),
+            "CAM" => 5,
+            other => {
+                return Err(fail(
+                    2,
+                    format!("`{other}` is not a Pmod port (JA..JE) or CAM"),
+                ));
+            }
         };
         match engine.query(&Query::DeviceImage { port: idx }, false)? {
             Response::DeviceImage { png, .. } => write_file(Path::new(file), &png)?,

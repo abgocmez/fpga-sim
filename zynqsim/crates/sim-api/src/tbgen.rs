@@ -817,7 +817,7 @@ fn master_bridge(mst: &AxiMaster) -> String {
 pub struct PinGroup {
     /// Port name.
     pub name: String,
-    /// Group: 0..=4 are JA..JE, 6 is the RGB LEDs.
+    /// Group: 0..=4 are JA..JE, 5 is the camera connector, 6 the RGB LEDs.
     pub group: u8,
     /// True when the IP drives it (an output), false for a host-driven input.
     pub output: bool,
@@ -849,6 +849,7 @@ pub fn detect_pin_groups(m: &ModuleInfo) -> Vec<PinGroup> {
             ("jc", 8) => Some(2),
             ("jd", 8) => Some(3),
             ("je", 8) => Some(4),
+            ("cam" | "pcam", 8) => Some(5),
             ("rgb" | "rgb_led" | "rgb_leds" | "ld5_6", 6) => Some(6),
             _ => None,
         };

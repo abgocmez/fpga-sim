@@ -36,6 +36,8 @@ fn t(name: &'static str, description: &'static str, gate: Gate, schema: Value) -
     }
 }
 
+const PORT_HELP: &str = "Pmod port JA..JE, or CAM for the camera connector (the Pcam).";
+
 const DUR: &str =
     "Simulated time such as \"250us\", \"10ms\" or \"1.5s\". Units: ps, ns, us, ms, s.";
 
@@ -415,7 +417,9 @@ pub fn tool_defs() -> Vec<ToolDef> {
              1 CS, 2 SDIN, 4 SCLK, 7 D/C, 8 RES); `tmp2` (Pmod TMP2, ADT7420 temperature sensor, \
              I2C 0x4B: 3 SCL, 4 SDA); `als` (Pmod ALS, ADC081S021 light sensor, SPI mode 0: \
              1 CS, 3 SDO, 4 SCLK); `acl` (Pmod ACL, ADXL345 accelerometer, SPI mode 3: 1 CS, \
-             2 SDI, 3 SDO, 4 SCLK). Only RTL designs that report their Pmod pins (the \
+             2 SDI, 3 SDO, 4 SCLK); `pcam` (Pcam 5C, OV5640 image sensor: SCCB at I2C 0x3C on \
+             the camera connector CAM, frames through the PL's video input; MIPI CSI-2 is not \
+             simulated). Only RTL designs that report their Pmod pins (the \
              `zs_pin_out` / `zs_pin_xchg` DPI, see fixtures/rtl/pmod) have a module to talk to. \
              Modules can also be declared in project.toml (`[devices] pmod_ja = \"oled\"`). Set \
              what a sensor measures with `pmod_set`.",
@@ -424,7 +428,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 vec![
                     (
                         "port",
-                        enumeration("Pmod port.", &["JA", "JB", "JC", "JD", "JE"]),
+                        enumeration(PORT_HELP, &["JA", "JB", "JC", "JD", "JE", "CAM"]),
                     ),
                     ("module", enumeration("Module kind.", sim_api::DEVICE_KINDS)),
                 ],
@@ -439,7 +443,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
             object(
                 vec![(
                     "port",
-                    enumeration("Pmod port.", &["JA", "JB", "JC", "JD", "JE"]),
+                    enumeration(PORT_HELP, &["JA", "JB", "JC", "JD", "JE", "CAM"]),
                 )],
                 &["port"],
             ),
@@ -457,7 +461,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 vec![
                     (
                         "port",
-                        enumeration("Pmod port.", &["JA", "JB", "JC", "JD", "JE"]),
+                        enumeration(PORT_HELP, &["JA", "JB", "JC", "JD", "JE", "CAM"]),
                     ),
                     (
                         "name",
@@ -482,7 +486,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
             object(
                 vec![(
                     "port",
-                    enumeration("Pmod port.", &["JA", "JB", "JC", "JD", "JE"]),
+                    enumeration(PORT_HELP, &["JA", "JB", "JC", "JD", "JE", "CAM"]),
                 )],
                 &["port"],
             ),
