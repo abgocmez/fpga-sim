@@ -71,7 +71,10 @@ pub fn glob(base: &Path, pattern: &str) -> Result<Vec<PathBuf>, String> {
         [b'/', ..] => (PathBuf::from("/"), pat.trim_start_matches('/')),
         _ => (base.to_path_buf(), pat.as_str()),
     };
-    let segs: Vec<&str> = rest.split('/').filter(|s| !s.is_empty() && *s != ".").collect();
+    let segs: Vec<&str> = rest
+        .split('/')
+        .filter(|s| !s.is_empty() && *s != ".")
+        .collect();
     if segs.is_empty() {
         return Err(format!("`{pattern}` names no file"));
     }
@@ -237,6 +240,17 @@ pub fn resolve_rtl(r: &RtlSection, base: &Path) -> RtlResolved {
             }
         }
     }
+    // VHDL in `files` needs the per-language compile of the export path (an export with no
+    // lists of its own).
+    if out
+        .files
+        .iter()
+        .any(|p| xsim_export::Lang::from_path(p).is_some_and(xsim_export::Lang::is_vhdl))
+        && r.export_dir.is_none()
+        && r.filelist.is_none()
+    {
+        out.export = Some(ExportDesign::default());
+    }
     let (field, path) = match (&r.export_dir, &r.filelist) {
         (Some(_), Some(_)) => {
             out.diagnostics.push(diag(
@@ -359,7 +373,10 @@ mod tests {
         let g = |p: &str| names(&t.0, glob(&t.0, p).unwrap());
         assert_eq!(g("rtl/*.v"), ["rtl/a.v", "rtl/b.v"], "sorted, files only");
         assert_eq!(g("rtl/*.*v"), ["rtl/a.v", "rtl/b.v", "rtl/c.sv"]);
-        assert_eq!(g("rtl/**/*.v"), ["rtl/a.v", "rtl/b.v", "rtl/sub/d.v", "rtl/sub/deep/e.v"]);
+        assert_eq!(
+            g("rtl/**/*.v"),
+            ["rtl/a.v", "rtl/b.v", "rtl/sub/d.v", "rtl/sub/deep/e.v"]
+        );
         assert_eq!(g("*/f.v"), ["other/f.v"]);
         assert_eq!(g("rtl/su?/*.v"), ["rtl/sub/d.v"]);
         assert_eq!(g("rtl/./a.v"), ["rtl/./a.v"], "no wildcard: as written");
@@ -386,7 +403,10 @@ mod tests {
         let x = resolve_rtl(&r, &t.0);
         assert_eq!(names(&t.0, x.files.clone()), ["rtl/a.v", "rtl/b.v"]);
         let e = x.first_error().unwrap();
-        assert!(e.contains("nothing/*.sv") && e.contains("matches no files"), "{e}");
+        assert!(
+            e.contains("nothing/*.sv") && e.contains("matches no files"),
+            "{e}"
+        );
     }
 
     #[test]

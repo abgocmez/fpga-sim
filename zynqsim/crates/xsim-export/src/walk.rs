@@ -25,7 +25,13 @@ impl Found {
 }
 
 /// Directories that are products of a run, not part of an export.
-const SKIP: &[&str] = &["xsim.dir", ".git", "node_modules", "ip_user_files", "target"];
+const SKIP: &[&str] = &[
+    "xsim.dir",
+    ".git",
+    "node_modules",
+    "ip_user_files",
+    "target",
+];
 
 /// How deep below the given folder lists are looked for (`export/xsim/`, `sim_1/synth/func/xsim`).
 const MAX_DEPTH: usize = 4;

@@ -47,7 +47,10 @@ fn the_vivado_export_and_the_netlist_become_valid_projects() {
     let v = &r["structuredContent"];
     assert_eq!(v["runnable"], true, "{v}");
     assert_eq!(v["top"], "cosim_top");
-    assert!(v["driven_module"].is_null(), "the export's own testbench: {v}");
+    assert!(
+        v["driven_module"].is_null(),
+        "the export's own testbench: {v}"
+    );
     let src: Vec<(&str, &str, &str)> = v["sources"]
         .as_array()
         .unwrap()
@@ -74,9 +77,15 @@ fn the_vivado_export_and_the_netlist_become_valid_projects() {
         .iter()
         .map(|l| l.as_str().unwrap())
         .collect();
-    assert!(libs.contains(&"unisims_ver") && libs.contains(&"secureip"), "{libs:?}");
+    assert!(
+        libs.contains(&"unisims_ver") && libs.contains(&"secureip"),
+        "{libs:?}"
+    );
     let text = std::fs::read_to_string(v["report"].as_str().unwrap()).unwrap();
-    assert!(text.contains("unisims_ver") && text.contains("cosim_top"), "{text}");
+    assert!(
+        text.contains("unisims_ver") && text.contains("cosim_top"),
+        "{text}"
+    );
     let val = call(&mut s, "project_validate", json!({ "path": out }));
     assert_eq!(val["structuredContent"]["valid"], true, "{val}");
 

@@ -131,7 +131,11 @@ fn rtl_export_and_funcsim_netlist_pass_with_the_real_firmware_and_agree() {
     assert!(digest(&rtl).is_string(), "{rtl}");
     assert_eq!(digest(&rtl), digest(&net), "netlist behaves like the RTL");
     assert_eq!(rtl["trace_len"], 329);
-    assert_eq!(digest(&rtl), digest(&bare), "generated testbench route agrees too");
+    assert_eq!(
+        digest(&rtl),
+        digest(&bare),
+        "generated testbench route agrees too"
+    );
     for (name, v) in [("rtl", &rtl), ("net", &net), ("bare", &bare)] {
         eprintln!("{name}: {} {}", v["time"], digest(v));
     }
@@ -175,7 +179,11 @@ fn a_project_with_globs_and_an_export_validates_and_says_what_is_missing() {
     .unwrap();
     std::fs::write(proj.join("rtl/a.v"), "module a; endmodule\n").unwrap();
     std::fs::write(proj.join("rtl/b.sv"), "module b; endmodule\n").unwrap();
-    let export = fixtures().join("export/behav/xsim").display().to_string().replace('\\', "/");
+    let export = fixtures()
+        .join("export/behav/xsim")
+        .display()
+        .to_string()
+        .replace('\\', "/");
     std::fs::write(
         proj.join("project.toml"),
         format!(

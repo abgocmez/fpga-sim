@@ -161,6 +161,23 @@ GPIO, Timer, DMA, ... need the `vendor-ip` library, milestone P3) is recorded in
 design is not claimed to run. MCP: `project_create_from_xsa`. Details and limits:
 [docs/adr/015-xsa-import.md](docs/adr/015-xsa-import.md).
 
+### From a Vivado simulation export or a post-synthesis netlist
+
+```
+zynqsim init --export-sim export_sim/xsim --out mynetlist --elf fw/app.elf
+zynqsim run --project mynetlist/project.toml --for 20ms
+```
+
+Takes an `export_simulation -simulator xsim` folder (or one `.prj`/`.f` list, or a single
+`write_verilog -mode funcsim` netlist): the files are compiled in list order into their
+libraries (Verilog, SystemVerilog and VHDL), with `-L unisims_ver` and `glbl`, include
+directories and defines. A testbench is generated for the AXI4-Lite slave inside it unless the
+export already brings one. `[rtl]` also takes `export_dir = "..."`, and `files` accepts globs
+(`"rtl/**/*.v"`). Anything unsupported is printed with file, line and construct. The real Vivado
+2022.1 exports in `fixtures/export` pass the same firmware with the same trace digest as the RTL.
+MCP: `project_create_from_export`. Details: [docs/adr/017-export-simulation.md](docs/adr/017-export-simulation.md),
+subset per backend: [docs/RTL_SUBSET.md](docs/RTL_SUBSET.md).
+
 [docs/TEST_YOUR_DESIGN.md](docs/TEST_YOUR_DESIGN.md) covers the firmware side, what the generator
 does and does not do, how to turn a run into a test, and how to debug a failure.
 

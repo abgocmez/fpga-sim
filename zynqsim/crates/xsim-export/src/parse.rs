@@ -289,7 +289,16 @@ impl Acc<'_> {
                 // Xilinx simulation libraries searched (a funcsim netlist instantiates UNISIM
                 // primitives).
                 let lang = Lang::from_path(path).unwrap_or(Lang::Verilog);
-                self.source(path, 0, Path::new(""), &path.display().to_string(), lang, "xil_defaultlib", &[], &[]);
+                self.source(
+                    path,
+                    0,
+                    Path::new(""),
+                    &path.display().to_string(),
+                    lang,
+                    "xil_defaultlib",
+                    &[],
+                    &[],
+                );
                 self.mark_seen(path);
                 for l in ["unisims_ver", "unimacro_ver", "secureip"] {
                     self.link_lib(l, Path::new(""));
@@ -334,8 +343,10 @@ impl Acc<'_> {
                 "{} holds several exports; pass one of these folders:
 {}",
                 dir.display(),
-                list.join("
-")
+                list.join(
+                    "
+"
+                )
             ));
         }
         // Scripts first: they name the lists in the order the vendor flow compiles them.
@@ -413,7 +424,10 @@ impl Acc<'_> {
             if pos.len() >= 2 && !pos[0].quoted && is_ident(&pos[0].text) {
                 let l = pos.remove(0).text;
                 library.get_or_insert(l);
-            } else if pos.len() == 1 && !pos[0].quoted && is_ident(&pos[0].text) && library.is_none()
+            } else if pos.len() == 1
+                && !pos[0].quoted
+                && is_ident(&pos[0].text)
+                && library.is_none()
             {
                 // `verilog work -f other.prj` style: a library with no file of its own.
                 library = Some(pos.remove(0).text);

@@ -742,10 +742,14 @@ impl QemuEngine {
                         .then(|| spec.work_dir.parent().map(|p| p.join("xsim-cache")))
                         .flatten(),
                 };
-                Box::new(backend_rtl_xsim::XsimPl::start_with(&cfg, rtl.export.as_ref()).map_err(|e| {
-                    ApiError::io(e.to_string())
-                        .with_hint("see build.log / xsim.out.log in the run directory")
-                })?)
+                Box::new(
+                    backend_rtl_xsim::XsimPl::start_with(&cfg, rtl.export.as_ref()).map_err(
+                        |e| {
+                            ApiError::io(e.to_string())
+                                .with_hint("see build.log / xsim.out.log in the run directory")
+                        },
+                    )?,
+                )
             }
             None => {
                 let mut native = NativePl::new();

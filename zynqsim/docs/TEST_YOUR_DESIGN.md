@@ -73,6 +73,31 @@ wide, board pins, audio/video. For those start from the hand-written testbenches
 | Switches, buttons, LEDs | `fixtures/rtl/board/cosim_top.sv` (`tel_ctrl`, `tel_event`) |
 | Codec and HDMI | `fixtures/rtl/media/` |
 
+### A Vivado simulation export or a post-synthesis netlist
+
+If the design exists as a Vivado simulation export, point the generator at it instead of the
+source files:
+
+```
+zynqsim init --export-sim export_sim/xsim --out mytest --elf fw/app.elf [--module my_ip]
+```
+
+The argument is an `export_simulation -simulator xsim` folder (the one with `vlog.prj`,
+`elab.opt`, `xsim.ini`), a single `.prj` or `.f` list, or one `write_verilog -mode funcsim`
+netlist file. `project.toml` gets `[rtl] export_dir = "..."` (the export is referenced, not copied:
+keep it where it is); its files compile in list order into their libraries, with the `-L`
+libraries (`unisims_ver`, `xpm`, `secureip`...), include directories, defines and `glbl`. The
+testbench is generated for the AXI4-Lite slave in the export (`--module` picks it) unless some
+source in the export already calls the `rp_*` DPI functions, in which case that is the top.
+`mytest/export-report.md` lists the sources, libraries and everything that was ignored.
+
+To get such an export from Vivado: `export_simulation -simulator xsim -directory DIR -force` for
+the RTL, or `launch_simulation -mode post-synthesis -type functional -scripts_only` (and
+`write_verilog -mode funcsim netlist.v`) after synthesis; `fixtures/export/make_export.tcl` does
+both. Limits: no timing/SDF simulation, no compiled IP libraries tried, no encrypted IP tried,
+the export's own DPI libraries are not loaded; unsupported options are printed as
+`file:line: construct: reason`. Globs work in any project: `files = ["rtl/**/*.v", "rtl/*.sv"]`.
+
 ## 3. Run it
 
 ```

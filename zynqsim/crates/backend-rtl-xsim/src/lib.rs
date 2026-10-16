@@ -339,8 +339,8 @@ impl XsimPl {
             .collect();
         // Quoted: cmd treats an unquoted `=` as an argument separator.
         let defines: String = cfg.defines.iter().map(|d| format!(" -d \"{d}\"")).collect();
-        let export_plan = export
-            .map(|d| export::plan(d, &cfg.sources, &cfg.top, &cfg.defines, &cfg.vivado_root));
+        let export_plan =
+            export.map(|d| export::plan(d, &cfg.sources, &cfg.top, &cfg.defines, &cfg.vivado_root));
         if let Some(p) = &export_plan {
             for f in &p.inputs {
                 if !f.is_file() {

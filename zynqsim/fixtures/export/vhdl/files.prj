@@ -1,0 +1,9 @@
+# Hand-written, in the shape export_simulation writes: a VHDL design file and the
+# SystemVerilog testbench of fixtures/export/rtl, both in xil_defaultlib.
+vhdl xil_defaultlib  \
+"my_math_ip.vhd" \
+
+sv xil_defaultlib  \
+"../rtl/cosim_top.sv" \
+
+nosort

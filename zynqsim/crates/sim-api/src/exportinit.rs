@@ -140,7 +140,14 @@ pub fn plan_init(export: &Path, out: &Path, opts: &InitOptions) -> Result<Export
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
 
     let project = |name: &str| {
-        crate::generate_project(&[], "tb/cosim_top.sv", &elf, opts.elf1.as_deref(), name, base)
+        crate::generate_project(
+            &[],
+            "tb/cosim_top.sv",
+            &elf,
+            opts.elf1.as_deref(),
+            name,
+            base,
+        )
     };
 
     let own_tb = texts
@@ -188,9 +195,9 @@ pub fn plan_init(export: &Path, out: &Path, opts: &InitOptions) -> Result<Export
                 if !module_names(t).contains(name) {
                     continue;
                 }
-                match crate::parse_module(t, Some(name)).and_then(|m| {
-                    crate::detect_axi_lite(&m).map(|axi| (m, axi))
-                }) {
+                match crate::parse_module(t, Some(name))
+                    .and_then(|m| crate::detect_axi_lite(&m).map(|axi| (m, axi)))
+                {
                     Ok((m, axi)) => {
                         found = Some((name.clone(), m, axi));
                         break 'search;
@@ -216,7 +223,9 @@ pub fn plan_init(export: &Path, out: &Path, opts: &InitOptions) -> Result<Export
             warnings.push(format!("module `{name}`: AXI master not bridged: {e}"));
         }
         for (i, n) in crate::detect_irqs(&m, &axi).iter().enumerate() {
-            warnings.push(format!("interrupt output `{n}` is forwarded on IRQ_F2P[{i}]"));
+            warnings.push(format!(
+                "interrupt output `{n}` is forwarded on IRQ_F2P[{i}]"
+            ));
         }
         files.push((
             "tb/cosim_top.sv".to_string(),
@@ -258,7 +267,10 @@ fn report(
     let _ = writeln!(s, "Top unit: `{top}`  ");
     match driven {
         Some(m) => {
-            let _ = writeln!(s, "Testbench: generated (`tb/cosim_top.sv`), drives module `{m}`");
+            let _ = writeln!(
+                s,
+                "Testbench: generated (`tb/cosim_top.sv`), drives module `{m}`"
+            );
         }
         None => {
             let _ = writeln!(
@@ -268,7 +280,10 @@ fn report(
         }
     }
     let _ = writeln!(s, "\n## Sources, in compile order\n");
-    let _ = writeln!(s, "| File | Language | Library | Listed at |\n|---|---|---|---|");
+    let _ = writeln!(
+        s,
+        "| File | Language | Library | Listed at |\n|---|---|---|---|"
+    );
     for f in &d.sources {
         let _ = writeln!(
             s,

@@ -78,7 +78,16 @@ nosort
         ]
     );
     let libs: Vec<&str> = d.sources.iter().map(|s| s.library.as_str()).collect();
-    assert_eq!(libs, ["xil_defaultlib", "xil_defaultlib", "xil_defaultlib", "xpm", "work"]);
+    assert_eq!(
+        libs,
+        [
+            "xil_defaultlib",
+            "xil_defaultlib",
+            "xil_defaultlib",
+            "xpm",
+            "work"
+        ]
+    );
     // Options of a line belong to the files of that line.
     assert_eq!(d.sources[0].defines, ["WIDTH=8", "SIM"]);
     assert_eq!(d.sources[1].defines, ["WIDTH=8", "SIM"]);
@@ -107,7 +116,10 @@ fn unknown_options_and_missing_files_name_file_line_and_construct() {
     let at = |line: usize| d.diagnostics.iter().find(|x| x.line == line).unwrap();
     assert_eq!(at(2).construct, "--frobnicate");
     assert_eq!(at(2).severity, Severity::Warning);
-    assert_eq!(at(3).construct.replace('\\', "/"), t.0.join("gone.v").display().to_string().replace('\\', "/"));
+    assert_eq!(
+        at(3).construct.replace('\\', "/"),
+        t.0.join("gone.v").display().to_string().replace('\\', "/")
+    );
     assert_eq!(at(3).severity, Severity::Error);
     assert_eq!(at(4).construct, "bogus");
     assert!(d.has_errors());
@@ -121,7 +133,10 @@ fn unknown_options_and_missing_files_name_file_line_and_construct() {
 #[test]
 fn dpi_libraries_and_search_directories_are_reported_not_silently_dropped() {
     let t = Tmp::new("unsup");
-    let p = t.file("e.opt", "-L xil_defaultlib -sv_lib mylib -y libdir work.top\n");
+    let p = t.file(
+        "e.opt",
+        "-L xil_defaultlib -sv_lib mylib -y libdir work.top\n",
+    );
     let d = no_env().read(&p).unwrap();
     let c: Vec<&str> = d.diagnostics.iter().map(|x| x.construct.as_str()).collect();
     assert!(c.contains(&"-sv_lib mylib"), "{c:?}");
@@ -143,7 +158,11 @@ fn a_dot_f_list_has_includes_defines_comments_and_nested_lists() {
     );
     let d = no_env().read(&p).unwrap();
     assert_eq!(names(&d), ["top.sv", "u.v", "l.vhd", "k.v"]);
-    assert_eq!(d.sources[1].lang, Lang::SystemVerilog, "-sv promotes plain Verilog");
+    assert_eq!(
+        d.sources[1].lang,
+        Lang::SystemVerilog,
+        "-sv promotes plain Verilog"
+    );
     assert_eq!(d.sources[2].lang, Lang::Vhdl);
     assert!(d.sources[..3].iter().all(|s| s.library == "mylib"));
     assert_eq!(d.defines, ["FAST", "DEPTH=16", "FOO=1"]);
@@ -169,7 +188,10 @@ fn elab_opt_gives_libraries_tops_timescale_and_generics() {
     assert_eq!(d.timescale.as_deref(), Some("1ns/1ps"));
     assert_eq!(d.generics, ["W=8"]);
     assert!(d.relax);
-    assert_eq!(d.lib_maps, [("xpm".to_string(), lex_resolve(&t.0, "ip/xpm"))]);
+    assert_eq!(
+        d.lib_maps,
+        [("xpm".to_string(), lex_resolve(&t.0, "ip/xpm"))]
+    );
     assert!(d.diagnostics.is_empty(), "{:?}", d.diagnostics);
 }
 
@@ -250,7 +272,13 @@ fn the_real_vivado_2022_1_behavioural_export_is_read() {
     assert!(d.has_glbl_source());
     assert_eq!(
         d.link_libs,
-        ["uvm", "xil_defaultlib", "unisims_ver", "unimacro_ver", "secureip"]
+        [
+            "uvm",
+            "xil_defaultlib",
+            "unisims_ver",
+            "unimacro_ver",
+            "secureip"
+        ]
     );
     assert_eq!(d.tops, ["xil_defaultlib.cosim_top", "xil_defaultlib.glbl"]);
     assert_eq!(d.top_modules(), ["cosim_top"]);
@@ -283,8 +311,18 @@ fn a_folder_with_two_flows_asks_for_one() {
 #[test]
 fn nonsense_inputs_are_explained() {
     let t = Tmp::new("bad");
-    assert!(no_env().read(&t.0.join("nope.prj")).unwrap_err().contains("does not exist"));
-    assert!(no_env().read(&t.0).unwrap_err().contains("export_simulation"));
+    assert!(
+        no_env()
+            .read(&t.0.join("nope.prj"))
+            .unwrap_err()
+            .contains("does not exist")
+    );
+    assert!(
+        no_env()
+            .read(&t.0)
+            .unwrap_err()
+            .contains("export_simulation")
+    );
 }
 
 #[test]

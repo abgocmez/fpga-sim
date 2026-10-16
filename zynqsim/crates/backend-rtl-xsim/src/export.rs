@@ -137,11 +137,15 @@ pub fn plan(
     // glbl: UNISIM primitives need it. A netlist may carry its own; otherwise Vivado's copy.
     let has_glbl = files.iter().any(|(p, _)| defines_unit(p, "glbl"));
     let wants_glbl = design.glbl_missing
+        || design.tops.iter().any(|t| {
+            t.rsplit('.')
+                .next()
+                .is_some_and(|m| m.eq_ignore_ascii_case("glbl"))
+        })
         || design
-            .tops
+            .link_libs
             .iter()
-            .any(|t| t.rsplit('.').next().is_some_and(|m| m.eq_ignore_ascii_case("glbl")))
-        || design.link_libs.iter().any(|l| l.starts_with("unisims_ver"));
+            .any(|l| l.starts_with("unisims_ver"));
     let mut glbl_from_vivado = false;
     let mut glbl_lib = files
         .iter()
@@ -220,7 +224,11 @@ pub fn plan(
     dirs.dedup();
     for d in dirs {
         if let Ok(rd) = fs::read_dir(&d) {
-            let mut v: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_file()).collect();
+            let mut v: Vec<PathBuf> = rd
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_file())
+                .collect();
             v.sort();
             inputs.extend(v.into_iter().take(2000));
         }
@@ -407,7 +415,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("zs-exp-plan-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let net = dir.join("net.v");
-        fs::write(&net, "module my_ip(input a);\nendmodule\nmodule glbl();\nendmodule\n").unwrap();
+        fs::write(
+            &net,
+            "module my_ip(input a);\nendmodule\nmodule glbl();\nendmodule\n",
+        )
+        .unwrap();
         let mut d = design();
         d.sources = vec![SourceFile {
             path: net.clone(),
