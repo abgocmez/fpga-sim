@@ -508,6 +508,21 @@ timing (SDF) simulation; UVM is only probed with the library, not a full UVM tes
 | Known intermittent test failure: `backend-rtl-xsim` `board::shell_leds_switches_and_buttons` (also seen once as `mcp::scenario::board_demo_through_mcp`) | open defect | on this machine it failed (no UART output within 5 ms of virtual time) or once hung (QEMU and XSim connected, no further progress) in roughly 1 run of 3 to 8 while other builds or XSim runs loaded the machine, and passed 8 of 8 on an idle one; the same rate was seen on an older branch, so it is not from the P3 work. Serialising the two tests of the binary did not fix it; Vivado 2023.1 is what the tests pick (the highest installed), choosing 2022.1 explicitly made it fail every time. Root cause not found. A failed gate is re-run alone before it is blamed on a change |
 | Git repository, stacked pull requests, CI at the repository root | verified | GitHub Actions on the pull requests (3 OS) |
 
+## Packaging and distribution (milestone P4)
+
+| Feature | Status | Evidence / note |
+|---|---|---|
+| `cargo xtask dist` on Windows 11 x86_64: release binaries, `lib/libxsim_dpi.a`, `examples/`, the fixtures they refer to, `boards/`, `docs/` (md and adr), README, THIRD_PARTY, LICENSE, `INSTALL.txt`, a `.zip` and `SHA256SUMS` | verified | run 2026-10-16: archive 13,974,744 bytes, 89 fixture files for 63 references. The command the release workflow runs: `cargo xtask dist` |
+| Clean-directory check of the archive: unpack into an empty temp directory, PATH holds only System32, then `zynqsim --version`, `zynqsim run --project examples/demo/project.toml --for 1ms --json` (`now_ps` 1000000000) and the `zynqsim-mcp` initialize reply | verified (Windows) | `xtask::clean_unpack::the_archive_unpacks_and_runs_from_a_clean_directory` (`cargo test -p xtask -- --ignored` after `cargo xtask dist`); the same four checks end `cargo xtask dist` |
+| DPI library found next to the executable in `lib/` (the unpacked archive), before `target/dpi` | verified | `sim-api::tools::tests::the_dpi_library_is_found_in_an_unpacked_release_archive`. End to end with XSim not run (needs Xilinx QEMU and Vivado) |
+| Built-in boards are compiled into the binaries (`include_str!`), so `boards/` in the archive is for custom boards and reference | verified | `board-zybo::def` (`BoardDef::builtin`), `sim-api::boards` |
+| Fixtures in the archive are those the examples mention (`fixture_refs_in`), plus `fixtures/README.md` | verified | `xtask::dist::tests::fixture_mentions_in_project_files_and_comments_are_found`. A mention in a comment also copies its file or directory |
+| `cargo xtask dist` on Linux and macOS (`.tar.gz`, `sha256sum` or `shasum -a 256`) | implemented-untested | not run here; the archive and checksum code paths differ from Windows only in the archiver and hash tool |
+| `.github/workflows/release.yml`: tag `v*`, `cargo xtask dist` on ubuntu, windows and macos, one GitHub release with the archives and a combined `SHA256SUMS` | implemented-untested | never run on GitHub. Windows uses the GNU toolchain and MinGW gcc (the DPI archive is a GNU `.a`) |
+| `.github/workflows/ci.yml` runs `dist` | not-planned | left alone: on Windows the default MSVC toolchain cannot build `libxsim_dpi.a`, so `dist` would fail the Windows job, and the DPI build adds minutes to every push |
+| Installation documented: prerequisites per OS, install from archive, build from source, Xilinx variables, what needs what, troubleshooting | implemented-untested | `docs/INSTALL.md`, linked from `README.md`. Not followed step by step on a clean machine; the archive steps are what the clean-directory check runs on Windows; the Linux and macOS commands are not run |
+| Every crate inherits `version`, `license` and `edition` from the workspace; root `LICENSE` (Apache-2.0) is in the archive | verified | `Cargo.toml` `[workspace.package]`. Gap: the workspace declares `Apache-2.0` only, so no `LICENSE-MIT`/`LICENSE-APACHE` pair was added; `repository` is still the placeholder `https://example.invalid/zynqsim` |
+
 ## Deviations from the prompt (so far)
 
 * Board SVG art is an optional per-board file in a small subset (ADR-022); the built-in boards
