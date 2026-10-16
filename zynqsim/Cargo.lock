@@ -2961,6 +2961,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
+name = "rtl-frontend"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "rustc-hash"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5069,6 +5076,7 @@ dependencies = [
  "clap",
  "cpu-a9",
  "ps-bus",
+ "rtl-frontend",
  "serde_json",
  "sim-api",
 ]

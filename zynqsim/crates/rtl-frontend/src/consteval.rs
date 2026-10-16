@@ -668,4 +668,3 @@ pub fn clog2(x: i128) -> u32 {
     let v = (x - 1) as u128;
     128 - v.leading_zeros()
 }
-
