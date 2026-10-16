@@ -649,3 +649,35 @@ They show that inputs do not panic or hang. They do not show that the answers ar
 | Block | Status | Evidence / note |
 |---|---|---|
 | xgpiops (PS GPIO), xscutimer and global timer | private timer fully modelled (checked features); global timer partly; PS GPIO not modelled | `docs/conformance/gpio-timer.md`; tests `conf_gpiops_checks_match_the_expected_na_list`, `conf_scutimer_checks_match_the_expected_na_list` |
+
+## Native PS (P5, optional)
+
+The native ARMv7-A core `crates/cpu-a9` (ADR-030). Integer A32 only; the MMU, Thumb, VFP and NEON are
+`stub`. Every row below names its evidence; the firmware rows are per image in ADR-030.
+
+| Feature | Status | Evidence / note |
+|---|---|---|
+| Condition codes (all 15) on every instruction | verified | `cpu-a9/tests/isa.rs::all_fifteen_condition_codes_follow_the_flags` |
+| Data processing, 16 opcodes, all shifters, S-bit flags with the carry rules | verified | `cpu-a9/tests/dp_props.rs` (10000 seeded cases per opcode against an independent reference, plus random immediate shifts) |
+| Loads and stores: word, byte, halfword, signed, doubleword, all addressing modes | verified | `cpu-a9/tests/isa.rs::loads_and_stores_cover_offset_index_and_sign_modes`, `ldm_and_stm_all_four_modes_with_writeback` |
+| Multiplies, long multiplies, halfword multiplies (SMULxy, SMLAxy) | verified (SMULWy, SMLAWy, SMMUL, SMMLA: implemented-untested) | `isa::multiplies_and_long_accumulates`, `isa::halfword_multiplies_select_halves` |
+| Bit operations: CLZ, REV, REV16, REVSH, RBIT, UBFX, SBFX, BFI, BFC | verified | `isa::reversal_bit_and_field_instructions` |
+| Extends (SXT/UXT, accumulate), saturation (SSAT, USAT, QADD), PKH | verified for the listed forms; the rest implemented-untested | `isa::extend_instructions_including_the_accumulate_forms`, `isa::saturating_instructions_set_q`, `isa::pack_halfword_instructions` |
+| Parallel add and subtract (SIMD in GPRs) | verified for four forms; ASX, SAX and other Q/SH forms implemented-untested | `isa::parallel_add_subtract_sets_ge_for_the_plain_forms_only` |
+| Exclusive monitor (LDREX, STREX, CLREX, word) | verified; byte, half and doubleword implemented-untested | `isa::exclusive_monitor_succeeds_once_and_fails_after_a_clear` |
+| Branches: B, BL, BX; BLX register and immediate | verified (B, BL, BX); BLX implemented-untested | `isa::branches_bl_bx_and_b_reach_their_targets` |
+| MRS, MSR (CPSR and SPSR, field masks), CPS | verified (MRS, MSR); CPS implemented-untested | `isa::msr_and_mrs_read_and_write_the_flags_and_the_mode`, `isa::msr_spsr_and_mrs_spsr` |
+| Banked registers: SP and LR per mode, FIQ R8-R12 | verified (SP across IRQ mode) | `isa::banked_stack_pointers_are_per_mode` |
+| Exceptions: SVC, undefined, data abort, prefetch abort, IRQ, FIQ, return by `subs pc, lr, #4` | verified (reset and BKPT entry implemented-untested) | `isa::svc_takes_the_exception_and_records_the_return`, `isa::undefined_instruction_takes_the_undef_exception`, `isa::data_abort_*`, `isa::prefetch_abort_*`, `isa::irq_is_taken_between_instructions_and_returns_with_subs_pc_lr_4`, `isa::fiq_masks_fiq_and_irq_and_saves_the_return` |
+| WFI, WFE, SEV, interrupt wake from WFI while masked | verified | `isa::wfi_waits_then_resumes_after_the_wakeup_even_when_masked`, `isa::sev_wakes_wfe_and_the_event_register_is_consumed` |
+| CP15: MIDR, MPIDR, ACTLR, cache and TLB no-ops | verified (the other registers implemented-untested) | `isa::cp15_identification_control_and_maintenance_registers` |
+| UDIV, SDIV are undefined (no integer divide on Cortex-A9) | verified for the permanently undefined encoding | `isa::undefined_instruction_takes_the_undef_exception` |
+| MMU: setting SCTLR.M stops the core, never runs untranslated | verified (no translation exists) | `isa::enabling_the_mmu_stops_the_core_rather_than_running_untranslated` |
+| Thumb (T=1, BX to an odd address): reported, not run | stub | `isa::bx_to_an_odd_address_enters_thumb_which_is_reported` |
+| VFP, NEON, coprocessor 10/11 | stub (`Unimplemented`) | `isa::vfp_is_reported_unimplemented_and_nothing_changes` |
+| MMU walk, TLB, the `Translate` hook beyond identity | stub (identity translation only) | `Translate` / `Identity` in `cpu-a9::xlate` |
+| GIC, timers, SCU, caches, peripherals | not in this crate | `mem-sys`, `ps-periph` (other crates) |
+| Rust firmware: `rust_hello.elf` runs to completion, UART text equals QEMU | verified | `cpu-a9/tests/rust_firmware.rs::rust_hello_runs_to_completion_and_prints_its_message`, `cli/tests/cpu_a9_diff.rs::rust_hello_prints_the_same_text_in_qemu_and_in_the_interpreter` (skips without QEMU) |
+| Every distinct instruction word of the 31 Rust firmware images decodes to an implemented class | verified (decode, not behaviour) | `cpu-a9/tests/rust_firmware.rs::every_instruction_word_of_the_firmware_decodes` |
+| Other 30 Rust firmware images run to their end | stub: they need the GIC, timer, PL and peripheral models; ADR-030 lists each | `cpu-a9/tests/rust_firmware.rs::every_rust_firmware_image_is_classified` (report) |
+| Instruction-by-instruction differential against QEMU | stub (only the UART text of one image is compared) | ADR-030, TESTPLAN |
