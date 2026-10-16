@@ -10,7 +10,7 @@ workspace = true
 
 [dependencies]
 cpal = { version = "0.18.2", optional = true }
-eframe = "0.32.3"
+eframe = { version = "0.32.3", features = ["persistence"] }
 rfd = { version = "0.17.2", optional = true }
 sim-api = { version = "0.1.0", path = "../sim-api" }
 

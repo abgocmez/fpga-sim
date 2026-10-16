@@ -1,7 +1,44 @@
 //! HDMI and audio codec panels.
 
 use super::{App, dialogs};
+use crate::model::storage_rows;
 use eframe::egui::{self, Color32, ColorImage, RichText, TextureOptions};
+
+/// Warning colour for guest writes that reach the host file.
+const WARN: Color32 = Color32::from_rgb(235, 160, 20);
+
+/// The storage table: device, image, size, simulated part and access.
+pub(super) fn storage_table(ui: &mut egui::Ui, st: &sim_api::StorageStatus) {
+    egui::Grid::new("storage_table")
+        .striped(true)
+        .num_columns(5)
+        .spacing([10.0, 3.0])
+        .show(ui, |ui| {
+            for h in ["device", "image / source", "size", "model", "access"] {
+                ui.strong(h);
+            }
+            ui.end_row();
+            for r in storage_rows(st) {
+                ui.label(r.device);
+                ui.label(RichText::new(&r.source).monospace().small())
+                    .on_hover_text(r.source.clone());
+                ui.label(&r.size);
+                ui.label(RichText::new(&r.model).small());
+                if r.writable {
+                    ui.label(RichText::new("writable").color(WARN).strong())
+                        .on_hover_text(
+                            "Guest writes change the host file itself: they are not discarded.",
+                        );
+                } else {
+                    ui.label(RichText::new("read-only").color(Color32::GRAY))
+                        .on_hover_text(
+                            "Writes discarded: they go to a throw-away overlay, and the host \n                             file is never modified.",
+                        );
+                }
+                ui.end_row();
+            }
+        });
+}
 
 /// What the LINE IN source box offers.
 #[derive(Clone, Copy, PartialEq, Eq)]

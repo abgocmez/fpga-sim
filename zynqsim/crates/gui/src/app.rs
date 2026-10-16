@@ -1,8 +1,11 @@
 //! The egui front end: board view, control bar, console and info panels.
 
+mod cpu;
 mod dialogs;
 mod media;
+mod memory;
 mod project;
+mod sections;
 mod view3d;
 mod wave_view;
 
@@ -12,10 +15,14 @@ use eframe::egui::{
     self, Align2, Color32, ColorImage, FontId, Key, Rect, RichText, Sense, TextureHandle,
     TextureOptions, pos2, vec2,
 };
+use sections::{SectionState, section};
 use sim_api::Ps;
 use sim_api::board::{BoardState, Camera, Hit, hit_test, render};
 use sim_api::trace::{TraceEvent, TraceRecord};
 use std::time::{Duration, Instant};
+
+/// The key the side panel's section state is saved under in eframe's storage.
+pub const SECTIONS_KEY: &str = "zynqsim.sections";
 
 /// Start-up options that exist for automated checks.
 #[derive(Default)]
@@ -26,6 +33,8 @@ pub struct Opts {
     pub screenshot: Option<std::path::PathBuf>,
     /// Open the memory viewer at this address as a 64x64 image.
     pub mem: Option<u64>,
+    /// Show the memory viewer's hex view instead of the image.
+    pub mem_hex: bool,
     /// Open on the 3D board view.
     pub view_3d: bool,
     /// Open on the Waveforms tab, with these signals shown.
@@ -66,7 +75,9 @@ pub struct App {
     mem_h: String,
     mem_view: MemView,
     mem_auto: bool,
-    mem_text: String,
+    mem_unit: memory::Unit,
+    mem_data: Option<(u64, Vec<u8>)>,
+    mem_changed: Vec<bool>,
     mem_tex: Option<TextureHandle>,
     mem_error: Option<String>,
     mem_open: bool,
@@ -93,12 +104,15 @@ pub struct App {
     media: media::MediaUi,
     // waveform tab
     wave_ui: wave_view::WaveUi,
+    /// Which side-panel sections are open (remembered between runs).
+    sections: SectionState,
 }
 
 impl App {
     /// Builds the app around a loaded model.
     pub fn new(model: Model, opts: Opts) -> App {
         let opts_mem = opts.mem;
+        let opts_mem_hex = opts.mem_hex;
         let cpu_reason = [
             model.cpu_unavailable_reason(0),
             model.cpu_unavailable_reason(1),
@@ -132,13 +146,15 @@ impl App {
             mem_addr: opts_mem.map_or_else(|| "0x01100000".to_string(), |a| format!("{a:#010x}")),
             mem_w: "64".to_string(),
             mem_h: "64".to_string(),
-            mem_view: if opts_mem.is_some() {
+            mem_view: if opts_mem.is_some() && !opts_mem_hex {
                 MemView::ImageWords
             } else {
                 MemView::Hex
             },
             mem_auto: opts_mem.is_some(),
-            mem_text: String::new(),
+            mem_unit: memory::Unit::Bits8,
+            mem_data: None,
+            mem_changed: Vec::new(),
             mem_tex: None,
             mem_error: None,
             mem_open: opts_mem.is_some(),
@@ -161,6 +177,7 @@ impl App {
                 tab: waves,
                 ..Default::default()
             },
+            sections: SectionState::default(),
         }
     }
 
@@ -249,19 +266,6 @@ impl App {
             if ui.button("+100 ms").clicked() {
                 self.model.run_for(100 * Ps::PER_MS);
             }
-            egui::ComboBox::from_id_salt("speed")
-                .selected_text(SPEEDS[self.model.speed].0)
-                .show_ui(ui, |ui| {
-                    for (i, (label, _)) in SPEEDS.iter().enumerate() {
-                        if ui
-                            .selectable_value(&mut self.model.speed, i, *label)
-                            .clicked()
-                            && self.model.status.playing
-                        {
-                            self.model.play();
-                        }
-                    }
-                });
             ui.separator();
             ui.label(RichText::new(format!("t = {}", Ps(self.model.status.now_ps))).monospace());
             ui.separator();
@@ -314,8 +318,41 @@ impl App {
         self.trace_panel(ui);
     }
 
+    /// The play-speed selector and the measured sim/wall ratio.
+    fn speed_row(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label("speed");
+            egui::ComboBox::from_id_salt("speed")
+                .selected_text(SPEEDS[self.model.speed].0)
+                .show_ui(ui, |ui| {
+                    for (i, (label, _)) in SPEEDS.iter().enumerate() {
+                        if ui
+                            .selectable_value(&mut self.model.speed, i, *label)
+                            .clicked()
+                            && self.model.status.playing
+                        {
+                            self.model.play();
+                        }
+                    }
+                });
+            let text = if !self.model.status.playing {
+                "paused".to_string()
+            } else {
+                match self.model.speed_meter.ratio() {
+                    Some(r) => format!("measured {r:.2}x sim/wall"),
+                    None => "measuring...".to_string(),
+                }
+            };
+            ui.label(RichText::new(text).monospace().small());
+        });
+    }
+
     /// Everything above the trace.
     fn side_sections(&mut self, ui: &mut egui::Ui) {
+        // Taken out while the section bodies, which borrow self, run.
+        let mut sections = std::mem::take(&mut self.sections);
+        self.speed_row(ui);
+        ui.separator();
         ui.heading("System");
         self.badge(ui);
         let s = &self.model.status;
@@ -323,76 +360,49 @@ impl App {
         ui.label(format!("quantum: {}   seed: {}", Ps(s.quantum_ps), s.seed));
         ui.label(format!("pending events: {}", s.pending_events));
         ui.label(RichText::new(&s.trace_hash).monospace().small());
-        for line in self.model.storage_lines() {
-            ui.label(RichText::new(line).small());
-        }
         ui.separator();
 
-        for core in 0..2usize {
-            let stopped = self.model.cpu_regs[core].is_some();
-            egui::CollapsingHeader::new(format!(
-                "CPU {core}{}",
-                if stopped { " (stopped)" } else { "" }
-            ))
-            .id_salt(("cpu", core))
-            .default_open(stopped)
-            .show(ui, |ui| match &self.model.cpu_regs[core] {
-                Some(r) => {
-                    if r.r.iter().all(|v| *v == 0) {
-                        ui.label(
-                            RichText::new("all registers are zero: nothing has run on this core")
-                                .color(Color32::GRAY)
-                                .small(),
-                        );
-                    }
-                    if let Some(s) = &r.pc_symbol {
-                        ui.label(RichText::new(format!("pc in {s}")).strong());
-                    }
-                    for row in r.r.chunks(4).enumerate() {
-                        let text: Vec<String> = row
-                            .1
-                            .iter()
-                            .enumerate()
-                            .map(|(i, v)| {
-                                let n = row.0 * 4 + i;
-                                let name = match n {
-                                    13 => "sp".to_string(),
-                                    14 => "lr".to_string(),
-                                    15 => "pc".to_string(),
-                                    n => format!("r{n}"),
-                                };
-                                format!("{name:>3} {v:08x}")
-                            })
-                            .collect();
-                        ui.label(RichText::new(text.join("  ")).monospace().small());
-                    }
-                    ui.label(
-                        RichText::new(format!("cpsr {:08x}  mode {}", r.cpsr, r.mode))
-                            .monospace()
-                            .small(),
-                    );
-                }
-                None => {
-                    ui.label(
-                        RichText::new(&self.cpu_reason[core])
-                            .color(Color32::GRAY)
-                            .small(),
-                    );
-                }
-            });
-        }
+        let stopped = self.model.cpu_regs[0].is_some();
+        let cpu_summary = cpu::summary(
+            self.model.cpu_regs[0].as_ref(),
+            self.model.status.debug.is_some(),
+        );
+        section(
+            ui,
+            &mut sections,
+            "cpu",
+            "CPU registers",
+            &cpu_summary,
+            stopped,
+            |ui| self.cpu_registers(ui),
+        );
+
         // The source line of the stopped pc, when the ELF has line info.
-        let has_source = self.model.source.view.is_some();
-        egui::CollapsingHeader::new(if has_source {
-            "Source (stopped)"
-        } else {
-            "Source"
-        })
-        .id_salt("source")
-        .default_open(has_source)
-        .show(ui, |ui| {
-            crate::source_view::show(ui, &mut self.model.source);
+        let source = self.model.source.view.as_ref().map(|v| {
+            format!(
+                "{}:{}",
+                v.file.rsplit('/').next().unwrap_or(v.file.as_str()),
+                v.line
+            )
         });
+        let has_source = source.is_some();
+        let source_summary = source.unwrap_or_else(|| "no line information".to_string());
+        section(
+            ui,
+            &mut sections,
+            "source",
+            if has_source {
+                "Source (stopped)"
+            } else {
+                "Source"
+            },
+            &source_summary,
+            has_source,
+            |ui| {
+                crate::source_view::show(ui, &mut self.model.source);
+            },
+        );
+
         egui::CollapsingHeader::new("PL (bus accesses)").show(ui, |ui| {
             let bus: Vec<&TraceRecord> = self
                 .model
@@ -413,23 +423,75 @@ impl App {
                 );
             }
         });
+
         if !self.model.device_images.is_empty() {
-            egui::CollapsingHeader::new("Pmod devices")
-                .default_open(true)
-                .show(ui, |ui| self.devices_panel(ui));
+            let ports = ["JA", "JB", "JC", "JD", "JE", "CAM"];
+            let summary = self
+                .model
+                .device_images
+                .iter()
+                .map(|(port, kind, ..)| {
+                    format!(
+                        "{kind} on {}",
+                        ports.get(usize::from(*port)).copied().unwrap_or("?")
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            section(
+                ui,
+                &mut sections,
+                "pmod",
+                "Pmod devices",
+                &summary,
+                true,
+                |ui| self.devices_panel(ui),
+            );
         }
         if self.model.has_media() {
-            egui::CollapsingHeader::new("HDMI")
-                .default_open(true)
-                .show(ui, |ui| self.hdmi_panel(ui));
-            egui::CollapsingHeader::new("Audio codec")
-                .default_open(true)
-                .show(ui, |ui| self.audio_panel(ui));
+            let (video, audio) = self
+                .model
+                .status
+                .media
+                .as_ref()
+                .map_or((0, 0), |m| (m.video_frames, m.audio_frames));
+            section(
+                ui,
+                &mut sections,
+                "hdmi",
+                "HDMI",
+                &format!("TX {video} frame(s)"),
+                true,
+                |ui| self.hdmi_panel(ui),
+            );
+            section(
+                ui,
+                &mut sections,
+                "audio",
+                "Audio codec",
+                &format!("DAC {audio} frame(s)"),
+                true,
+                |ui| self.audio_panel(ui),
+            );
         }
         if let Some(n) = &self.model.net {
-            egui::CollapsingHeader::new("Ethernet (GEM0)")
-                .default_open(true)
-                .show(ui, |ui| {
+            let summary = format!(
+                "{} frame(s), {}",
+                n.frames_tx + n.frames_rx,
+                if n.restricted {
+                    "isolated LAN"
+                } else {
+                    "open network"
+                }
+            );
+            section(
+                ui,
+                &mut sections,
+                "ethernet",
+                "Ethernet (GEM0)",
+                &summary,
+                true,
+                |ui| {
                     ui.label(format!("{} on {} via {}", n.mac, n.subnet, n.gateway));
                     ui.label(format!(
                         "tx {} frame(s) / {} B, rx {} frame(s) / {} B",
@@ -455,11 +517,33 @@ impl App {
                                 .small(),
                         );
                     }
-                });
+                },
+            );
         }
-        egui::CollapsingHeader::new("Memory / image viewer")
-            .default_open(self.mem_open)
-            .show(ui, |ui| self.memory_panel(ui));
+        if let Some(st) = self.model.status.storage.clone() {
+            if st.sd.is_some() || st.qspi.is_some() {
+                section(
+                    ui,
+                    &mut sections,
+                    "storage",
+                    "Storage",
+                    &crate::model::storage_summary(&st),
+                    true,
+                    |ui| media::storage_table(ui, &st),
+                );
+            }
+        }
+        let mem_summary = self.memory_summary();
+        let mem_open = self.mem_open;
+        section(
+            ui,
+            &mut sections,
+            "memory",
+            "Memory / image viewer",
+            &mem_summary,
+            mem_open,
+            |ui| self.memory_panel(ui),
+        );
         egui::CollapsingHeader::new("Clock tree, IRQ map, SLCR").show(ui, |ui| {
             ui.label(
                 RichText::new(
@@ -470,6 +554,7 @@ impl App {
                 .small(),
             );
         });
+        self.sections = sections;
     }
 
     /// The newest trace records, in the bottom strip of the side panel.
@@ -485,135 +570,6 @@ impl App {
                     ui.label(RichText::new(describe(r)).monospace().small());
                 }
             });
-    }
-
-    /// Guest memory as a hex dump or as a grayscale image.
-    fn memory_panel(&mut self, ui: &mut egui::Ui) {
-        if !self.model.can_read_memory() {
-            ui.label(
-                RichText::new("Needs a PS backend (qemu): the demo engine has no guest memory.")
-                    .color(Color32::GRAY)
-                    .small(),
-            );
-            return;
-        }
-        let mut read = self.mem_auto && self.frames % 15 == 0;
-        ui.horizontal(|ui| {
-            ui.label("addr");
-            ui.add(egui::TextEdit::singleline(&mut self.mem_addr).desired_width(86.0));
-            if ui.button("Read").clicked() {
-                read = true;
-            }
-            ui.checkbox(&mut self.mem_auto, "live");
-        });
-        ui.horizontal(|ui| {
-            for (label, addr) in [
-                ("source image", "0x01000000"),
-                ("result image", "0x01100000"),
-            ] {
-                if ui.small_button(label).clicked() {
-                    self.mem_addr = addr.to_string();
-                    self.mem_view = MemView::ImageWords;
-                    read = true;
-                }
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.mem_view, MemView::Hex, "hex");
-            ui.selectable_value(
-                &mut self.mem_view,
-                MemView::ImageWords,
-                "image (1 px / word)",
-            );
-            ui.selectable_value(
-                &mut self.mem_view,
-                MemView::ImageBytes,
-                "image (1 px / byte)",
-            );
-        });
-        if self.mem_view != MemView::Hex {
-            ui.horizontal(|ui| {
-                ui.label("w");
-                ui.add(egui::TextEdit::singleline(&mut self.mem_w).desired_width(40.0));
-                ui.label("h");
-                ui.add(egui::TextEdit::singleline(&mut self.mem_h).desired_width(40.0));
-            });
-        }
-        if read {
-            self.read_memory(ui.ctx());
-        }
-        if let Some(e) = &self.mem_error {
-            ui.colored_label(Color32::from_rgb(240, 100, 90), e);
-        }
-        match self.mem_view {
-            MemView::Hex => {
-                ui.label(RichText::new(&self.mem_text).monospace().small());
-            }
-            _ => {
-                if let Some(tex) = &self.mem_tex {
-                    let size = tex.size_vec2();
-                    let scale = (260.0 / size.x.max(size.y)).max(1.0).floor();
-                    ui.add(egui::Image::new((tex.id(), size * scale)));
-                }
-            }
-        }
-    }
-
-    fn read_memory(&mut self, ctx: &egui::Context) {
-        self.mem_error = None;
-        let parse = |s: &str| -> Option<u64> {
-            let t = s.trim();
-            match t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-                Some(h) => u64::from_str_radix(h, 16).ok(),
-                None => t.parse().ok(),
-            }
-        };
-        let Some(addr) = parse(&self.mem_addr) else {
-            self.mem_error = Some("address is not a number".to_string());
-            return;
-        };
-        match self.mem_view {
-            MemView::Hex => match self.model.mem_read(addr, 256) {
-                Ok(d) => {
-                    self.mem_text = d
-                        .chunks(16)
-                        .enumerate()
-                        .map(|(i, row)| {
-                            let hex: Vec<String> = row.iter().map(|b| format!("{b:02x}")).collect();
-                            format!("{:08x}  {}", addr + (i * 16) as u64, hex.join(" "))
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                }
-                Err(e) => self.mem_error = Some(e),
-            },
-            view => {
-                let (Some(w), Some(h)) = (parse(&self.mem_w), parse(&self.mem_h)) else {
-                    self.mem_error = Some("width/height are not numbers".to_string());
-                    return;
-                };
-                if w == 0 || h == 0 || w * h > 1 << 18 {
-                    self.mem_error =
-                        Some("image size out of range (max 262144 pixels)".to_string());
-                    return;
-                }
-                let per = if view == MemView::ImageWords { 4 } else { 1 };
-                match self.model.mem_read(addr, (w * h * per) as u32) {
-                    Ok(d) => {
-                        let gray: Vec<u8> = d.chunks_exact(per as usize).map(|px| px[0]).collect();
-                        let img = ColorImage::from_gray([w as usize, h as usize], &gray);
-                        match &mut self.mem_tex {
-                            Some(t) => t.set(img, TextureOptions::NEAREST),
-                            None => {
-                                self.mem_tex =
-                                    Some(ctx.load_texture("mem", img, TextureOptions::NEAREST));
-                            }
-                        }
-                    }
-                    Err(e) => self.mem_error = Some(e),
-                }
-            }
-        }
     }
 
     fn console(&mut self, ui: &mut egui::Ui) {
@@ -851,6 +807,11 @@ impl App {
         }
     }
 
+    /// Restores the section state saved by an earlier run.
+    pub fn restore_sections(&mut self, text: &str) {
+        self.sections = SectionState::decode(text);
+    }
+
     /// Called once after the simulation was replaced by a freshly built one.
     fn engine_changed(&mut self) {
         self.seen_generation = self.model.generation;
@@ -867,6 +828,8 @@ impl App {
         self.media.tex = None;
         self.media.tex_frame = None;
         self.mem_tex = None;
+        self.mem_data = None;
+        self.mem_changed.clear();
         if self.autoplay {
             self.autoplay = false;
             self.model.play();
@@ -931,6 +894,10 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.ui(ctx);
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        storage.set_string(SECTIONS_KEY, self.sections.encode());
     }
 }
 
@@ -1540,6 +1507,57 @@ mod tests {
         h.app.wave_ui.tab = false;
         h.frame(vec![]);
         assert!(!h.app.model.waves.active);
+    }
+
+    /// Stands in for eframe's storage file.
+    #[derive(Default)]
+    struct MemStorage(std::collections::HashMap<String, String>);
+
+    impl eframe::Storage for MemStorage {
+        fn get_string(&self, key: &str) -> Option<String> {
+            self.0.get(key).cloned()
+        }
+        fn set_string(&mut self, key: &str, value: String) {
+            self.0.insert(key.to_string(), value);
+        }
+        fn flush(&mut self) {}
+    }
+
+    #[test]
+    fn open_sections_are_saved_and_restored_through_storage() {
+        let mut h = Harness::new();
+        h.app.sections.set("source", false);
+        h.app.sections.set("memory", true);
+        let mut store = MemStorage::default();
+        eframe::App::save(&mut h.app, &mut store);
+        let saved = eframe::Storage::get_string(&store, SECTIONS_KEY).expect("state saved");
+
+        let mut h2 = Harness::new();
+        h2.app.restore_sections(&saved);
+        assert!(!h2.app.sections.open_or("source", true));
+        assert!(h2.app.sections.open_or("memory", false));
+        // The restored panel still draws.
+        h2.frame(vec![]);
+    }
+
+    #[test]
+    fn the_speed_selector_reaches_the_engine_and_max_runs() {
+        let mut h = Harness::new();
+        assert_eq!(h.app.model.speed, crate::model::SPEED_REAL_TIME);
+        h.app.model.speed = 4; // max
+        h.app.model.play();
+        h.frame(vec![]);
+        assert!(h.app.model.status.playing, "play at max speed");
+        h.app.model.pause();
+        h.frame(vec![]);
+        assert!(!h.app.model.status.playing);
+    }
+
+    #[test]
+    fn the_memory_viewer_says_why_it_has_no_memory() {
+        let h = Harness::new();
+        assert!(!h.app.model.can_read_memory());
+        assert_eq!(h.app.memory_summary(), "needs the qemu engine");
     }
 
     #[test]
