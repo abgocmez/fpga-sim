@@ -60,6 +60,23 @@ Device mapping (probe reads of the registers, `RESET` line and after writes):
    removed from `PS_BLOCK_EDITS`; nothing in this build can instantiate the model from the tree.
 4. **SCU watchdog.** Not mapped; no model.
 
+## SCU watchdog (0xF8F00620): no model in this build
+
+Evidence (`strings` of `qemu-system-aarch64.exe` and the probes above):
+
+* `arm_mptimer` (the private timer block at 0xF8F00600) has no watchdog: its strings are `num-cpu`,
+  `timerblock`, `control`, `status`, `timer`, no `watchdog`.
+* The only Xilinx watchdog model is `xlnx.swdt` (`hw/watchdog/xlnx-swdt.c`), the ZynqMP/Versal SWDT with
+  CONTROL, RESTART and STATUS registers. The Zynq SCU watchdog (xscuwdt: LOAD, COUNTER, CONTROL, ISR,
+  RESET_STATUS, DISABLE) has no matching name in the binary, so mapping `xlnx.swdt` would not give the
+  driver its registers.
+* No Cadence WDT model (`cadence_wdt`, `cdns,wdt-r1p2`) is in the binary either, so the CPU watchdog at
+  0xF8005000 is unmapped as well.
+
+Decision: not mapped. `bsp_scuwdt_polled` and the peripheral test's watchdog interrupt test keep their
+recorded behaviour (never returns). Pinned by `bsp_apps`. Changing this needs a QEMU build with an SCU
+watchdog model (VERIFY: no such model was found, not that none exists upstream).
+
 ## Not fixed
 
 * **Private timer at 100 MHz** (D3 in `docs/conformance/bsp-apps.md`). Pinned by
