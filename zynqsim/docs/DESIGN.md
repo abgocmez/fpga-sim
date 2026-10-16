@@ -143,7 +143,7 @@ JSON-RPC 2.0 over newline-delimited stdio (ADR-003). One tool per row of prompt 
 |---|---|
 | P1 | `PsBackend` + `backend-qemu` (spawn, remote-port in Rust, ELF load, icount lock-step); one RTL adapter and `pl-api`; the demo model becomes a test double. `Capability::{CpuState, MemoryAccess, PlSignals}` start being advertised and the existing gated MCP tools get handlers. |
 | P2 | board devices (SSM2603, HDMI, Pmod modules) behind `BoardDevice`; `pmod_attach`, `video_frame`, `audio_capture`. |
-| P3 | `xsa-import`, `vendor-ip`, `boot`; `project_create_from_xsa`; custom boards. |
+| P3 | `xsa-import`, `vendor-ip` (AXI GPIO/Timer/UART Lite so far, ADR-016), `boot`; `project_create_from_xsa`; custom boards. |
 
 ## 9. P1 engines: QEMU as PS, native or RTL PL
 

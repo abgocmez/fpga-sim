@@ -15,7 +15,8 @@ pub enum IpClass {
         /// module reference.
         packaged: bool,
     },
-    /// A Xilinx IP that the `vendor-ip` library (milestone P3) is meant to model. Not built.
+    /// A Xilinx IP in the catalog. The `vendor-ip` library models only some of them (AXI GPIO,
+    /// AXI Timer, AXI UART Lite); the importer decides by name which ones run.
     VendorIp {
         /// Catalog name (`axi_gpio`).
         name: String,
@@ -34,7 +35,8 @@ pub enum IpClass {
     ThirdParty,
 }
 
-/// Catalog of Xilinx IP the `vendor-ip` library is meant to model (prompt section 9.5).
+/// Catalog of Xilinx IP the `vendor-ip` library is meant to model (prompt section 9.5); which
+/// of them it does model is `vendor_ip::MODELS`.
 const VENDOR: &[(&str, &str)] = &[
     ("axi_gpio", "AXI GPIO"),
     ("axi_timer", "AXI Timer"),

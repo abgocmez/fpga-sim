@@ -58,7 +58,23 @@ release build). Regenerate golden images: `cargo xtask golden` (review the diff)
 | `backend-qemu` `net` (6: ping + every frame captured, two-run determinism, frame times independent of run slicing, custom subnet/MAC, unplugged NIC, open network) | Xilinx QEMU + co-sim DTB (no PL, no XSim) | prints `SKIPPED:` and returns |
 | `zynqsim` `net` (6: ping + pcap pair check, two-process determinism of digest/UART/pcap bytes, record/replay, trace/VCD, `--pcap` refusal, bad `[network]`), `mcp` `net` (2: capability gate; capture, paging, snapshot/restore/replay), `zynqsim-gui` `ethernet_counters_*` | Xilinx QEMU (the bad-section and gate tests need nothing) | same |
 
-| `zynqsim` `xsa::a_user_rtl_only_handoff_runs_the_real_firmware` | Xilinx QEMU + Vivado XSim + the DPI library (the other three `xsa` tests, `sim-api` `xsa_import`, `xsa-import` and `mcp` `xsa` need nothing) | prints `SKIPPED:` and returns |
+| `zynqsim` `xsa::a_user_rtl_only_handoff_runs_the_real_firmware`, `xsa::user_rtl_in_xsim_and_a_vendor_model_share_one_pl` | Xilinx QEMU + Vivado XSim + the DPI library (the other `xsa` tests, `sim-api` `xsa_import`, `xsa-import` and `mcp` `xsa` need nothing) | prints `SKIPPED:` and returns |
+| `zynqsim` `xsa::a_vendor_ip_handoff_runs_the_real_firmware_on_the_models`, `sim-api` `vendor_ip` (2), `mcp` `vendor_ip` | Xilinx QEMU only (no Vivado: the vendor-ip models are native) | same |
+
+### Xilinx IP models (`vendor-ip`)
+
+Unit tests (`cargo test -p vendor-ip`, no tools): per model register behaviour, reset values,
+GPIO interrupt set/clear (toggle on write) and dual channel, timer up/down/load/auto reload/
+rollover period/narrow width/`ENALL`/PWM level, UART Lite baud pacing, 16-deep FIFOs, overrun,
+interrupt, and `VendorPl` routing (model windows vs. RTL, board binding, IRQ lines, overlap and
+parameter errors). End to end through the real QEMU: `firmware/gpio_timer_uart` (LED walk read
+back through the register, three timer interrupts, UART Lite greeting, switches mirrored onto
+LEDs, button press taking the GPIO interrupt, echo of host bytes sent to UART port 2), once as
+the example project and once from the real Vivado XSA through `init --xsa`; a mixed design with
+user RTL in XSim next to the GPIO model (`firmware/vendor_mix`).
+
+What the tests cannot show: that the models match the real IP. No Xilinx simulation model or
+board was available to compare against; the `VERIFY:` items in STATUS.md are the open questions.
 
 ### §14.2 peripheral conformance: Ethernet
 

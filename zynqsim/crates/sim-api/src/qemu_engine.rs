@@ -25,13 +25,13 @@ use pl_api::{
     AudioSource, BusResult, MasterAccess, MediaEvent, PlTarget, PsMasterPort, PsPort, VideoSource,
 };
 use pl_native::{MathIp, NativePl, RegisterBlock};
-use vendor_ip::{VendorInstance, VendorPl};
 use sim_core::Ps;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use trace::{TraceEvent, TraceLog};
+use vendor_ip::{VendorInstance, VendorPl};
 
 /// Flush the UART and PL accesses into the trace at this virtual-time
 /// granularity. Fixed, so the trace is identical however the caller slices

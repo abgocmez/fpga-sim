@@ -156,10 +156,26 @@ zynqsim run --project mydesign/project.toml --for 20ms
 Reads the XSA (or a bare `.hwh`): PS7 clocks and ports, every PL IP with its VLNV, the address
 map, interrupts and clocks. The user's AXI4-Lite RTL becomes `[rtl]` with a generated testbench;
 `xsa-report.md` lists what was found, mapped and **not supported**. IP that has no model yet (AXI
-GPIO, Timer, DMA, ... need the `vendor-ip` library, milestone P3) is recorded in
-`[xsa.unmodelled]` and makes `run` stop with a diagnostic naming it: the project is generated, the
-design is not claimed to run. MCP: `project_create_from_xsa`. Details and limits:
-[docs/adr/015-xsa-import.md](docs/adr/015-xsa-import.md).
+GPIO, Timer and UART Lite run as `vendor-ip` models, see below; any other Xilinx IP, DMA for
+example) is recorded in `[xsa.unmodelled]` and makes `run` stop with a diagnostic naming it: the
+project is generated, the design is not claimed to run. MCP: `project_create_from_xsa`. Details
+and limits: [docs/adr/015-xsa-import.md](docs/adr/015-xsa-import.md).
+
+### Xilinx IP without RTL
+
+```
+zynqsim run --project examples/gpio-timer-uart/project.toml --for 6ms
+```
+
+AXI GPIO, AXI Timer and AXI UART Lite are register-level models (`crates/vendor-ip`,
+[ADR-016](docs/adr/016-vendor-ip.md)) that run on the native PL, or next to the user's RTL in
+XSim. The example's firmware (`firmware/gpio_timer_uart`) walks the LEDs, takes timer
+interrupts, writes a greeting through the UART Lite (`uart_read` port 2) and mirrors the switches
+onto the LEDs; the design is the real Vivado XSA `fixtures/xsa/zs_vendor_ip.xsa`, which
+`zynqsim init --xsa` turns into the same project. GPIO channels are bound to the board with
+`[connect] "axi_gpio_0.GPIO" = "board.leds"` (`board.sw`, `board.btn`, `board.pmod_ja`..).
+The register maps are written from the product guides from memory and are not verified against
+hardware: see the `VERIFY:` items in [docs/STATUS.md](docs/STATUS.md).
 
 [docs/TEST_YOUR_DESIGN.md](docs/TEST_YOUR_DESIGN.md) covers the firmware side, what the generator
 does and does not do, how to turn a run into a test, and how to debug a failure.

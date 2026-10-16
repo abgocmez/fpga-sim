@@ -60,11 +60,8 @@ fn the_firmware_drives_all_three_models_and_the_board_follows() {
     assert!(st.capabilities.contains(&sim_api::Capability::BoardIo));
 
     // A switch is on before the firmware looks at them.
-    e.command(Command::Input(Input::SetSwitch {
-        index: 1,
-        on: true,
-    }))
-    .unwrap();
+    e.command(Command::Input(Input::SetSwitch { index: 1, on: true }))
+        .unwrap();
     run_us(e.as_mut(), 6_000);
 
     let u1 = uart(e.as_mut(), 1);
@@ -163,11 +160,8 @@ fn the_session_is_deterministic() {
     let mut hashes = Vec::new();
     for _ in 0..2 {
         let mut e = engine();
-        e.command(Command::Input(Input::SetSwitch {
-            index: 3,
-            on: true,
-        }))
-        .unwrap();
+        e.command(Command::Input(Input::SetSwitch { index: 3, on: true }))
+            .unwrap();
         run_us(e.as_mut(), 4_000);
         e.command(Command::Input(Input::UartWrite {
             port: 2,

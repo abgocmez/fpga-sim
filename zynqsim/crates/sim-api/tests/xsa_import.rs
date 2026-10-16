@@ -55,7 +55,11 @@ fn the_gpio_design_maps_the_user_ip_and_places_the_gpio_model_next_to_it() {
     );
     // Four output bits: guessed to be the board LEDs, and the report says it is a guess.
     assert_eq!(plan.project.connect["axi_gpio_0.GPIO"], "board.leds");
-    assert!(plan.warnings.iter().any(|w| w.contains("guess")), "{:?}", plan.warnings);
+    assert!(
+        plan.warnings.iter().any(|w| w.contains("guess")),
+        "{:?}",
+        plan.warnings
+    );
 
     // The generated project text round-trips and carries the maps.
     let p = Project::from_toml(&plan.project_toml).unwrap();

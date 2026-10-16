@@ -696,7 +696,12 @@ impl Project {
                     rtl,
                     board: self.board.name.clone(),
                     pl_name: if self.backends.pl == "xsim" {
-                        if self.native.is_empty() { "xsim" } else { "xsim+native" }.to_string()
+                        if self.native.is_empty() {
+                            "xsim"
+                        } else {
+                            "xsim+native"
+                        }
+                        .to_string()
                     } else if self.native.is_empty() {
                         "none".to_string()
                     } else {
