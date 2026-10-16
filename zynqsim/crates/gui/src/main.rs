@@ -28,6 +28,8 @@ Options for automated checks:
   --mem ADDR       open the memory viewer at ADDR as a 64x64 image
   --view3d         start on the 3D board view
   --wave NAME      open the Waveforms tab with this signal shown; repeatable
+  --waves-tab      open the Waveforms tab with the default signals
+  --trace-filter T set the trace strip's filter text to T
   --project-window open the project window
 ";
 
@@ -77,6 +79,8 @@ fn main() -> eframe::Result {
             "--uart" => uart_lines.push(value("--uart")),
             "--view3d" => opts.view_3d = true,
             "--wave" => opts.waves.push(value("--wave")),
+            "--waves-tab" => opts.waves_tab = true,
+            "--trace-filter" => opts.trace_text = value("--trace-filter"),
             "--project-window" => opts.project_window = true,
             "--mem" => {
                 let v = value("--mem");

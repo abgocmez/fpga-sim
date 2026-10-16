@@ -2,7 +2,7 @@
 
 use crate::loader::LoadJob;
 use sim_api::board::{BoardDef, BoardState};
-use sim_api::trace::TraceRecord;
+use sim_api::trace::{TraceEvent, TraceRecord};
 use sim_api::{
     ApiError, AudioSpec, Capability, Command, Event, Input, Project, Ps, Query, Response,
     SimClient, Status, VideoSpec,
@@ -13,8 +13,134 @@ use std::time::{Duration, Instant};
 
 /// Console history kept per UART, in characters.
 const CONSOLE_CAP: usize = 64 * 1024;
-/// Trace records shown in the trace panel.
-const TRACE_TAIL: usize = 40;
+/// Newest trace records kept for the trace strip (its filter works on these).
+const TRACE_TAIL: usize = 400;
+
+/// The kinds of trace line the trace strip can show or hide.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TraceKind {
+    /// UART bytes.
+    Uart,
+    /// Board inputs and signals (switches, buttons, LEDs, Pmod pins...).
+    Board,
+    /// PS/PL bus accesses.
+    Bus,
+    /// Other markers (reset, run boundaries, network frames...).
+    Marker,
+    /// Protocol-checker findings (`protocol check ...` markers, ADR-025).
+    Protocol,
+}
+
+/// The kind of a trace record.
+pub fn trace_kind(r: &TraceRecord) -> TraceKind {
+    match &r.event {
+        TraceEvent::Uart { .. } => TraceKind::Uart,
+        TraceEvent::Input { .. } | TraceEvent::Signal { .. } => TraceKind::Board,
+        TraceEvent::Bus { .. } => TraceKind::Bus,
+        TraceEvent::Marker { text } if text.starts_with("protocol check") => TraceKind::Protocol,
+        TraceEvent::Marker { .. } => TraceKind::Marker,
+    }
+}
+
+/// Which trace lines the strip shows: one switch per kind and a substring
+/// that the formatted line must contain (case-insensitive, no regex).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TraceFilter {
+    /// Show UART bytes.
+    pub uart: bool,
+    /// Show board inputs and signals.
+    pub board: bool,
+    /// Show bus accesses.
+    pub bus: bool,
+    /// Show other markers.
+    pub marker: bool,
+    /// Show protocol-checker findings.
+    pub protocol: bool,
+    /// The text to look for; empty matches every line.
+    pub text: String,
+}
+
+impl Default for TraceFilter {
+    fn default() -> Self {
+        TraceFilter {
+            uart: true,
+            board: true,
+            bus: true,
+            marker: true,
+            protocol: true,
+            text: String::new(),
+        }
+    }
+}
+
+impl TraceFilter {
+    /// Whether a line of `kind` with the text `line` is shown.
+    pub fn shows(&self, kind: TraceKind, line: &str) -> bool {
+        let on = match kind {
+            TraceKind::Uart => self.uart,
+            TraceKind::Board => self.board,
+            TraceKind::Bus => self.bus,
+            TraceKind::Marker => self.marker,
+            TraceKind::Protocol => self.protocol,
+        };
+        on && (self.text.is_empty()
+            || line
+                .to_lowercase()
+                .contains(&self.text.trim().to_lowercase()))
+    }
+}
+
+/// Indices of the `(kind, formatted line)` pairs that `filter` shows, in
+/// order.
+pub fn visible_lines(lines: &[(TraceKind, String)], filter: &TraceFilter) -> Vec<usize> {
+    lines
+        .iter()
+        .enumerate()
+        .filter(|(_, (k, l))| filter.shows(*k, l))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Auto-scroll of a log: it follows the newest line until the user scrolls
+/// up; "jump to latest" follows again.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TailFollow {
+    paused: bool,
+    total_at_pause: usize,
+}
+
+impl TailFollow {
+    /// Whether the log stopped following the newest line.
+    pub fn paused(&self) -> bool {
+        self.paused
+    }
+
+    /// Called each frame with whether the view shows the end of the log and
+    /// how many lines the log holds. Scrolling up pauses; reaching the end
+    /// again resumes.
+    pub fn observe(&mut self, at_bottom: bool, total: usize) {
+        if at_bottom {
+            self.paused = false;
+        } else if !self.paused {
+            self.paused = true;
+            self.total_at_pause = total;
+        }
+    }
+
+    /// The "jump to latest" button: follow the newest line again.
+    pub fn jump_to_latest(&mut self) {
+        self.paused = false;
+    }
+
+    /// Lines added since the pause began (0 when following).
+    pub fn new_since_pause(&self, total: usize) -> usize {
+        if self.paused {
+            total.saturating_sub(self.total_at_pause)
+        } else {
+            0
+        }
+    }
+}
 
 /// Playback speeds offered in the control bar: label and simulated
 /// picoseconds per wall-clock second.
@@ -936,5 +1062,113 @@ mod tests {
         m.reset();
         m.refresh();
         assert_eq!(m.status.seed, 42, "unparseable seed keeps the current one");
+    }
+
+    fn rec(event: TraceEvent) -> TraceRecord {
+        TraceRecord { t: Ps(0), event }
+    }
+
+    #[test]
+    fn trace_filter_shows_by_kind_and_substring() {
+        let lines = vec![
+            (TraceKind::Uart, "uart1 tx A".to_string()),
+            (TraceKind::Board, "input  switch 1 = on".to_string()),
+            (
+                TraceKind::Bus,
+                "bus    0 wr 0x43c00000 len 4 data 0x1".to_string(),
+            ),
+            (TraceKind::Marker, "mark   qemu start".to_string()),
+            (
+                TraceKind::Protocol,
+                "protocol check error at 4 ns: AXI4 master AW CROSS_4KB".to_string(),
+            ),
+        ];
+        let all = TraceFilter::default();
+        assert_eq!(visible_lines(&lines, &all), [0, 1, 2, 3, 4]);
+
+        // Type toggles hide one kind each.
+        let no_bus = TraceFilter {
+            bus: false,
+            ..TraceFilter::default()
+        };
+        assert_eq!(visible_lines(&lines, &no_bus), [0, 1, 3, 4]);
+        let only_protocol = TraceFilter {
+            uart: false,
+            board: false,
+            bus: false,
+            marker: false,
+            ..TraceFilter::default()
+        };
+        assert_eq!(visible_lines(&lines, &only_protocol), [4]);
+
+        // The substring is case-insensitive, is taken literally (no regex)
+        // and applies on top of the toggles.
+        let f = |text: &str| TraceFilter {
+            text: text.to_string(),
+            ..TraceFilter::default()
+        };
+        assert_eq!(visible_lines(&lines, &f("SWITCH")), [1]);
+        assert_eq!(visible_lines(&lines, &f("  ")), [0, 1, 2, 3, 4]);
+        assert_eq!(visible_lines(&lines, &f("0x43c0")), [2]);
+        assert_eq!(visible_lines(&lines, &f("a.*b")), Vec::<usize>::new());
+        assert_eq!(visible_lines(&lines, &f("protocol check")), [4]);
+        let both = TraceFilter {
+            board: false,
+            ..f("switch")
+        };
+        assert!(visible_lines(&lines, &both).is_empty());
+    }
+
+    #[test]
+    fn trace_kinds_follow_the_record_type() {
+        assert_eq!(
+            trace_kind(&rec(TraceEvent::Uart {
+                port: 1,
+                tx: true,
+                byte: b'x'
+            })),
+            TraceKind::Uart
+        );
+        assert_eq!(
+            trace_kind(&rec(TraceEvent::Input {
+                what: "switch 0 = on".into()
+            })),
+            TraceKind::Board
+        );
+        assert_eq!(
+            trace_kind(&rec(TraceEvent::Marker {
+                text: "protocol check warning at 2 ns: x".into()
+            })),
+            TraceKind::Protocol
+        );
+        assert_eq!(
+            trace_kind(&rec(TraceEvent::Marker {
+                text: "pl finished".into()
+            })),
+            TraceKind::Marker
+        );
+    }
+
+    #[test]
+    fn the_trace_strip_stops_following_when_the_user_scrolls_up() {
+        let mut t = TailFollow::default();
+        // Following: new lines keep it at the end.
+        t.observe(true, 10);
+        assert!(!t.paused());
+        // The user scrolls up: paused, and the new lines are counted.
+        t.observe(false, 12);
+        assert!(t.paused());
+        assert_eq!(t.new_since_pause(12), 0);
+        t.observe(false, 15);
+        assert!(t.paused(), "more lines do not resume it");
+        assert_eq!(t.new_since_pause(15), 3);
+        // Scrolling back to the end resumes.
+        t.observe(true, 15);
+        assert!(!t.paused());
+        assert_eq!(t.new_since_pause(20), 0);
+        // "Jump to latest" resumes at once.
+        t.observe(false, 20);
+        t.jump_to_latest();
+        assert!(!t.paused());
     }
 }
