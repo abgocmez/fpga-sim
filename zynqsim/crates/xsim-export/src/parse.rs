@@ -285,10 +285,15 @@ impl Acc<'_> {
             "ini" => self.ini(path),
             "sh" | "bat" | "cmd" => self.script(path, depth),
             "v" | "sv" | "vhd" | "vhdl" => {
-                return Err(format!(
-                    "{} is a source file, not a list: pass a folder, a .prj, a .f or an elab.opt",
-                    path.display()
-                ));
+                // One netlist or source file: compiled into the default library with the
+                // Xilinx simulation libraries searched (a funcsim netlist instantiates UNISIM
+                // primitives).
+                let lang = Lang::from_path(path).unwrap_or(Lang::Verilog);
+                self.source(path, 0, Path::new(""), &path.display().to_string(), lang, "xil_defaultlib", &[], &[]);
+                self.mark_seen(path);
+                for l in ["unisims_ver", "unimacro_ver", "secureip"] {
+                    self.link_lib(l, Path::new(""));
+                }
             }
             _ if name == "xsim.ini" => self.ini(path),
             _ => {

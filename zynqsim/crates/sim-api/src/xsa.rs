@@ -492,6 +492,7 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
                 top: Some("cosim_top".to_string()),
                 defines: Vec::new(),
                 waves: false,
+                ..RtlSection::default()
             })
         }
         None => None,

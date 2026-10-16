@@ -93,12 +93,19 @@ pub struct CpuSection {
 }
 
 /// `[rtl]` section.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RtlSection {
-    /// Source file patterns, relative to the project file.
+    /// Source file patterns (`*`, `?`, `[a-z]`, `**`), relative to the project file.
     #[serde(default)]
     pub files: Vec<String>,
+    /// A Vivado `export_simulation` folder (or its `.prj`): its sources, include directories,
+    /// defines, libraries (`-L unisims_ver`) and `glbl` are compiled before `files`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub export_dir: Option<String>,
+    /// A `.prj` or `.f` file list instead of a whole export folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filelist: Option<String>,
     /// Top module name.
     #[serde(default)]
     pub top: Option<String>,
@@ -572,13 +579,18 @@ impl Project {
                         ApiError::not_found("the XSim DPI library (libxsim_dpi.a) was not found")
                             .with_hint("build it with `cargo xtask dpi`, or set ZYNQSIM_DPI_LIB")
                     })?;
+                    let resolved = crate::exportsim::resolve_rtl(r, base);
+                    if let Some(e) = resolved.first_error() {
+                        return Err(ApiError::invalid_argument(e));
+                    }
                     Some(crate::RtlSpec {
                         vivado_root,
-                        sources: r.files.iter().map(|f| resolve(base, f)).collect(),
-                        top: r.top.clone().unwrap_or_default(),
+                        sources: resolved.files,
+                        top: resolved.top.unwrap_or_default(),
                         defines: r.defines.clone(),
                         dpi_lib,
                         waves: r.waves,
+                        export: resolved.export,
                     })
                 } else {
                     None
@@ -736,21 +748,17 @@ impl Project {
         }
         if self.backends.pl == "xsim" {
             match &self.rtl {
-                Some(r) if !r.files.is_empty() && r.top.is_some() => {
-                    for f in &r.files {
-                        if f.contains('*') {
-                            d.push(err(
-                                "rtl.files",
-                                format!("`{f}`: globs are not supported yet; list the files"),
-                            ));
-                        } else if !resolve(base, f).is_file() {
-                            d.push(err("rtl.files", format!("file `{f}` does not exist")));
-                        }
-                    }
+                Some(r)
+                    if (!r.files.is_empty() && r.top.is_some())
+                        || r.export_dir.is_some()
+                        || r.filelist.is_some() =>
+                {
+                    d.extend(crate::exportsim::resolve_rtl(r, base).diagnostics);
                 }
                 _ => d.push(err(
                     "rtl",
-                    "backends.pl = \"xsim\" needs [rtl] with `files` and `top`",
+                    "backends.pl = \"xsim\" needs [rtl] with `files` and `top`, or an \
+                     `export_dir` / `filelist`",
                 )),
             }
             if self.backends.ps == "demo" {
@@ -872,7 +880,11 @@ impl Project {
         }
 
         if let Some(rtl) = &self.rtl {
-            if !rtl.files.is_empty() && rtl.top.is_none() {
+            if !rtl.files.is_empty()
+                && rtl.top.is_none()
+                && rtl.export_dir.is_none()
+                && rtl.filelist.is_none()
+            {
                 d.push(err("rtl.top", "is required when rtl.files is set"));
             }
             if self.backends.pl == "demo" && !rtl.files.is_empty() {

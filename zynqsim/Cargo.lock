@@ -3048,6 +3048,7 @@ dependencies = [
  "toml",
  "trace",
  "xsa-import",
+ "xsim-export",
  "yaxpeax-arch",
  "yaxpeax-arm",
 ]

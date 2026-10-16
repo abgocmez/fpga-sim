@@ -285,6 +285,15 @@ fn nonsense_inputs_are_explained() {
     let t = Tmp::new("bad");
     assert!(no_env().read(&t.0.join("nope.prj")).unwrap_err().contains("does not exist"));
     assert!(no_env().read(&t.0).unwrap_err().contains("export_simulation"));
-    let v = t.file("x.v", "");
-    assert!(no_env().read(&v).unwrap_err().contains("source file"));
+}
+
+#[test]
+fn a_single_netlist_file_is_a_one_file_export_with_the_unisim_libraries() {
+    let t = Tmp::new("one");
+    let v = t.file("net.v", "module m; endmodule\n");
+    let d = no_env().read(&v).unwrap();
+    assert_eq!(names(&d), ["net.v"]);
+    assert_eq!(d.sources[0].library, "xil_defaultlib");
+    assert_eq!(d.link_libs, ["unisims_ver", "unimacro_ver", "secureip"]);
+    assert!(!d.has_errors());
 }

@@ -180,7 +180,7 @@ pub(crate) fn is_absolute(p: &str) -> bool {
 /// uses forward slashes, which every consumer here (xvlog, cmd, Rust on Windows) accepts.
 pub(crate) fn resolve(base: &Path, p: &str) -> PathBuf {
     let p = p.replace('\\', "/");
-    let joined = if is_absolute(&p) {
+    let joined = if is_absolute(&p) || base.as_os_str().is_empty() {
         p
     } else {
         format!("{}/{}", base.display().to_string().replace('\\', "/"), p)

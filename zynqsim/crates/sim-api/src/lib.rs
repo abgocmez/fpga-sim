@@ -10,6 +10,8 @@
 mod bytelog;
 mod disasm;
 mod duration;
+pub mod exportinit;
+pub mod exportsim;
 mod elf;
 mod engine;
 mod error;

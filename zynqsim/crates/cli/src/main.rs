@@ -118,6 +118,12 @@ enum Cmd {
         /// repeat for further files.
         #[arg(long = "rtl")]
         rtl: Vec<PathBuf>,
+        /// Create the project from a Vivado simulation export (`export_simulation` folder,
+        /// or one `.prj`/`.f` list): its sources, libraries (`-L unisims_ver`) and `glbl`
+        /// are compiled by XSim; a testbench is generated for the AXI4-Lite slave in it
+        /// unless it brings its own. Use `--out DIR` for the project directory.
+        #[arg(long = "export-sim")]
+        export_sim: Option<PathBuf>,
         /// With --xsa: a Vivado file list (`.prj` from export_simulation, or `.f`)
         /// whose Verilog/SystemVerilog files are added to the RTL. On its own it is
         /// not available yet.
@@ -301,6 +307,7 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
         Cmd::Init {
             dir,
             xsa,
+            export_sim,
             out,
             rtl,
             filelist,
@@ -309,20 +316,19 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
             elf,
             elf1,
             base,
-        } => cmd_init(
-            json,
-            &out.unwrap_or(dir),
-            xsa,
-            rtl,
-            filelist,
-            InitIp {
+        } => {
+            let ip = InitIp {
                 ip,
                 module,
                 elf,
                 elf1,
                 base,
-            },
-        ),
+            };
+            match export_sim {
+                Some(x) => init_from_export(json, &out.unwrap_or(dir), &x, ip),
+                None => cmd_init(json, &out.unwrap_or(dir), xsa, rtl, filelist, ip),
+            }
+        }
         Cmd::Inspect { project } => cmd_inspect(json, project.as_deref()),
         Cmd::Trace {
             recording,
@@ -1134,6 +1140,94 @@ fn init_from_ip(json: bool, dir: &Path, o: InitIp) -> Result<u8, Failure> {
             "run       : zynqsim run --project {} --for 20ms",
             file.display()
         );
+    }
+    Ok(0)
+}
+
+/// `init --export-sim`: a project from a Vivado simulation export.
+fn init_from_export(json: bool, dir: &Path, export: &Path, o: InitIp) -> Result<u8, Failure> {
+    use sim_api::exportinit::{InitOptions, plan_init};
+    if !o.ip.is_empty() {
+        return Err(fail(2, "--ip cannot be combined with --export-sim"));
+    }
+    let base = match o.base.as_deref() {
+        Some(b) => Some(parse_addr(b)?),
+        None => None,
+    };
+    let plan = plan_init(
+        export,
+        dir,
+        &InitOptions {
+            elf: o.elf,
+            elf1: o.elf1,
+            module: o.module,
+            base,
+        },
+    )
+    .map_err(|e| fail(2, e.message))?;
+    let created = plan.write(dir).map_err(|e| fail(2, e.message))?;
+    let file = dir.join("project.toml");
+    let diagnostics = Project::load(&file)
+        .map(|p| p.validate(dir))
+        .map_err(|e| fail(2, e.message))?;
+    let errors = diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .count();
+    if json {
+        println!(
+            "{}",
+            json!({
+                "created": created.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+                "project": file.display().to_string(),
+                "top": plan.top,
+                "driven_module": plan.driven_module,
+                "sources": plan.design.sources.len(),
+                "libraries": plan.design.link_libs,
+                "warnings": plan.warnings,
+                "diagnostics": diagnostics,
+                "runnable": errors == 0,
+            })
+        );
+    } else {
+        println!(
+            "export    : {} source file(s), libraries {}",
+            plan.design.sources.len(),
+            if plan.design.link_libs.is_empty() {
+                "none".to_string()
+            } else {
+                plan.design.link_libs.join(", ")
+            }
+        );
+        match &plan.driven_module {
+            Some(m) => println!("testbench : generated for module `{m}`"),
+            None => println!("testbench : the export's own, top `{}`", plan.top),
+        }
+        for w in &plan.warnings {
+            println!("note      : {w}");
+        }
+        for c in &created {
+            println!("created   : {}", c.display());
+        }
+        for dg in &diagnostics {
+            println!(
+                "{:9} : {}: {}",
+                match dg.severity {
+                    Severity::Error => "error",
+                    Severity::Warning => "warning",
+                },
+                dg.field,
+                dg.message
+            );
+        }
+        if errors == 0 {
+            println!(
+                "run       : zynqsim run --project {} --for 20ms",
+                file.display()
+            );
+        } else {
+            println!("status    : NOT RUNNABLE until the {errors} error(s) above are resolved");
+        }
     }
     Ok(0)
 }
