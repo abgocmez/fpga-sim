@@ -1071,7 +1071,7 @@ impl Project {
             {
                 let source = key.split_once('.').map(|(i, _)| i).unwrap_or("");
                 let field = format!("connect.\"{key}\"");
-                if self.native.get(source).is_none() {
+                if !self.native.contains_key(source) {
                     d.push(err(
                         &field,
                         format!(

@@ -121,7 +121,7 @@ pub extern "C" fn main() -> ! {
     write32(MER, 3);
     write32(GPIO_IER, 1);
     write32(GPIO_GIER, 0x8000_0000);
-    write32(SIE, 1 << 1);
+    write32(SIE, 0b11); // inputs 0 (GPIO) and 1 (timer)
     println!("ier={:#x} mer={:#x}", read32(IER), read32(MER));
 
     // Timer: 5000 clocks (50 us at 100 MHz), periodic, down counter.

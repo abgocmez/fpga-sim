@@ -77,6 +77,17 @@ LEDs, button press taking the GPIO interrupt, echo of host bytes sent to UART po
 the example project and once from the real Vivado XSA through `init --xsa`; a mixed design with
 user RTL in XSim next to the GPIO model (`firmware/vendor_mix`).
 
+ADR-021 adds the AXI DMA (`cargo test -p vendor-ip dma::`: 13 unit tests, direct and
+scatter-gather, loopback, interrupts, errors), AXI IIC (7: dynamic mode, repeated start, NACK,
+FIFO, interrupts), AXI BRAM Controller (3) and AXI Interrupt Controller (8). End to end through
+QEMU, `sim-api` `vendor_ip2` (6): the DMA copy and its interrupts, the scatter-gather packet
+(`examples/dma-sg`, `firmware/dma_sg`), DMA determinism, the INTC serving the timer and GPIO on
+one line (`examples/intc-demo`, `firmware/intc_demo`), the IIC reading the TMP2 model and BRAM
+data (`examples/iic-bram-demo`, `firmware/iic_bram_demo`), and a host-set sensor value read back
+by the IIC master. Import: `xsa-import` `ip2` (5) against the Vivado fixtures, including passive
+IP. The XSA-driven runs are in `zynqsim` `xsa` and `zynqsim-mcp` `xsa`/`vendor_ip`. Needs the
+Xilinx QEMU for the `sim-api` and `xsa` runs, nothing for the unit and import tests.
+
 What the tests cannot show: that the models match the real IP. No Xilinx simulation model or
 board was available to compare against; the `VERIFY:` items in STATUS.md are the open questions.
 

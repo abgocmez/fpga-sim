@@ -140,9 +140,9 @@ impl RegisterBlock for AxiBramCtrl {
             return;
         }
         let b = value.to_le_bytes();
-        for lane in 0..4 {
+        for (lane, byte) in b.iter().enumerate() {
             if strobe & (1 << lane) != 0 {
-                s.mem[a + lane] = b[lane];
+                s.mem[a + lane] = *byte;
             }
         }
     }

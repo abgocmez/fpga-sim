@@ -156,8 +156,8 @@ zynqsim run --project mydesign/project.toml --for 20ms
 Reads the XSA (or a bare `.hwh`): PS7 clocks and ports, every PL IP with its VLNV, the address
 map, interrupts and clocks. The user's AXI4-Lite RTL becomes `[rtl]` with a generated testbench;
 `xsa-report.md` lists what was found, mapped and **not supported**. IP that has no model yet (AXI
-GPIO, Timer and UART Lite run as `vendor-ip` models, see below; any other Xilinx IP, DMA for
-example) is recorded in `[xsa.unmodelled]` and makes `run` stop with a diagnostic naming it: the
+GPIO, Timer, UART Lite, DMA, IIC, BRAM controller and interrupt controller run as `vendor-ip`
+models, see below; any other Xilinx IP, VDMA for example) is recorded in `[xsa.unmodelled]` and makes `run` stop with a diagnostic naming it: the
 project is generated, the design is not claimed to run. MCP: `project_create_from_xsa`. Details
 and limits: [docs/adr/015-xsa-import.md](docs/adr/015-xsa-import.md).
 
@@ -176,6 +176,19 @@ onto the LEDs; the design is the real Vivado XSA `fixtures/xsa/zs_vendor_ip.xsa`
 `[connect] "axi_gpio_0.GPIO" = "board.leds"` (`board.sw`, `board.btn`, `board.pmod_ja`..).
 The register maps are written from the product guides from memory and are not verified against
 hardware: see the `VERIFY:` items in [docs/STATUS.md](docs/STATUS.md).
+
+The same models now also cover the AXI DMA (direct and scatter-gather mode, loopback on the
+stream), the AXI IIC (master on a Pmod port, so the device models answer), the AXI BRAM
+Controller and the AXI Interrupt Controller (ADR-021). Examples:
+
+```
+zynqsim run --project examples/dma-loopback/project.toml --for 4ms   # direct mode, Vivado XSA
+zynqsim run --project examples/dma-sg/project.toml --for 3ms         # scatter-gather, hand-written
+zynqsim run --project examples/iic-bram-demo/project.toml --for 8ms  # IIC reads a TMP2, BRAM
+zynqsim run --project examples/intc-demo/project.toml --for 3ms      # INTC collects timer and GPIO
+```
+
+The scatter-gather DMA has no Vivado handoff; its limits are in ADR-021 and STATUS.md.
 
 ### From a BOOT.BIN
 
@@ -263,8 +276,8 @@ what the board receives.
 | `crates/` | `sim-core`, `trace`, `board-zybo`, `devices`, `sim-api`, `mcp`, `cli`, `gui`, `xtask`, `interop`, `pl-api`, `pl-native`, `backend-qemu`, `backend-rtl-xsim`, `xsim-dpi` |
 | `boards/` | board descriptions (TOML) |
 | `docs/` | `DESIGN.md`, `STATUS.md`, `TESTPLAN.md`, `adr/` |
-| `examples/` | `demo`, `math-qemu`, `math-debug`, `dma-regression`, `board-demo`, `audio-demo`, `hdmi-demo`, `irq-demo`, `oled-demo`, `rgb-demo`, `rust-hello`, `rust-debug`, `net-demo`, `sd-demo`, `qspi-demo` projects |
-| `firmware/` | Rust `no_std` Cortex-A9 firmware (`hello`, `audio_demo`, `hdmi_demo`, `irq_demo`, `oled_demo`, `rgb_demo`, `net_demo`, `sd_demo`, `qspi_demo`); its own workspace, built by `cargo xtask firmware` |
+| `examples/` | `demo`, `math-qemu`, `math-debug`, `dma-regression`, `board-demo`, `audio-demo`, `hdmi-demo`, `irq-demo`, `oled-demo`, `rgb-demo`, `rust-hello`, `rust-debug`, `net-demo`, `sd-demo`, `qspi-demo`, `gpio-timer-uart`, `dma-loopback`, `dma-sg`, `iic-bram-demo`, `intc-demo` projects |
+| `firmware/` | Rust `no_std` Cortex-A9 firmware (`hello`, `audio_demo`, `hdmi_demo`, `irq_demo`, `oled_demo`, `rgb_demo`, `net_demo`, `sd_demo`, `qspi_demo`, `gpio_timer_uart`, `dma_loopback`, `dma_sg`, `iic_bram_demo`, `intc_demo`, `vendor_mix`); its own workspace, built by `cargo xtask firmware` |
 | `fixtures/` | prototype firmware ELFs, the prebuilt Rust ELFs (`rust_*.elf`) and the RTL used by the examples and tests |
 
 Requirements: [../docs/RUST_SOC_SIM_PROMPT.md](../docs/RUST_SOC_SIM_PROMPT.md).

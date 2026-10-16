@@ -155,6 +155,7 @@ const FIRMWARE: &[(&str, &str)] = &[
     ("dma_loopback", "rust_dma_loopback.elf"),
     ("intc_demo", "rust_intc_demo.elf"),
     ("iic_bram_demo", "rust_iic_bram.elf"),
+    ("dma_sg", "rust_dma_sg.elf"),
 ];
 
 /// Builds `firmware/` (its own workspace) and copies the ELFs into `fixtures/elf`.

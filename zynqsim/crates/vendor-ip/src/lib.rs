@@ -247,7 +247,7 @@ struct PmodBus {
 
 impl I2cBus for PmodBus {
     fn drive(&mut self, t_ns: u64, scl: bool, sda: bool) -> bool {
-        let mut levels = 0xFFu8 & !(1 << self.scl_bit) & !(1 << self.sda_bit);
+        let mut levels = !(1u8 << self.scl_bit) & !(1u8 << self.sda_bit);
         levels |= u8::from(scl) << self.scl_bit | u8::from(sda) << self.sda_bit;
         if self.last != Some(levels) {
             self.last = Some(levels);
