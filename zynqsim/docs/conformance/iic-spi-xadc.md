@@ -16,7 +16,7 @@ that the model matches a board.
 | Block | Address | Features checked | PASS / N/A / FAIL | PS model | Evidence (test) |
 |---|---|---|---|---|---|
 | xiicps: I2C0, I2C1 | 0xE0004000, 0xE0005000 | reset values, CONTROL (MS, NEA, ACKEN, HOLD), ADDR, TRANS_SIZE, Slave_mon_pause, Time_out, IER/IDR/IMR, ISR write-1-to-clear, master write and read to an address with no device (NACK), I2C1 independence | 19 / 3 / 0 | **partly modelled** | `conformance_iic_spi_xadc::iic_spi_xadc_firmware_passes_with_the_listed_na_checks` |
-| xspips: SPI0, SPI1 | 0xE0006000, 0xE0007000 | reset values, Config (master, CPHA, baud, manual start, SS force, CS), Enable, Delay, TX/RX thresholds, Slave_Idle_count, IER/IDR, TX FIFO fill and TX_FIFO_not_full/full status, manual-start transfer and RX FIFO, loopback | 0 / 27 / 0 | **not modelled** | same test |
+| xspips: SPI0, SPI1 | 0xE0006000, 0xE0007000 | reset values, Config (master, CPHA, baud, manual start, SS force, CS), Enable, Delay, TX/RX thresholds, Slave_Idle_count, IER/IDR, TX FIFO fill and TX_FIFO_not_full/full status, manual-start transfer and RX FIFO, loopback | 0 / 27 / 0 by default. With `[ps] extra_blocks = true`: 20 PASS, 4 N/A, 3 FAIL (ADR-024) | **not modelled** by default; mapped to the Xilinx SPI model (`cdns,spi-r1p6`) with the option | same test; opt-in: `conformance_ps_blocks::spi_mapped_model_passes_most_checks_and_fails_three` (FAIL: checks 11, 19, 20) |
 | xadcps: XADC interface | 0xF8007100 | reset values, CFG, INT_MASK, MCTL, INT_STS, CMDFIFO/RDFIFO temperature and VCCINT, DRP write then read at 0x40 | 4 / 9 / 0 | **partly modelled** | same test |
 
 Every check in the tables below is either PASS (the documented behaviour, as remembered, is observed)

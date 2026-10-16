@@ -219,6 +219,166 @@ fn push_prop(out: &mut Vec<u8>, name_off: usize, value: &[u8]) {
     out.resize(out.len() + (pad4(value.len()) - value.len()), 0);
 }
 
+/// One property rewrite for [`patch_ps_blocks`]: the value of `prop` on the
+/// node whose unit name is `node` (for example `spi@e0006000`) becomes `value`.
+pub struct PropEdit {
+    /// Unit name of the node, for example `spi@e0006000`.
+    pub node: &'static str,
+    /// Property to replace on that node.
+    pub prop: &'static str,
+    /// New string value (a NUL is appended).
+    pub value: &'static str,
+}
+
+/// The PS blocks of the co-sim tree that this QEMU build does not instantiate
+/// under the names the tree gives them (see docs/adr/024-ps-blocks.md). Each
+/// entry replaces a `compatible` (the string QEMU's FDT table recognises) or a
+/// `status` of a node that is already in the tree.
+pub const PS_BLOCK_EDITS: &[PropEdit] = &[
+    PropEdit {
+        node: "gpio@e000a000",
+        prop: "compatible",
+        value: "xlnx,zynqmp-gpio",
+    },
+    PropEdit {
+        node: "spi@e0006000",
+        prop: "compatible",
+        value: "cdns,spi-r1p6",
+    },
+    PropEdit {
+        node: "spi@e0006000",
+        prop: "status",
+        value: "okay",
+    },
+    PropEdit {
+        node: "spi@e0007000",
+        prop: "compatible",
+        value: "cdns,spi-r1p6",
+    },
+    PropEdit {
+        node: "spi@e0007000",
+        prop: "status",
+        value: "okay",
+    },
+    PropEdit {
+        node: "devcfg@f8007000",
+        prop: "compatible",
+        value: "xlnx,ps7-dev-cfg",
+    },
+];
+
+/// Applies [`PS_BLOCK_EDITS`]. Returns the new blob and the number of edits that
+/// found their node and property (the tree is unchanged when that is zero).
+pub fn patch_ps_blocks(dtb: &[u8]) -> Result<(Vec<u8>, usize), DtbError> {
+    let mut applied = vec![false; PS_BLOCK_EDITS.len()];
+    let out = edit_structure(dtb, |stack, pname, value| {
+        let node = stack.last()?;
+        let i = PS_BLOCK_EDITS
+            .iter()
+            .position(|e| e.node == node.as_str() && e.prop.as_bytes() == pname)?;
+        let mut v = PS_BLOCK_EDITS[i].value.as_bytes().to_vec();
+        v.push(0);
+        if v == value {
+            return None;
+        }
+        applied[i] = true;
+        Some(v)
+    })?;
+    Ok((out, applied.iter().filter(|a| **a).count()))
+}
+
+/// Rewrites the properties for which `edit` returns a new value, copying every
+/// other token through. `edit` gets the stack of node names, the property name
+/// and its value. Only the structure block changes; the header is fixed up.
+fn edit_structure(
+    dtb: &[u8],
+    mut edit: impl FnMut(&[String], &[u8], &[u8]) -> Option<Vec<u8>>,
+) -> Result<Vec<u8>, DtbError> {
+    if dtb.len() < HEADER_LEN || be32(dtb, 0)? != MAGIC {
+        return Err(DtbError::Malformed("bad magic"));
+    }
+    let total = be32(dtb, 4)? as usize;
+    let off_struct = be32(dtb, 8)? as usize;
+    let off_strings = be32(dtb, 12)? as usize;
+    let size_strings = be32(dtb, 32)? as usize;
+    let size_struct = be32(dtb, 36)? as usize;
+    if total > dtb.len() || off_struct + size_struct > total || off_strings + size_strings > total {
+        return Err(DtbError::Malformed("section outside the blob"));
+    }
+    let st = &dtb[off_struct..off_struct + size_struct];
+    let strings = &dtb[off_strings..off_strings + size_strings];
+    let mut out: Vec<u8> = Vec::with_capacity(st.len() + 64);
+    let mut stack: Vec<String> = Vec::new();
+    let mut pos = 0usize;
+    loop {
+        match be32(st, pos)? {
+            BEGIN_NODE => {
+                let rest = st
+                    .get(pos + 4..)
+                    .ok_or(DtbError::Malformed("truncated node"))?;
+                let nul = rest
+                    .iter()
+                    .position(|&b| b == 0)
+                    .ok_or(DtbError::Malformed("unterminated node name"))?;
+                let n = 4 + pad4(nul + 1);
+                out.extend_from_slice(&st[pos..pos + n]);
+                stack.push(String::from_utf8_lossy(&rest[..nul]).into_owned());
+                pos += n;
+            }
+            END_NODE => {
+                stack.pop();
+                out.extend_from_slice(&st[pos..pos + 4]);
+                pos += 4;
+            }
+            PROP => {
+                let len = be32(st, pos + 4)? as usize;
+                let name_off = be32(st, pos + 8)? as usize;
+                let value = st
+                    .get(pos + 12..pos + 12 + len)
+                    .ok_or(DtbError::Malformed("truncated property"))?;
+                let n = 12 + pad4(len);
+                let pname = strings
+                    .get(name_off..)
+                    .and_then(|s| s.iter().position(|&b| b == 0).map(|e| &s[..e]))
+                    .ok_or(DtbError::Malformed("property name outside strings"))?;
+                match edit(&stack, pname, value) {
+                    Some(v) => push_prop(&mut out, name_off, &v),
+                    None => out.extend_from_slice(&st[pos..pos + n]),
+                }
+                pos += n;
+            }
+            NOP => {
+                out.extend_from_slice(&st[pos..pos + 4]);
+                pos += 4;
+            }
+            END => {
+                out.extend_from_slice(&st[pos..pos + 4]);
+                break;
+            }
+            _ => return Err(DtbError::Malformed("unknown structure token")),
+        }
+    }
+    let old_end = off_struct + size_struct;
+    let mut res = Vec::with_capacity(dtb.len() + 64);
+    res.extend_from_slice(&dtb[..off_struct]);
+    res.extend_from_slice(&out);
+    res.extend_from_slice(&dtb[old_end..]);
+    let delta = out.len() as i64 - size_struct as i64;
+    let shift = |off: usize| -> u32 {
+        if off >= old_end {
+            (off as i64 + delta) as u32
+        } else {
+            off as u32
+        }
+    };
+    let new_total = (total as i64 + delta) as u32;
+    res[4..8].copy_from_slice(&new_total.to_be_bytes());
+    res[12..16].copy_from_slice(&shift(off_strings).to_be_bytes());
+    res[36..40].copy_from_slice(&(out.len() as u32).to_be_bytes());
+    res.truncate(new_total as usize);
+    Ok(res)
+}
+
 /// True when the QSPI node already has the linear window in its `reg`.
 fn has_window(dtb: &[u8]) -> Result<bool, DtbError> {
     Ok(property(dtb, &[QSPI_NODE], "reg")?
@@ -459,5 +619,41 @@ mod tests {
             property(&p.dtb, &["amba", "sdhci@e0100000"], "reg").unwrap()
         );
         assert!(sd.is_some());
+    }
+
+    /// The PS block edits land on the real tree, and nothing else moves.
+    #[test]
+    fn the_ps_block_edits_are_applied_to_the_real_cosim_tree() {
+        let path = r"C:\Xilinx\Vitis\2022.1\data\emulation\dtbs\zynq\zynq-arm-cosim.dtb";
+        if !std::path::Path::new(path).is_file() {
+            eprintln!("SKIPPED: the Xilinx co-simulation device tree is not installed");
+            return;
+        }
+        let src = std::fs::read(path).unwrap();
+        let (out, n) = patch_ps_blocks(&src).unwrap();
+        assert_eq!(n, PS_BLOCK_EDITS.len(), "every edit finds its node");
+        let compat = |unit: &str| {
+            property(&out, &["amba", unit], "compatible")
+                .unwrap()
+                .unwrap()
+        };
+        assert_eq!(compat("gpio@e000a000"), b"xlnx,zynqmp-gpio\0");
+        assert_eq!(compat("spi@e0006000"), b"cdns,spi-r1p6\0");
+        assert_eq!(compat("spi@e0007000"), b"cdns,spi-r1p6\0");
+        assert_eq!(
+            property(&out, &["amba", "spi@e0006000"], "status")
+                .unwrap()
+                .unwrap(),
+            b"okay\0"
+        );
+        // An untouched node is byte-identical.
+        assert_eq!(
+            property(&src, &["amba", "serial@e0001000"], "compatible").unwrap(),
+            property(&out, &["amba", "serial@e0001000"], "compatible").unwrap()
+        );
+        assert_eq!(be32(&out, 4).unwrap() as usize, out.len());
+        // Applying the edits to an already patched tree changes nothing.
+        let (again, _) = patch_ps_blocks(&out).unwrap();
+        assert_eq!(again, out);
     }
 }

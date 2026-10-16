@@ -193,6 +193,8 @@ pub struct QemuSpec {
     pub net: Option<backend_qemu::net::NetConfig>,
     /// SD card and QSPI flash.
     pub storage: StorageSpec,
+    /// Map the PS GPIO, SPI and devcfg blocks (`[ps] extra_blocks`).
+    pub ps_extra_blocks: bool,
 }
 
 struct BusEvent {
@@ -848,6 +850,7 @@ impl QemuEngine {
         cfg.uart = spec.uart;
         cfg.debug = spec.debug;
         cfg.net = spec.net.clone();
+        cfg.ps_extra_blocks = spec.ps_extra_blocks;
         let storage = Self::attach_storage(spec, &mut cfg)?;
         let mut machine = QemuMachine::spawn(&cfg).map_err(map_err)?;
         let mut pl = TracedPl {

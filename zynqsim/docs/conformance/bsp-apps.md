@@ -71,7 +71,12 @@ XADC window (`0xF8007100`, 32 bytes), SCU, GIC (CPU and distributor), global tim
 and a write is dropped, with no abort. Consequences, all seen in the table: `xgpiops` reads back 0
 after writing 1; `xspips` and `xcanps` self tests read back 0; `XDcfg_SelfTest` sets CTRL.NIDEN and
 reads back 0; the SCU watchdog never expires, so `xscuwdt_*` spin forever; the BSP's L2 cache
-enable writes into nothing (harmless, but the L2 is unmodelled). Gate: `bsp_apps.rs`
+enable writes into nothing (harmless, but the L2 is unmodelled). **Update (2026-10-16, ADR-024):** with
+`[ps] extra_blocks = true` the GPIO and SPI0/1 blocks are mapped to QEMU's ZynqMP-GPIO and Xilinx SPI models
+(tree compatible strings renamed). The Xilinx SPI selftest then passes (default: fails); the GPIO and SPI
+conformance firmware show FAILs of the mapped models (`conformance_ps_blocks`). devcfg stays unmapped under
+the guessed name `xlnx,ps7-dev-cfg`. The default configuration, and so every row of the table above, is
+unchanged. Gate: `bsp_apps.rs`
 `DEVIATIONS`.
 
 **D2. XADC returns zeros.** `xadcps_polled_printf_example` prints "Current Temperature is

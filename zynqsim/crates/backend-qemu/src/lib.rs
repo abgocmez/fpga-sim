@@ -147,6 +147,9 @@ pub struct QemuConfig {
     pub net: Option<net::NetConfig>,
     /// SD card and QSPI flash images.
     pub storage: StorageConfig,
+    /// Map the PS GPIO, SPI and devcfg blocks by editing the tree
+    /// (`dtb::patch_ps_blocks`, ADR-024). Off: the tree is used as shipped.
+    pub ps_extra_blocks: bool,
 }
 
 impl QemuConfig {
@@ -165,6 +168,7 @@ impl QemuConfig {
             debug: false,
             net: None,
             storage: StorageConfig::default(),
+            ps_extra_blocks: false,
         }
     }
 
@@ -388,13 +392,25 @@ impl QemuMachine {
 
         // With a flash image attached the tree is adapted (linear window,
         // flash part), see `dtb`. The patched copy lives in the run directory.
-        let dtb_path = if cfg.storage.qspi_image.is_some() {
+        // The PS blocks the tree names but this build does not map can be
+        // renamed first (`dtb::patch_ps_blocks`, ADR-024; opt-in).
+        let dtb_path = if cfg.storage.qspi_image.is_some() || cfg.ps_extra_blocks {
             let src = std::fs::read(&cfg.dtb).map_err(QemuError::Io)?;
-            let compat = cfg.storage.qspi_model.as_deref().map(flash_compatible);
-            let patched = dtb::patch_qspi(&src, compat.as_deref())
-                .map_err(|e| QemuError::Io(std::io::Error::other(e.to_string())))?;
-            let p = cfg.work_dir.join("zynq-cosim-qspi.dtb");
-            std::fs::write(&p, &patched.dtb).map_err(QemuError::Io)?;
+            let to_io = |e: dtb::DtbError| QemuError::Io(std::io::Error::other(e.to_string()));
+            let ps = if cfg.ps_extra_blocks {
+                dtb::patch_ps_blocks(&src).map_err(to_io)?.0
+            } else {
+                src.clone()
+            };
+            let out = match &cfg.storage.qspi_image {
+                Some(_) => {
+                    let compat = cfg.storage.qspi_model.as_deref().map(flash_compatible);
+                    dtb::patch_qspi(&ps, compat.as_deref()).map_err(to_io)?.dtb
+                }
+                None => ps,
+            };
+            let p = cfg.work_dir.join("zynq-cosim-patched.dtb");
+            std::fs::write(&p, &out).map_err(QemuError::Io)?;
             p
         } else {
             cfg.dtb.clone()

@@ -400,6 +400,22 @@ pub struct Project {
     /// microSD card and QSPI flash.
     #[serde(default)]
     pub storage: Option<StorageSection>,
+    /// PS blocks the co-sim tree names but this QEMU build does not map (GPIO,
+    /// SPI, devcfg), see `[ps]`.
+    #[serde(default)]
+    pub ps: Option<PsSection>,
+}
+
+/// `[ps]`: PS peripheral options of the QEMU backend.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PsSection {
+    /// Map the PS GPIO, SPI0/1 and devcfg blocks by renaming their compatible
+    /// strings in the device tree (`dtb::patch_ps_blocks`, ADR-024). Off by
+    /// default: the mapped models fail some checks of the conformance firmware
+    /// (see docs/conformance/gpio-timer.md and iic-spi-xadc.md).
+    #[serde(default)]
+    pub extra_blocks: bool,
 }
 
 /// One IP parameter value in `[native_params.<instance>]`: a number, a boolean or text.
@@ -837,6 +853,7 @@ impl Project {
                         _ => None,
                     },
                     storage: self.storage_spec(base)?,
+                    ps_extra_blocks: self.ps.as_ref().is_some_and(|p| p.extra_blocks),
                 };
                 let mut engine = crate::QemuEngine::new(&spec)?;
                 if let Some(m) = &self.media {

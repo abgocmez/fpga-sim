@@ -1127,6 +1127,7 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
         debug: None,
         network: None,
         storage: None,
+        ps: None,
     };
     let body = project.to_toml()?;
     let project_toml = format!(
