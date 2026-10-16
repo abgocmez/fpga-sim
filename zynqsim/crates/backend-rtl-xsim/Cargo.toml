@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 interop = { path = "../interop" }
 pl-api = { path = "../pl-api" }
+xsim-export = { path = "../xsim-export" }
 
 [dev-dependencies]
 backend-qemu = { path = "../backend-qemu" }

@@ -21,6 +21,10 @@
 //! Needs a Vivado install (XSim). Windows only for now: XSim links DPI as a
 //! static archive there and the DPI library is built `no_std` for that.
 
+mod export;
+pub use export::{ExportPlan, plan as plan_export};
+pub use xsim_export::ExportDesign;
+
 use interop::{
     BusAccess, BusCmd, Interrupt, Packet, Session, SessionError, Sync, cap, flags, resp,
 };
@@ -179,7 +183,11 @@ fn sources_mention(sources: &[PathBuf], needles: &[&str]) -> bool {
 const CACHE_KEEP: usize = 6;
 
 /// Content key of a build: everything that changes the compiled snapshot.
-fn build_key(cfg: &XsimConfig, dpi_archive: &[u8]) -> Result<String, std::io::Error> {
+fn build_key(
+    cfg: &XsimConfig,
+    dpi_archive: &[u8],
+    export_fingerprint: &[u8],
+) -> Result<String, std::io::Error> {
     fn fnv(h: &mut u64, bytes: &[u8]) {
         for b in bytes {
             *h ^= u64::from(*b);
@@ -202,6 +210,7 @@ fn build_key(cfg: &XsimConfig, dpi_archive: &[u8]) -> Result<String, std::io::Er
         feed(d.as_bytes());
     }
     feed(dpi_archive);
+    feed(export_fingerprint);
     for s in &cfg.sources {
         feed(
             s.file_name()
@@ -277,6 +286,16 @@ fn master_port(dev: u32) -> Option<PsMasterPort> {
 impl XsimPl {
     /// Builds the design, starts XSim and completes the handshake.
     pub fn start(cfg: &XsimConfig) -> Result<XsimPl, XsimError> {
+        Self::start_with(cfg, None)
+    }
+
+    /// Like [`XsimPl::start`], with the sources of a Vivado simulation export compiled first
+    /// (prj-style, each file into its library, `-L` libraries, `glbl`); `cfg.sources` are the
+    /// user's extra files (a testbench) and `cfg.top` the unit to elaborate.
+    pub fn start_with(
+        cfg: &XsimConfig,
+        export: Option<&ExportDesign>,
+    ) -> Result<XsimPl, XsimError> {
         let settings = cfg.vivado_root.join("settings64.bat");
         for p in cfg.sources.iter().chain([&cfg.dpi_lib, &settings]) {
             if !p.is_file() {
@@ -320,7 +339,17 @@ impl XsimPl {
             .collect();
         // Quoted: cmd treats an unquoted `=` as an argument separator.
         let defines: String = cfg.defines.iter().map(|d| format!(" -d \"{d}\"")).collect();
-        let build_bat = format!(
+        let export_plan = export
+            .map(|d| export::plan(d, &cfg.sources, &cfg.top, &cfg.defines, &cfg.vivado_root));
+        if let Some(p) = &export_plan {
+            for f in &p.inputs {
+                if !f.is_file() {
+                    return Err(XsimError::MissingFile(f.clone()));
+                }
+            }
+            p.write_prj(&work)?;
+        }
+        let mut build_bat = format!(
             "@echo off\r\n\
              call \"{settings}\"\r\n\
              cd /d \"{work}\"\r\n\
@@ -334,10 +363,25 @@ impl XsimPl {
             top = cfg.top,
             dpi = fwd(&dpi_dir),
         );
+        if let Some(p) = &export_plan {
+            build_bat = format!(
+                "@echo off\r\ncall \"{settings}\"\r\ncd /d \"{work}\"\r\n\
+                 rmdir /s /q xsim.dir 2>nul\r\n{}",
+                p.batch_steps(&fwd(&dpi_dir), DPI_NAME),
+                settings = settings.display(),
+                work = work.display(),
+            );
+        }
         let build_path = work.join("build.bat");
         let build_log = work.join("build.log");
         let key = match &cfg.cache_dir {
-            Some(_) => Some(build_key(cfg, &archive)?),
+            Some(_) => {
+                let fp = match &export_plan {
+                    Some(p) => p.fingerprint()?,
+                    None => Vec::new(),
+                };
+                Some(build_key(cfg, &archive, &fp)?)
+            }
             None => None,
         };
         let cached = match (&cfg.cache_dir, &key) {
@@ -466,6 +510,11 @@ impl XsimPl {
             }
         }
 
+        let all_sources: Vec<PathBuf> = export_plan
+            .iter()
+            .flat_map(|p| p.inputs.iter().cloned())
+            .chain(cfg.sources.iter().cloned())
+            .collect();
         Ok(XsimPl {
             child,
             rp,
@@ -478,11 +527,11 @@ impl XsimPl {
             audio_src: AudioSource::Silence,
             waves: cfg.waves,
             has_media: sources_mention(
-                &cfg.sources,
+                &all_sources,
                 &["zs_ssm2603", "zs_hdmi", "zs_audio_", "zs_video_"],
             ),
-            has_pins: sources_mention(&cfg.sources, &["tel_ctrl", "tel_event"]),
-            has_pin_groups: sources_mention(&cfg.sources, &["zs_pin_"]),
+            has_pins: sources_mention(&all_sources, &["tel_ctrl", "tel_event"]),
+            has_pin_groups: sources_mention(&all_sources, &["zs_pin_"]),
             pin_events: Vec::new(),
             pin_sink: None,
             work_dir: work,

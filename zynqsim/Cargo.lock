@@ -498,6 +498,7 @@ dependencies = [
  "backend-qemu",
  "interop",
  "pl-api",
+ "xsim-export",
 ]
 
 [[package]]
