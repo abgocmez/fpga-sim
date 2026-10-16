@@ -72,6 +72,8 @@ const CASES: &[Case] = &[
     case("net-demo", "20ms"),
     case("sd-demo", "20ms"),
     case("qspi-demo", "20ms"),
+    case("conf-ttc", "50ms"),
+    case("conf-dmaps", "50ms"),
     case("conf-iicps", "50ms"),
     case("conf-spips", "50ms"),
     case("conf-xadcps", "50ms"),
