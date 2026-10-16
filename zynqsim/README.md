@@ -27,6 +27,7 @@ links `cpal` (speaker; ALSA development files on Linux) and `rfd` (file dialogs)
 zynqsim run --for 1s --at 10ms=sw0:on --at 20ms=btn1:tap --record session.json --vcd run.vcd
 zynqsim test session.json                  # replay and check the trace digest (exit 1 on mismatch)
 zynqsim inspect                            # board, backends, what is implemented
+zynqsim bench --project examples/rust-hello/project.toml --for 100ms   # wall time, sim/wall ratio, PL cycles/s (docs/PERFORMANCE.md)
 zynqsim-gui --project examples/demo/project.toml
 ```
 

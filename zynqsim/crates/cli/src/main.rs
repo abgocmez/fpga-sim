@@ -171,6 +171,15 @@ enum Cmd {
         #[arg(long)]
         board: Option<String>,
     },
+    /// Time a run: wall time, simulated time and the speed of the backends.
+    Bench {
+        /// project.toml to run (default: the built-in demo engine).
+        #[arg(long)]
+        project: Option<PathBuf>,
+        /// Simulated time to run.
+        #[arg(long = "for", default_value = "10ms")]
+        duration: String,
+    },
     /// Replay a recording and export its trace.
     Trace {
         /// Recording JSON.
@@ -325,6 +334,7 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
             },
         ),
         Cmd::Test { recording } => cmd_test(json, &recording),
+        Cmd::Bench { project, duration } => cmd_bench(json, project.as_deref(), &duration),
         Cmd::Init {
             dir,
             xsa,
@@ -1569,6 +1579,95 @@ fn board_from_arg(spec: &str) -> Result<sim_api::board::BoardDef, Failure> {
             BoardDef::builtin_names().join(", ")
         ),
     ))
+}
+
+/// Nominal PL clock of the board's FCLK0 (the RTL runs on it).
+const PL_CLOCK_HZ: f64 = 100e6;
+
+/// Runs a project for a fixed simulated time and reports wall time, simulated time
+/// and the speed of the backends. The start-up (spawning QEMU, building or loading
+/// the RTL) is timed separately and is not part of the rates. Single runs: the
+/// numbers depend on machine load (see docs/PERFORMANCE.md).
+fn cmd_bench(json: bool, project: Option<&Path>, duration: &str) -> Result<u8, Failure> {
+    let total = Ps(sim_api::parse_duration(duration)?);
+    // `-icount shift=N` makes one instruction cost 2^N ns of virtual time.
+    let icount_shift = match project {
+        Some(f) => Some(Project::load(f)?.sim.icount_shift),
+        None => None,
+    };
+    let started = std::time::Instant::now();
+    let mut engine = build_engine(&project.map(Path::to_path_buf), None, &[], None)?;
+    let startup = started.elapsed().as_secs_f64();
+
+    let run_started = std::time::Instant::now();
+    engine.command(Command::RunUntil { time_ps: total.0 })?;
+    let wall = run_started.elapsed().as_secs_f64().max(1e-9);
+
+    let st = engine.status(false);
+    let sim_s = st.now_ps as f64 / 1e12;
+    let ratio = sim_s / wall;
+    // Cycles of the nominal 100 MHz PL clock in the simulated time (XSim only:
+    // the native PL models have no cycle timing).
+    let pl_cycles = (st.pl_backend == "xsim").then(|| st.now_ps as f64 * PL_CLOCK_HZ / 1e12);
+    // Approximate guest rate (QEMU only): every virtual ns is 2^-shift instructions.
+    // This counts time the guest spends idle in WFI as instructions, so it is an
+    // over-estimate of the work done.
+    let guest_instr = match (st.ps_backend.as_str(), icount_shift) {
+        ("qemu", Some(shift)) => Some(st.now_ps as f64 / 1e3 / f64::powi(2.0, shift as i32)),
+        _ => None,
+    };
+    let label = project.map_or("built-in demo".to_string(), |p| p.display().to_string());
+
+    if json {
+        println!(
+            "{}",
+            json!({
+                "project": label,
+                "backend": { "ps": st.ps_backend, "pl": st.pl_backend, "fidelity": st.fidelity },
+                "board": st.board,
+                "startup_s": startup,
+                "wall_s": wall,
+                "simulated_ps": st.now_ps,
+                "simulated_s": sim_s,
+                "sim_per_wall": ratio,
+                "pl_clock_hz": pl_cycles.map(|_| PL_CLOCK_HZ),
+                "pl_cycles": pl_cycles,
+                "pl_cycles_per_wall_s": pl_cycles.map(|c| c / wall),
+                "guest_instr_approx": guest_instr,
+                "guest_instr_per_wall_s": guest_instr.map(|i| i / wall),
+                "zynqsim_version": env!("CARGO_PKG_VERSION"),
+            })
+        );
+    } else {
+        println!(
+            "zynqsim bench: {label} ps={} pl={} board={} fidelity={:?}",
+            st.ps_backend, st.pl_backend, st.board, st.fidelity
+        );
+        println!("startup   : {startup:.3} s (not part of the rates)");
+        println!("wall      : {wall:.6} s");
+        println!("simulated : {}", Ps(st.now_ps));
+        println!("sim/wall  : {ratio:.4} (simulated seconds per wall second)");
+        match pl_cycles {
+            Some(c) => println!(
+                "pl clock  : {:.0} cycles at 100 MHz nominal, {:.0} per wall second",
+                c,
+                c / wall
+            ),
+            None => println!(
+                "pl clock  : n/a (PL backend `{}` has no RTL cycle count)",
+                st.pl_backend
+            ),
+        }
+        match guest_instr {
+            Some(i) => println!(
+                "guest     : ~{:.1} M virtual instructions per wall second (sim time / 2^{} ns; approximate, counts idle time)",
+                i / wall / 1e6,
+                icount_shift.unwrap_or(0)
+            ),
+            None => println!("guest     : n/a (no QEMU guest CPU in this run)"),
+        }
+    }
+    Ok(0)
 }
 
 fn cmd_inspect(json: bool, project: Option<&Path>, board: Option<&str>) -> Result<u8, Failure> {
