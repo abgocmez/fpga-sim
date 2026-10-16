@@ -1,0 +1,21 @@
+# Peripheral conformance: xttcps (Cadence TTC0 and TTC1) checks in Rust (firmware/conf_ttc).
+# The firmware prints one `CHECK n name: PASS|FAIL|N/A reason` line per check and
+# `RESULT: ALL PASS` when none failed. Checks that the QEMU model does not reproduce are
+# N/A, see docs/conformance/ttc-dma.md. PS only, no PL.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "demo"          # no PL
+
+[sim]
+quantum_ns = 1000
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_conf_ttc.elf"
