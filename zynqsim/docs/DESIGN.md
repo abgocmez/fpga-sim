@@ -54,6 +54,7 @@ depends on `gui`. Engines will plug in through `PsBackend` / `PlBackend`.
 | `trace` | `TraceLog` with canonical FNV-1a-64 digest, VCD and Perfetto export. |
 | `board-zybo` | board description (TOML), mutable `BoardState`, software renderer, hit-testing. |
 | `xsa-import` | reads a Vivado XSA/HWH into a `Design` (PS7 config, IP instances, address map, interrupts, clocks, sources); no knowledge of projects (ADR-015). |
+| `boot` | reads a Zynq-7000 BootROM image (`BOOT.BIN`): boot header, register-init table, partitions, MD5 checksums, load plan; no knowledge of projects (ADR-018). |
 | `sim-api` | control plane: commands, queries, event stream, `SimClient` thread, `Simulator` (demo model), `Recording`/replay, `Project`, backend inventory. |
 | `mcp` (`zynqsim-mcp`) | MCP server: tools, resources, prompts, schema validation, path allow-list. |
 | `cli` (`zynqsim`) | `run`, `test`, `init`, `inspect`, `trace`, `mcp`, `gui`. |

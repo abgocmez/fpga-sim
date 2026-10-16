@@ -24,6 +24,15 @@ script documents how to run it): `zs_math_gpio.xsa` (PS7 with the Zybo Z7-20 boa
 `xsa-import`, `sim-api`, `zynqsim` and `zynqsim-mcp` tests. A module reference's RTL is not in
 the archive: pass `rtl/math/my_math_ip.v` with `--rtl`.
 
+## `boot/`
+
+`BOOT.BIN` is **real output of Vitis 2022.1 `bootgen`** (`bootgen -arch zynq -image boot.bif -w on
+-o BOOT.BIN`, 9,104 bytes): `fsbl_stub.elf` as the bootloader (an ARM ELF with four `b .`
+instructions at 0x0: no FSBL is built on this machine, so it is a stand-in), `dummy.bit` (a valid
+`.bit` container with a made-up payload, **not a design**), and `rust_hello.elf` as the application
+with `[checksum=md5]` and the register-init file `regs.int`. `mkstubs.py` made the two stub inputs.
+Used by `boot`, `sim-api`, `zynqsim` and `zynqsim-mcp` tests (ADR-018).
+
 ## `rtl/`
 
 User-supplied RTL and testbench tops from the prototype, used as inputs to the XSim backend.

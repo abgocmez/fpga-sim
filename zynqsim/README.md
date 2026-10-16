@@ -161,6 +161,22 @@ GPIO, Timer, DMA, ... need the `vendor-ip` library, milestone P3) is recorded in
 design is not claimed to run. MCP: `project_create_from_xsa`. Details and limits:
 [docs/adr/015-xsa-import.md](docs/adr/015-xsa-import.md).
 
+### From a BOOT.BIN
+
+```
+zynqsim boot-info BOOT.BIN                      # partitions, register-init table, what is wrong
+zynqsim init --boot BOOT.BIN --out myboot       # project with [boot] mode = "boot_bin"
+zynqsim run --project myboot/project.toml --for 20ms
+```
+
+Reads the Zynq-7000 BootROM image `bootgen` writes (header and partition checksums, MD5
+partitions) and starts the application partition(s) in the simulated PS: they are loaded at
+their load addresses and core 0 starts at the execution address. The **FSBL is not executed**
+and its register-init table (clocks, MIO, DDR) is listed, **not applied**; the PL bitstream
+partition is recognised but cannot be simulated (the PL is the project's RTL); encrypted and
+authenticated images are refused. MCP: `boot_inspect`. Details and limits:
+[docs/adr/018-bootbin.md](docs/adr/018-bootbin.md).
+
 [docs/TEST_YOUR_DESIGN.md](docs/TEST_YOUR_DESIGN.md) covers the firmware side, what the generator
 does and does not do, how to turn a run into a test, and how to debug a failure.
 
