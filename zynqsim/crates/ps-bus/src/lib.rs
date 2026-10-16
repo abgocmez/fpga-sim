@@ -97,7 +97,7 @@ mod tests {
         let mut m = RamBus::new(0x1000, 16);
         m.write32(0x1004, 0xdead_beef).unwrap();
         assert_eq!(m.read(0x1004, 1).unwrap(), 0xef);
-        assert_eq!(m.read(0x1005, 2).unwrap(), 0xbead);
+        assert_eq!(m.read(0x1005, 2).unwrap(), 0xadbe);
         assert_eq!(m.read32(0x1004).unwrap(), 0xdead_beef);
         assert_eq!(m.read32(0x1010), Err(BusFault::Unmapped(0x1010)));
         assert_eq!(m.read(0x1000, 3), Err(BusFault::BadAccess(0x1000)));
