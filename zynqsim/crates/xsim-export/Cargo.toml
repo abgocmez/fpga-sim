@@ -1,0 +1,12 @@
+[package]
+name = "xsim-export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Reads Vivado export_simulation folders, xvlog/xvhdl .prj lists, .f file lists and xelab option files into an ordered source/library/define description"
+
+[lints]
+workspace = true
+
+[dependencies]
