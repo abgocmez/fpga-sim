@@ -328,6 +328,10 @@ ELF (16 bytes of code; no FSBL is built on this machine), a **dummy** `.bit` con
 design) and `rust_hello.elf` as the application, with a 4-pair register-init file and `[checksum=md5]`.
 Field offsets were cross-checked with `bootgen -read`; other Vivado/bootgen versions and images with
 `[load=]`/`[offset=]`/`[alignment=]`/flash partitions are `VERIFY:`.
+Gate on this branch: `cargo xtask ci` exited 0 on 2026-10-16 with 446 tests (421 + 25 new), 0
+failed, 0 skipped (`SKIPPED:` count 0 in the output). A first run failed one unrelated timing-sensitive
+test (`mcp::scenario::board_demo_through_mcp`, shell not ready within 6 ms while other agents loaded
+the machine); it passed alone and in the second full run.
 
 | Feature | Status | Evidence / note |
 |---|---|---|
