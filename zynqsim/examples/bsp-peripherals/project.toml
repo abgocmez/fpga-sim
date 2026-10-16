@@ -1,0 +1,31 @@
+# Xilinx's own "Peripheral Tests" application template, built UNMODIFIED against a Vitis 2022.1
+# standalone BSP for a PS-only design (fixtures/bsp/zs_ps_all.xsa; fixtures/bsp/SOURCE.md).
+# Vitis generates testperiph.c from the drivers' *_tapp.tcl scripts and compiles the drivers'
+# example sources: we author no C. Each test prints "<Example> PASSED" or "... FAILED".
+#
+#   zynqsim run --project examples/bsp-peripherals/project.toml --for 15ms
+#
+# Results on this QEMU machine (docs/conformance/bsp-apps.md): PASSED for the GIC self test and
+# interrupt setup, the PL330 DMA with interrupt, the QSPI self test, the I2C self test and the
+# SCU timer polled and interrupt examples. FAILED for the CAN examples and the device-configuration
+# self test (those peripherals are not in this QEMU machine). The SCU watchdog interrupt test never
+# returns (no SCU watchdog), so "---Exiting main---" is never printed.
+#
+# Needs: the Xilinx QEMU (Vitis). No Vivado is needed to RUN this.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "demo"          # no PL
+
+[sim]
+quantum_ns = 1000
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/bsp/bsp_peripheral_tests.elf"

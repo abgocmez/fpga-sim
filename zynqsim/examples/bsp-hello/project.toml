@@ -1,0 +1,26 @@
+# Xilinx's own "Hello World" application template, built UNMODIFIED against a Vitis 2022.1
+# standalone BSP (fixtures/bsp/SOURCE.md, built by fixtures/bsp/build_bsp.tcl). Nothing here is
+# our C code: the ELF is Xilinx's helloworld.c + platform.c + the BSP libraries (xuartps over
+# UART1 through xil_printf).
+#
+#   zynqsim run --project examples/bsp-hello/project.toml --for 15ms
+#   expect on UART1: "Hello World", "Successfully ran Hello World application"
+#
+# Needs: the Xilinx QEMU (Vitis). No Vivado is needed to RUN this.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "demo"          # no PL
+
+[sim]
+quantum_ns = 1000
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/bsp/bsp_hello_world.elf"

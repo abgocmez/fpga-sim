@@ -15,6 +15,10 @@ simulated Cortex-A9.
 `rust_hdmi`, and `rust_net.elf` (`firmware/net_demo`: Cadence GEM driver + smoltcp DHCP/ping, see
 `docs/adr/011-ethernet.md`).
 
+## `bsp/`
+
+24 **unmodified Xilinx standalone-BSP applications** (Hello World and Peripheral Tests templates and single driver examples) built with Vitis 2022.1 `xsct` by `bsp/build_bsp.tcl` from `bsp/zs_ps_all.xsa` (a PS-only Vivado design written by `bsp/make_ps_all_xsa.tcl`). No C of ours; the Xilinx sources are not committed. Exact commands, source files and licences: `bsp/SOURCE.md`. Results: `docs/conformance/bsp-apps.md`. Used by `crates/cli/tests/bsp_apps.rs`, `examples/bsp-hello`, `examples/bsp-peripherals`.
+
 ## `xsa/`
 
 Vivado 2022.1 hardware platforms written by `xsa/make_xsa.tcl` (batch mode, no bitstream; the
