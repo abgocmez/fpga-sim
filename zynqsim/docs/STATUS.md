@@ -410,6 +410,39 @@ testbench; ~150 KB). The VHDL design file in `fixtures/export/vhdl` is hand-writ
 | Verilator / Icarus on an export | stub | no such backend (P4) |
 | GUI import of an export | stub | the project window lists `files` only |
 
+## P3 exit demonstration: a Vivado design and its BOOT.BIN (milestone P3)
+
+`examples/vivado-handoff`, `fixtures/handoff`, `firmware/handoff_demo`, ADR-019. **One real Vivado
+2022.1 block design** (`fixtures/handoff/make_handoff.tcl`: Zynq PS7, the user RTL `my_math_ip` as
+a module reference, AXI GPIO on the LEDs, AXI Timer, AXI UART Lite) written as `design.xsa`
+(`write_hw_platform -fixed`) and as `export/xsim` (`export_simulation`) by the same project, a Rust
+`no_std` firmware for it, and a `BOOT.BIN` that Vitis `bootgen` packed around that firmware.
+`zynqsim init --xsa design.xsa --rtl ... --boot-bin BOOT.BIN` (or `--export-sim export/xsim`
+instead of `--rtl`) makes one project with the XSA-derived PL and `[boot] mode = "boot_bin"`;
+`zynqsim run` boots the firmware from the image.
+
+| Feature | Status | Evidence / note |
+|---|---|---|
+| `init --boot` / `--boot-bin` next to `--xsa` or `--export-sim` (and MCP `boot_bin`): image validated, copied to `BOOT.BIN`, `[boot] mode = "boot_bin"`, no `[cpu0]` (`--elf` ignored with a warning), report lists what a BOOT.BIN boot does not do; damaged image creates nothing; `init --boot` alone and `init --xsa --elf` unchanged | verified | `sim-api::xsa_import::a_boot_bin_next_to_an_xsa_gives_one_project_with_both`, `zynqsim::handoff::{one_init_gives_the_xsa_mapping_and_the_bootbin_boot, the_export_variant_references_the_export_and_keeps_the_xilinx_ip, init_boot_and_init_xsa_keep_working_separately}`, `zynqsim-mcp::handoff::the_handoff_project_is_created_with_the_bootbin_through_mcp` |
+| `init --xsa` with `--export-sim` (MCP `export_path`): the XSA maps the Xilinx IP, the user RTL and testbench come from the export (`[rtl] export_dir`, the export's own testbench or a generated one); refused with `--rtl`/`--filelist` | verified (one design) | same tests; the export of this design holds no Xilinx IP, so only this combination runs the firmware |
+| **End to end, XSA variant**: the firmware boots FROM the BOOT.BIN on real QEMU, seven math vectors pass on the user RTL in XSim, the GPIO drives LED0 and LED3, the timer takes 3 interrupts, the UART Lite sends `HANDOFF UART OK` (host `uart_read` port 2), `RESULT: ALL PASS`; 675 trace records, 186 bus accesses | verified (Windows, QEMU + Vivado XSim + DPI library) | `zynqsim::handoff::the_exit_design_runs_end_to_end_from_the_bootbin_in_both_variants` |
+| **Export variant**: PL from the `export_simulation` folder gives the identical UART text and trace digest (`fnv1a64:f70fca029ca96cf6`) | verified (same design; the same generated testbench in both, see ADR-019) | same test |
+| Determinism: three runs give one trace digest and text; the committed `examples/vivado-handoff` project gives the same digest | verified | same test |
+| BOOT.BIN boot equals the ELF boot of the same firmware: same UART text, trace length and bus accesses; the digests differ only by the file name in the `qemu start elf=...` note (checked record by record) | verified | same test |
+| MCP route: `project_create_from_xsa` (with `boot_bin`, and with `export_path`) + `project_open` + `sim_run`; both variants give one trace digest | verified | `zynqsim-mcp::handoff::the_exit_design_runs_end_to_end_through_mcp` |
+| Vivado 2022.1 batch flow producing the XSA and the export from one project, run twice on this machine | verified (this machine) | `fixtures/handoff/make_handoff.tcl`; other Vivado versions and machines `VERIFY:` |
+| **FSBL**: the partition in the image is a **stub** (four `b .` instructions); it is never executed; no FSBL was built or run | stub / not-planned | ADR-018, ADR-019 |
+| **Bitstream**: the partition is a **placeholder** `.bit` container; no bitstream is simulated or even compared with the RTL | not-planned | the PL is the user RTL in XSim plus the vendor-ip models |
+| **`ps7_init`** (the XSA's files and the image's register-init table) | not applied | the firmware does the SLCR PL bring-up itself (`rt::pl_bringup`); PS clocks, MIO and peripheral enables change nothing |
+| Xilinx IP behaviour vs the real IP; anything on a board; other designs, Vivado versions, SmartConnect, several user slaves | `VERIFY:` / not covered | register-level models from the product guides (see *Xilinx IP models*); this is one design |
+
+**P3 exit criterion** (prompt §15: "a Vivado-exported design and its `BOOT.BIN` run end to end"):
+demonstrated for this one design in the restricted sense above (Vivado-written XSA and
+`export_simulation`, `bootgen`-written image, PS in QEMU, user RTL in XSim, Xilinx IP as models,
+deterministic result). It is **not** the real Vivado/FSBL flow: stub FSBL not executed, no
+bitstream simulated, `ps7_init` not applied, IP models unverified against hardware. ADR-019 has
+the full statement.
+
 ## Backends
 
 | Backend | Status |

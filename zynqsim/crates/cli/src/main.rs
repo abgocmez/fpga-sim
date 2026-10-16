@@ -147,7 +147,9 @@ enum Cmd {
         base: Option<String>,
         /// Create a project that boots this BOOT.BIN (the image is copied into the
         /// project directory; the application partitions run, the FSBL does not).
-        #[arg(long)]
+        /// Combined with --xsa or --export-sim the project gets that PL mapping AND
+        /// `[boot] mode = "boot_bin"` (no --elf).
+        #[arg(long, alias = "boot-bin")]
         boot: Option<PathBuf>,
     },
     /// List the partitions of a Zynq-7000 BOOT.BIN and say whether ZynqSim can boot it.
@@ -326,8 +328,8 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
             elf1,
             base,
             boot,
-        } if boot.is_some() => {
-            let _ = (xsa, export_sim, rtl, filelist, ip, module, elf, elf1, base);
+        } if boot.is_some() && xsa.is_none() && export_sim.is_none() => {
+            let _ = (rtl, filelist, ip, module, elf, elf1, base);
             init_from_boot(json, &out.unwrap_or(dir), &boot.unwrap_or_default())
         }
         Cmd::BootInfo { file } => cmd_boot_info(json, &file),
@@ -343,7 +345,7 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
             elf,
             elf1,
             base,
-            boot: _,
+            boot,
         } => {
             let ip = InitIp {
                 ip,
@@ -351,10 +353,21 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
                 elf,
                 elf1,
                 base,
+                boot,
+                export: None,
             };
-            match export_sim {
-                Some(x) => init_from_export(json, &out.unwrap_or(dir), &x, ip),
-                None => cmd_init(json, &out.unwrap_or(dir), xsa, rtl, filelist, ip),
+            match (export_sim, xsa) {
+                (Some(x), None) => init_from_export(json, &out.unwrap_or(dir), &x, ip),
+                // `--xsa` with `--export-sim`: the handoff maps the Xilinx IP, the export
+                // supplies the RTL and its testbench.
+                (Some(x), Some(h)) => {
+                    let ip = InitIp {
+                        export: Some(x),
+                        ..ip
+                    };
+                    cmd_init(json, &out.unwrap_or(dir), Some(h), rtl, filelist, ip)
+                }
+                (None, xsa) => cmd_init(json, &out.unwrap_or(dir), xsa, rtl, filelist, ip),
             }
         }
         Cmd::Inspect { project } => cmd_inspect(json, project.as_deref()),
@@ -1078,6 +1091,10 @@ struct InitIp {
     elf: Option<String>,
     elf1: Option<String>,
     base: Option<String>,
+    /// `--boot` / `--boot-bin` next to `--xsa` or `--export-sim`.
+    boot: Option<PathBuf>,
+    /// `--export-sim` next to `--xsa`.
+    export: Option<PathBuf>,
 }
 
 /// `init --ip`: a testbench and project for an AXI4-Lite slave IP.
@@ -1272,6 +1289,7 @@ fn init_from_export(json: bool, dir: &Path, export: &Path, o: InitIp) -> Result<
             elf1: o.elf1,
             module: o.module,
             base,
+            boot_bin: o.boot,
         },
     )
     .map_err(|e| fail(2, e.message))?;
@@ -1357,6 +1375,8 @@ fn init_from_xsa(
         elf: o.elf,
         elf1: o.elf1,
         filelist,
+        boot_bin: o.boot,
+        export: o.export,
     };
     let plan = xsa::plan(xsa, dir, &opts).map_err(|e| fail(2, e.message))?;
     let created = plan.write(dir).map_err(|e| fail(2, e.message))?;
@@ -1379,6 +1399,8 @@ fn init_from_xsa(
                 "report": dir.join("xsa-report.md").display().to_string(),
                 "design": plan.handoff.design.name,
                 "testbench_module": plan.testbench_module,
+                "boot": plan.project.boot,
+                "rtl": plan.project.rtl,
                 "unmodelled": plan.unmodelled,
                 "warnings": plan.warnings,
                 "diagnostics": diagnostics,
@@ -1395,6 +1417,17 @@ fn init_from_xsa(
         );
         if let Some(m) = &plan.testbench_module {
             println!("rtl       : testbench drives module `{m}`");
+        }
+        if let Some(b) = plan
+            .project
+            .boot
+            .as_ref()
+            .filter(|b| sim_api::bootbin::is_boot_bin_mode(&b.mode))
+        {
+            println!(
+                "boot      : {} (application partitions run; the FSBL is not executed, the bitstream is not simulated, ps7_init is not applied)",
+                b.file.as_deref().unwrap_or("?")
+            );
         }
         for u in &plan.unmodelled {
             println!("unmodelled: {}", u.message());

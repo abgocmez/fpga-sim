@@ -1,0 +1,4 @@
+vhdl xpm  \
+"$XILINX_VIVADO/data/ip/xpm/xpm_VCOMP.vhd" \
+
+nosort

@@ -121,6 +121,26 @@ pub fn tool_defs() -> Vec<ToolDef> {
                             &["fw/app.elf"],
                         ),
                     ),
+                    (
+                        "boot_bin",
+                        string(
+                            "A BOOT.BIN (bootgen output) the project boots instead of the ELF: it \
+                             is validated and copied to out_dir/BOOT.BIN and project.toml gets \
+                             `[boot] mode = \"boot_bin\"`. The FSBL is not executed, the \
+                             bitstream is not simulated, ps7_init is not applied.",
+                            &["fixtures/boot/BOOT.BIN"],
+                        ),
+                    ),
+                    (
+                        "export_path",
+                        string(
+                            "A Vivado `export_simulation` folder (or .prj/.f): the user RTL and \
+                             its testbench then come from the export (`[rtl] export_dir`) instead \
+                             of `rtl` files; the Xilinx IP of the handoff still becomes vendor-ip \
+                             models. Not combinable with `rtl`.",
+                            &["fixtures/handoff/export/xsim"],
+                        ),
+                    ),
                 ],
                 &["xsa_path", "out_dir"],
             ),
@@ -166,6 +186,16 @@ pub fn tool_defs() -> Vec<ToolDef> {
                             "Firmware ELF for core 0 (path as it should appear in project.toml; \
                              default fw/app.elf).",
                             &["fw/app.elf"],
+                        ),
+                    ),
+                    (
+                        "boot_bin",
+                        string(
+                            "A BOOT.BIN (bootgen output) the project boots instead of the ELF: it \
+                             is validated and copied to out_dir/BOOT.BIN and project.toml gets \
+                             `[boot] mode = \"boot_bin\"`. The FSBL is not executed, the \
+                             bitstream is not simulated, ps7_init is not applied.",
+                            &["fixtures/boot/BOOT.BIN"],
                         ),
                     ),
                 ],

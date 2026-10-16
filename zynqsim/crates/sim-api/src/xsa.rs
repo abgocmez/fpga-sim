@@ -106,6 +106,16 @@ pub struct ImportOptions {
     pub elf1: Option<String>,
     /// A Vivado file list (`.prj`, `.f`) whose HDL files are added to the RTL.
     pub filelist: Option<PathBuf>,
+    /// A `BOOT.BIN` (bootgen output) the project boots instead of a `[cpu0] elf`: the image is
+    /// validated, copied to `BOOT.BIN` in the project directory and `[boot] mode = "boot_bin"`
+    /// is written (ADR-018, ADR-019). `elf` is then ignored.
+    pub boot_bin: Option<PathBuf>,
+    /// A Vivado `export_simulation` folder (or its `.prj`/`.f`): the user RTL and its testbench
+    /// come from the export (`[rtl] export_dir`, ADR-017) instead of `rtl` files and a generated
+    /// testbench; the Xilinx IP of the handoff still becomes vendor-ip models. If the export
+    /// has no testbench of its own (a source calling the `rp_*` DPI functions), one is generated
+    /// for the user module as with `rtl`. Not combinable with `rtl` or `filelist`.
+    pub export: Option<PathBuf>,
 }
 
 /// A planned import: nothing is written until [`XsaImport::write`].
@@ -229,6 +239,58 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
                 )),
             }
         }
+    }
+    // The export: its sources are only read here (to find the user module and any testbench of
+    // its own); `[rtl] export_dir` makes XSim compile them.
+    let mut export_rel: Option<String> = None;
+    let mut export_own_tb_top: Option<String> = None;
+    if let Some(exp) = &opts.export {
+        if !opts.rtl.is_empty() || opts.filelist.is_some() {
+            return Err(ApiError::invalid_argument(
+                "--export-sim cannot be combined with --rtl or --filelist (the export lists the \
+                 RTL)",
+            ));
+        }
+        let ed = crate::exportsim::read_export(exp).map_err(ApiError::invalid_argument)?;
+        let errors: Vec<String> = ed
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == xsim_export::Severity::Error)
+            .map(ToString::to_string)
+            .collect();
+        if !errors.is_empty() {
+            return Err(ApiError::invalid_argument(format!(
+                "the export cannot be used:\n  {}",
+                errors.join("\n  ")
+            )));
+        }
+        warnings.extend(
+            ed.diagnostics
+                .iter()
+                .filter(|d| d.severity == xsim_export::Severity::Warning)
+                .map(ToString::to_string),
+        );
+        let tops = ed.top_modules();
+        for f in ed.sources.iter().filter(|f| !f.lang.is_vhdl()) {
+            let Ok(text) = std::fs::read_to_string(&f.path) else {
+                continue;
+            };
+            if export_own_tb_top.is_none() && (text.contains("rp_open") || text.contains("rp_next"))
+            {
+                let names = crate::exportinit::module_names(&text);
+                export_own_tb_top = tops
+                    .iter()
+                    .find(|n| names.contains(n))
+                    .cloned()
+                    .or_else(|| names.first().cloned());
+            }
+            srcs.push(Src {
+                label: format!("{} (in the export)", f.path.display()),
+                text,
+                project_path: String::new(),
+            });
+        }
+        export_rel = Some(tbgen::relative_path(out, exp));
     }
     for s in &handoff.archive.sources {
         let lower = s.path.to_ascii_lowercase();
@@ -471,6 +533,21 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
                     ));
                     continue;
                 }
+                if tb.is_none() && export_own_tb_top.is_some() && tb_module_instance.is_none() {
+                    // The export brings its own testbench: it drives this module; nothing to
+                    // generate (its interrupt wiring is the testbench's business).
+                    module_notes.push(format!(
+                        "`{}` (module `{}`) is driven by the export's own testbench `{}`: no \
+                         testbench is generated and its interrupt outputs are not forwarded by \
+                         ZynqSim",
+                        ip.instance,
+                        module.name,
+                        export_own_tb_top.as_deref().unwrap_or("?")
+                    ));
+                    tb_module_instance = Some(ip.instance.clone());
+                    mapped_user.push(ip.instance.clone());
+                    continue;
+                }
                 if let Some((first, _)) = &tb {
                     unmodelled.push(mk(
                         format!(
@@ -602,6 +679,22 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
 
     connect.extend(native_bindings);
 
+    // A BOOT.BIN replaces the ELF: validated here (an image ZynqSim could not run is refused,
+    // as `init --boot` refuses it) and copied next to the project.
+    let boot_init = match &opts.boot_bin {
+        Some(bin) => {
+            let b = crate::bootbin::plan_project(bin)?;
+            files.push((b.image_name.clone(), b.loaded.bytes.clone()));
+            if opts.elf.is_some() {
+                warnings.push(
+                    "--elf is ignored: the project boots the BOOT.BIN (`boot.mode = \"boot_bin\"`)"
+                        .to_string(),
+                );
+            }
+            Some(b)
+        }
+        None => None,
+    };
     let elf = {
         let e = opts.elf.clone().unwrap_or_else(|| "fw/app.elf".to_string());
         if Path::new(&e).is_file() {
@@ -619,7 +712,28 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
     });
     let esc = |p: &str| p.replace('\\', "/");
 
+    if export_rel.is_some() && tb.is_none() && export_own_tb_top.is_none() {
+        return Err(ApiError::unsupported(
+            "the export has no testbench that calls the ZynqSim `rp_*` DPI functions and the \
+             handoff has no user AXI4-Lite RTL module found in it to generate one for; write a \
+             testbench (docs/TEST_YOUR_DESIGN.md) and add it to the export's sim_1 set",
+        ));
+    }
     let rtl = match &tb {
+        _ if export_rel.is_some() => Some(RtlSection {
+            files: if tb.is_some() {
+                vec!["tb/cosim_top.sv".to_string()]
+            } else {
+                Vec::new()
+            },
+            export_dir: export_rel.as_deref().map(esc),
+            top: Some(
+                export_own_tb_top
+                    .clone()
+                    .unwrap_or_else(|| "cosim_top".to_string()),
+            ),
+            ..RtlSection::default()
+        }),
         Some((_, _)) => {
             let mut list: Vec<String> = srcs.iter().map(|s| esc(&s.project_path)).collect();
             list.push("tb/cosim_top.sv".to_string());
@@ -645,7 +759,7 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
         },
         backends: BackendsSection {
             ps: "qemu".to_string(),
-            pl: if tb.is_some() {
+            pl: if tb.is_some() || export_rel.is_some() {
                 "xsim"
             } else if !native.is_empty() {
                 "native"
@@ -655,11 +769,17 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
             .to_string(),
         },
         sim: SimSection::default(),
-        boot: Some(BootSection {
-            mode: "elf".to_string(),
-            file: None,
+        boot: Some(match &boot_init {
+            Some(b) => BootSection {
+                mode: "boot_bin".to_string(),
+                file: Some(b.image_name.clone()),
+            },
+            None => BootSection {
+                mode: "elf".to_string(),
+                file: None,
+            },
         }),
-        cpu0: Some(CpuSection { elf: esc(&elf) }),
+        cpu0: boot_init.is_none().then(|| CpuSection { elf: esc(&elf) }),
         cpu1: elf1.as_ref().map(|e| CpuSection { elf: esc(e) }),
         rtl,
         connect,
@@ -978,6 +1098,18 @@ fn render_report(
                 let _ = writeln!(r, "  * `{f}`");
             }
         }
+        (Some(rtl), None) if rtl.export_dir.is_some() => {
+            let _ = writeln!(
+                r,
+                "* `[rtl] export_dir = \"{}\"`, top `{}`: the PL sources and the testbench are \
+                 the Vivado simulation export's (compiled by XSim as the export lists them); the \
+                 export's own testbench drives the user module for block-design instance `{}`. \
+                 The export holds no Xilinx IP: those instances are the vendor-ip models below.",
+                rtl.export_dir.as_deref().unwrap_or("?"),
+                rtl.top.as_deref().unwrap_or("?"),
+                tb_instance.unwrap_or("?")
+            );
+        }
         _ => {
             let _ = writeln!(r, "* No `[rtl]`: no user RTL module was mapped.");
         }
@@ -985,11 +1117,26 @@ fn render_report(
     if !rtl_sources.is_empty() {
         let _ = writeln!(r, "* RTL sources considered: {}.", rtl_sources.join(", "));
     }
-    let _ = writeln!(
-        r,
-        "* `cpu0.elf = \"{}\"` (the project does not validate while this file is missing).",
-        project.cpu0.as_ref().map_or("", |c| c.elf.as_str()),
-    );
+    match (&project.cpu0, &project.boot) {
+        (None, Some(b)) if crate::bootbin::is_boot_bin_mode(&b.mode) => {
+            let _ = writeln!(
+                r,
+                "* `[boot] mode = \"boot_bin\"`, `file = \"{}\"`: core 0 starts at the first \
+                 application partition of the image. What a BOOT.BIN boot does **not** do:",
+                b.file.as_deref().unwrap_or("?")
+            );
+            for n in crate::bootbin::NOTES {
+                let _ = writeln!(r, "  * {n}");
+            }
+        }
+        _ => {
+            let _ = writeln!(
+                r,
+                "* `cpu0.elf = \"{}\"` (the project does not validate while this file is missing).",
+                project.cpu0.as_ref().map_or("", |c| c.elf.as_str()),
+            );
+        }
+    }
     if !project.native.is_empty() {
         let _ = writeln!(
             r,
@@ -1034,10 +1181,11 @@ fn render_report(
         "the archive has no `ps7_init` files".to_string()
     } else {
         format!(
-            "`{}` are in the archive but are not executed; the project boots the ELF directly \
-             (`boot.mode = \"elf\"`), so firmware that depends on state the FSBL would have set \
-             sees QEMU's defaults",
-            handoff.archive.ps7_init.join("`, `")
+            "`{}` are in the archive but are not executed; the project starts the firmware \
+             directly (`boot.mode = \"{}\"`; a BOOT.BIN's FSBL is not run either), so firmware \
+             that depends on state the FSBL would have set sees QEMU's defaults",
+            handoff.archive.ps7_init.join("`, `"),
+            project.boot.as_ref().map_or("elf", |b| b.mode.as_str())
         )
     };
     let _ = writeln!(r, "* **`ps7_init`**: {init}.");

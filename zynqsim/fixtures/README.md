@@ -67,3 +67,20 @@ Each `cosim_top.sv` is a testbench that imports the `rp_*` DPI functions provide
 | `math/` | `my_math_ip.v`, `cosim_top.sv` | AXI4-Lite slave, `reg1 = reg0 * 2`; used with `elf/math_test.elf` |
 | `dma/` | `dma_xform.v`, `cosim_top.sv` | AXI4-Lite control + AXI4 master DMA (`dst = src*scale + offset`), IRQ; used with `elf/dma_test.elf` + `elf/dma_cpu1.elf` |
 | `board/` | `gpio_ctrl.v`, `cosim_top.sv` (+ `dma/dma_xform.v`) | the "virtual Zybo" demo: LEDs, switches, buttons (IRQ), interactive UART shell, DMA image filter; used with `elf/board_test.elf`. The testbench reads switches/buttons with `tel_ctrl` and reports LED pins with `tel_event`, which `xsim-dpi` maps to the board |
+
+## `handoff/`
+
+The P3 exit demonstration (ADR-019, `examples/vivado-handoff`): ONE Vivado 2022.1 block design
+written by `handoff/make_handoff.tcl` (batch mode; the script documents how to run it): the Zynq
+PS7, the user RTL `my_math_ip` as a module reference (`0x43C00000`), an AXI GPIO on the LEDs
+(`0x41200000`), an AXI Timer (`0x42800000`, `IRQ_F2P[0]`) and an AXI UART Lite (`0x40600000`,
+`IRQ_F2P[1]`). `design.xsa` is its `write_hw_platform -fixed`; `export/xsim` is
+`export_simulation -simulator xsim` of the same Vivado project (its `sim_1` set holds the user
+RTL and the testbench in `rtl/`; Vivado lists only what the testbench reaches, so the Xilinx IP
+are NOT in it). The only edits to Vivado's export: the sources' paths made relative to the export
+(`../../rtl/NAME`), the Vivado install root written as `$XILINX_VIVADO`, and the `--include`
+entries that pointed into the scratch project dropped. `rtl/cosim_top.sv` is the testbench
+`zynqsim init --ip` generates for `my_math_ip`. `boot.bif` and `BOOT.BIN` are **real `bootgen`
+2022.1 output**: the stub FSBL and placeholder bitstream of `boot/` plus
+`elf/rust_handoff_demo.elf` (`firmware/handoff_demo`). Used by `zynqsim` and `zynqsim-mcp`
+`handoff` tests.

@@ -22,6 +22,10 @@ pub struct InitOptions {
     pub module: Option<String>,
     /// The base address for the comment in `project.toml`.
     pub base: Option<u64>,
+    /// A `BOOT.BIN` the project boots instead of the `[cpu0] elf` (validated, copied next to
+    /// the project as `BOOT.BIN`, `[boot] mode = "boot_bin"`; ADR-018, ADR-019). `elf` is then
+    /// ignored.
+    pub boot_bin: Option<std::path::PathBuf>,
 }
 
 /// A planned project: nothing is written until the caller does it.
@@ -72,7 +76,7 @@ impl ExportInit {
 }
 
 /// Names of the `module X` declarations of a source text, in order.
-fn module_names(text: &str) -> Vec<String> {
+pub(crate) fn module_names(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = text;
     while let Some(i) = rest.find("module") {
@@ -233,6 +237,31 @@ pub fn plan_init(export: &Path, out: &Path, opts: &InitOptions) -> Result<Export
         ));
         ("cosim_top".to_string(), Some(name.clone()), project(&name))
     };
+    // A BOOT.BIN replaces the ELF.
+    let mut toml = toml;
+    if let Some(bin) = &opts.boot_bin {
+        let b = crate::bootbin::plan_project(bin)?;
+        let elf_block = format!(
+            "[boot]\nmode = \"elf\"\n\n[cpu0]\nelf = \"{}\"\n",
+            elf.replace('\\', "/").replace('"', "")
+        );
+        if !toml.contains(&elf_block) {
+            return Err(ApiError::invalid_argument(
+                "internal: the generated project has no [boot]/[cpu0] block to replace",
+            ));
+        }
+        toml = toml.replace(
+            &elf_block,
+            &format!("[boot]\nmode = \"boot_bin\"\nfile = \"{}\"\n", b.image_name),
+        );
+        if opts.elf.is_some() {
+            warnings.push(
+                "--elf is ignored: the project boots the BOOT.BIN (`boot.mode = \"boot_bin\"`)"
+                    .to_string(),
+            );
+        }
+        files.push((b.image_name, b.loaded.bytes));
+    }
     // Reference the export from `[rtl]` and say what generated the file.
     let toml = toml
         .replace("[rtl]\n", &format!("[rtl]\n{key} = \"{}\"\n", esc(&rel)))

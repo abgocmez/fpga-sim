@@ -98,6 +98,46 @@ both. Limits: no timing/SDF simulation, no compiled IP libraries tried, no encry
 the export's own DPI libraries are not loaded; unsupported options are printed as
 `file:line: construct: reason`. Globs work in any project: `files = ["rtl/**/*.v", "rtl/*.sv"]`.
 
+### From a Vivado project
+
+If the design is a Vivado block design (Zynq PS7 + your RTL as a module reference + Xilinx IP),
+hand over what Vivado writes instead of the sources. `examples/vivado-handoff` is a complete,
+tested instance of this walk-through (`fixtures/handoff/make_handoff.tcl` builds the design):
+
+1. **Hardware hand-off.** In Vivado: `write_hw_platform -fixed -file design.xsa`. A pre-synthesis
+   write leaves the block-design handoff (HWH) out, so synthesise once first. A module
+   reference's RTL is not in the archive: keep the source file.
+2. **Simulation hand-off** (optional, for the user RTL and its testbench): `export_simulation
+   -simulator xsim -directory export -force`. Put your ZynqSim testbench (see section 2) in the
+   `sim_1` set so that the lists name it. Vivado lists only what the testbench reaches: the Xilinx
+   IP of the block design are NOT in the export, they come from the XSA.
+3. **Firmware and `BOOT.BIN`.** Build the ELF as in section 1, then pack it with
+   `bootgen -arch zynq -image boot.bif -o BOOT.BIN` (`fixtures/handoff/boot.bif` is a working
+   recipe). A stub FSBL and a placeholder bitstream are fine: ZynqSim runs neither (the FSBL is
+   not executed, the bitstream is not simulated, `ps7_init` is not applied). With a real FSBL
+   and bitstream the image still boots the same way; only the application partition runs.
+4. **One `init`** for the project:
+
+   ```
+   zynqsim init --xsa design.xsa --rtl rtl/my_ip.v --boot-bin BOOT.BIN --out myproj
+   zynqsim init --xsa design.xsa --export-sim export/xsim --boot-bin BOOT.BIN --out myproj2
+   ```
+
+   `--xsa` maps the address map, interrupts and clocks and the Xilinx IP (AXI GPIO, Timer, UART
+   Lite become `vendor-ip` models bound to the board, `[native]`); the user RTL becomes `[rtl]`
+   with a generated testbench (first form) or is taken from the export with its own testbench
+   (second form, `[rtl] export_dir`); `--boot-bin` writes `[boot] mode = "boot_bin"` and copies the
+   image next to `project.toml` (no `--elf`). `xsa-report.md` lists what was mapped and what was
+   not; any IP without a model is listed under `[xsa.unmodelled]` and stops the run.
+5. **Run and test.** `zynqsim run --project myproj/project.toml --for 8ms --json`; the UART text
+   is `uart["1"]`, the PL's UART Lite lines `uart["pl"]["2"]`, the LEDs `leds`. Run it three times
+   and compare `trace_hash` (section 4). `crates/cli/tests/handoff.rs` does exactly this.
+
+What this does not prove: it is not Vivado's flow on a board. The FSBL, `ps7_init`, the PS clock
+tree and MIO routing, and the bitstream are not simulated; the Xilinx IP are register-level
+models from the product guides (`VERIFY:` items in STATUS.md); one user AXI4-Lite slave per
+project.
+
 ## 3. Run it
 
 ```

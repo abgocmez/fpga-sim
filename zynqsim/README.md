@@ -193,6 +193,27 @@ partition is recognised but cannot be simulated (the PL is the project's RTL); e
 authenticated images are refused. MCP: `boot_inspect`. Details and limits:
 [docs/adr/018-bootbin.md](docs/adr/018-bootbin.md).
 
+### A Vivado design and its BOOT.BIN, end to end
+
+```
+zynqsim init --xsa fixtures/handoff/design.xsa --rtl fixtures/handoff/rtl/my_math_ip.v \
+             --boot-bin fixtures/handoff/BOOT.BIN --out handoff
+zynqsim run --project handoff/project.toml --for 8ms
+```
+
+`fixtures/handoff` is one Vivado 2022.1 block design (Zynq PS, the user RTL `my_math_ip`, AXI
+GPIO, AXI Timer, AXI UART Lite) as an XSA and as an `export_simulation` folder, plus a `BOOT.BIN`
+that `bootgen` packed around the Rust firmware `firmware/handoff_demo`. One `init` gives the
+XSA-derived PL mapping and `[boot] mode = "boot_bin"` (`--boot-bin` is `--boot`, now also usable
+next to `--xsa` or `--export-sim`); the firmware boots from the image, talks to the user RTL in
+XSim and to the vendor-ip models, and prints `RESULT: ALL PASS`. With `--export-sim
+fixtures/handoff/export/xsim` instead of `--rtl`, the RTL and its testbench come from the Vivado
+export (the Xilinx IP still from the XSA) and the UART text and trace digest are the same. The
+FSBL in the image is a **stub and is not executed**, the bitstream is a **placeholder and is not
+simulated**, `ps7_init` is **not applied**: this is not Vivado's flow on a board. See
+[examples/vivado-handoff](examples/vivado-handoff/README.md) and
+[docs/adr/019-p3-exit.md](docs/adr/019-p3-exit.md).
+
 ### From a Vivado simulation export or a post-synthesis netlist
 
 ```

@@ -152,6 +152,7 @@ const FIRMWARE: &[(&str, &str)] = &[
     ("debug_demo", "rust_debug.elf"),
     ("gpio_timer_uart", "rust_gpio_timer_uart.elf"),
     ("vendor_mix", "rust_vendor_mix.elf"),
+    ("handoff_demo", "rust_handoff_demo.elf"),
 ];
 
 /// Builds `firmware/` (its own workspace) and copies the ELFs into `fixtures/elf`.

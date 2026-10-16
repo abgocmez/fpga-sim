@@ -813,6 +813,14 @@ impl McpServer {
                 rtl.push(self.resolve(item, true)?);
             }
         }
+        let boot_bin = match a.get("boot_bin").and_then(Value::as_str) {
+            Some(b) => Some(self.resolve(b, true)?),
+            None => None,
+        };
+        let export = match a.get("export_path").and_then(Value::as_str) {
+            Some(e) => Some(self.resolve(e, true)?),
+            None => None,
+        };
         let opts = xsa::ImportOptions {
             rtl,
             // An existing file inside the roots becomes a path relative to `out_dir`;
@@ -823,6 +831,8 @@ impl McpServer {
             }),
             elf1: None,
             filelist: None,
+            boot_bin,
+            export,
         };
         let plan = xsa::plan(&xsa_file, &out_dir, &opts)?;
         let created = plan.write(&out_dir)?;
@@ -850,6 +860,7 @@ impl McpServer {
                 })),
             })).collect::<Vec<_>>(),
             "interrupts": d.interrupts,
+            "boot": plan.project.boot,
             "testbench_module": plan.testbench_module,
             "unmodelled": plan.unmodelled,
             "warnings": plan.warnings,
@@ -864,6 +875,10 @@ impl McpServer {
         use sim_api::exportinit::{InitOptions, plan_init};
         let export = self.resolve(str_arg(a, "export_path")?, true)?;
         let out_dir = self.resolve(str_arg(a, "out_dir")?, false)?;
+        let boot_bin = match a.get("boot_bin").and_then(Value::as_str) {
+            Some(b) => Some(self.resolve(b, true)?),
+            None => None,
+        };
         let opts = InitOptions {
             elf: a.get("elf").and_then(Value::as_str).map(|e| {
                 self.resolve(e, true)
@@ -872,6 +887,7 @@ impl McpServer {
             elf1: None,
             module: a.get("module").and_then(Value::as_str).map(String::from),
             base: None,
+            boot_bin,
         };
         let plan = plan_init(&export, &out_dir, &opts)?;
         let created = plan.write(&out_dir)?;

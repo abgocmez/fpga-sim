@@ -267,3 +267,64 @@ fn designs_without_a_ps7_are_refused() {
         .unwrap();
     assert!(e.message.contains("processing_system7"), "{}", e.message);
 }
+
+/// `--boot-bin` next to `--xsa` (ADR-019): one plan gives the XSA-derived PL mapping AND a
+/// `[boot] mode = "boot_bin"` project; the image is validated and copied, `cpu0` is gone.
+#[test]
+fn a_boot_bin_next_to_an_xsa_gives_one_project_with_both() {
+    let out = temp("bootbin");
+    let bin = fixtures().join("boot/BOOT.BIN");
+    let opts = ImportOptions {
+        rtl: vec![fixtures().join("rtl/math/my_math_ip.v")],
+        elf: Some("ignored.elf".to_string()),
+        boot_bin: Some(bin.clone()),
+        ..Default::default()
+    };
+    let plan = xsa::plan(&fixtures().join("xsa/zs_math_gpio.xsa"), &out, &opts).unwrap();
+    let boot = plan.project.boot.as_ref().unwrap();
+    assert_eq!(boot.mode, "boot_bin");
+    assert_eq!(boot.file.as_deref(), Some("BOOT.BIN"));
+    assert!(plan.project.cpu0.is_none());
+    // The PL mapping is the same as without the image.
+    assert_eq!(plan.testbench_module.as_deref(), Some("my_math_ip"));
+    assert_eq!(plan.project.native["axi_gpio_0"], "axi_gpio");
+    assert!(
+        !plan.project_toml.contains("[cpu0]"),
+        "{}",
+        plan.project_toml
+    );
+    assert!(
+        plan.warnings.iter().any(|w| w.contains("--elf is ignored")),
+        "{:?}",
+        plan.warnings
+    );
+    assert!(plan.report.contains("boot_bin"), "{}", plan.report);
+    assert!(plan.report.contains("not executed"), "{}", plan.report);
+    assert!(!plan.report.contains("boots the ELF"), "{}", plan.report);
+
+    plan.write(&out).unwrap();
+    assert_eq!(
+        std::fs::read(out.join("BOOT.BIN")).unwrap(),
+        std::fs::read(&bin).unwrap()
+    );
+    let loaded = Project::load(&out.join("project.toml")).unwrap();
+    assert_eq!(loaded, plan.project);
+    let e = errors(&loaded, &out);
+    assert!(e.is_empty(), "{e:?}");
+
+    // A damaged image creates no plan at all.
+    let mut bad = std::fs::read(&bin).unwrap();
+    bad[0x44] ^= 1;
+    let bad_path = out.join("bad.bin");
+    std::fs::write(&bad_path, bad).unwrap();
+    let err = xsa::plan(
+        &fixtures().join("xsa/zs_math_gpio.xsa"),
+        &out.join("q"),
+        &ImportOptions {
+            boot_bin: Some(bad_path),
+            ..Default::default()
+        },
+    )
+    .unwrap_err();
+    assert!(err.message.contains("checksum"), "{}", err.message);
+}

@@ -64,6 +64,22 @@ release build). Regenerate golden images: `cargo xtask golden` (review the diff)
 | `zynqsim` `xsa::a_user_rtl_only_handoff_runs_the_real_firmware`, `xsa::user_rtl_in_xsim_and_a_vendor_model_share_one_pl` | Xilinx QEMU + Vivado XSim + the DPI library (the other `xsa` tests, `sim-api` `xsa_import`, `xsa-import` and `mcp` `xsa` need nothing) | prints `SKIPPED:` and returns |
 | `zynqsim` `xsa::a_vendor_ip_handoff_runs_the_real_firmware_on_the_models`, `sim-api` `vendor_ip` (2), `mcp` `vendor_ip` | Xilinx QEMU only (no Vivado: the vendor-ip models are native) | same |
 | `backend-rtl-xsim` `export` (3: RTL export vs funcsim netlist on the bus, VHDL with xvhdl, include/define/cache), `zynqsim` `export_sim::rtl_export_and_funcsim_netlist_pass_with_the_real_firmware_and_agree` (needs QEMU too: three projects, one trace digest) | Vivado XSim + the DPI library (the second also Xilinx QEMU); the other `export_sim` tests, `xsim-export`, `sim-api` `exportsim` and `mcp` `export` need nothing | prints `SKIPPED:` and returns |
+| `zynqsim` `handoff::the_exit_design_runs_end_to_end_from_the_bootbin_in_both_variants`, `zynqsim-mcp` `handoff::the_exit_design_runs_end_to_end_through_mcp` (P3 exit demonstration, ADR-019) | Xilinx QEMU + Vivado XSim + the DPI library (the other `handoff` tests and `sim-api` `xsa_import::a_boot_bin_next_to_an_xsa_gives_one_project_with_both` need nothing) | prints `SKIPPED:` and returns |
+
+### P3 exit demonstration (`fixtures/handoff`, `examples/vivado-handoff`)
+
+`crates/cli/tests/handoff.rs`: one `init --xsa ... --boot-bin ...` (and the `--export-sim`
+variant) is checked without any tool (mapping, `boot_bin` mode, no `cpu0`, validation, the old
+`init --boot` and `init --xsa --elf` paths unchanged); the end-to-end test runs, on real QEMU +
+XSim, the firmware booted from the BOOT.BIN: seven math vectors on the user RTL, the GPIO on the
+LEDs, three timer interrupts, a UART Lite line, `RESULT: ALL PASS`; three runs give one trace
+digest; the committed example project and the export variant give the same digest and UART text;
+the same firmware booted as an ELF differs only in the `qemu start elf=...` trace note. MCP:
+`project_create_from_xsa` (with `boot_bin`) + `project_open` + `sim_run`, both variants.
+
+What these cannot show: that a real FSBL, `ps7_init` or bitstream would boot the design on a
+board (none is run), that the Xilinx IP models match the real IP (`VERIFY:` items), or anything
+about a design other than this one.
 
 ### Xilinx IP models (`vendor-ip`)
 
