@@ -1,0 +1,43 @@
+# AXI Timer modes (vendor-ip model, ADR-026): capture mode with CAPTURETRIG0 on board button 0,
+# and cascade mode (64 bit) across the 32-bit boundary and as a periodic 64-bit counter.
+#
+# Firmware: firmware/timer_modes (Rust, no_std). It arms the capture first, then waits for the
+# rising edge of button 0. The host presses the button at 3 ms and releases it at 4 ms.
+#
+#   zynqsim run --project examples/timer-modes/project.toml --for 20ms \
+#     --at 3ms=btn0:down --at 4ms=btn0:up
+#   expect on UART1: "capture ... capture_ok=1", "cascade carry ... carry_ok=1",
+#   "cascade periodic irqs=3 ... periodic_ok=1", "RESULT: ALL PASS"
+#
+# Needs: the Xilinx QEMU (Vitis). No Vivado is needed to RUN this.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "native"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_timer_modes.elf"
+
+[native]
+axi_timer_0 = "axi_timer"
+
+[native_params.axi_timer_0]
+C_COUNT_WIDTH = 32
+CLK_FREQ_HZ = 100000000
+ADDRESS_SIZE = "0x10000"
+
+[connect]
+"axi_timer_0.S_AXI" = "M_AXI_GP0@0x42800000"
+"axi_timer_0.interrupt" = "IRQ_F2P[0]"
+"axi_timer_0.CAPTURETRIG0" = "board.btn0"

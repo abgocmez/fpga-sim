@@ -127,6 +127,17 @@ by the IIC master. Import: `xsa-import` `ip2` (5) against the Vivado fixtures, i
 IP. The XSA-driven runs are in `zynqsim` `xsa` and `zynqsim-mcp` `xsa`/`vendor_ip`. Needs the
 Xilinx QEMU for the `sim-api` and `xsa` runs, nothing for the unit and import tests.
 
+AXI Timer capture and cascade modes (ADR-026): `cargo test -p vendor-ip timer::` (capture on the
+rising edge with `TLR` and the count, no capture with `CAPT`, `ENT` or `MDT` clear, a level is
+not an edge, timer 1's own trigger, `ARHT` hold until `TINT` is cleared, cascade carry across
+the 32-bit boundary, 64-bit rollover interrupts, 64-bit capture, reset) and
+`vendor-ip::tests::timer_capture_inputs_are_bound_to_board_bits` (`board.btn0` and `board.sw2`
+bound to `CAPTURETRIG0/1`, a whole bus or a Pmod pin refused). `sim-api` `project::tests` refuses a
+capture input that is not a single bit or not a capture pin before the run. End to end through the
+real QEMU: `examples/timer-modes` (`firmware/timer_modes`) with button 0 pressed at 3 ms
+(`crates/cli/tests/timer_modes.rs`, two runs with equal trace digests). Needs the Xilinx QEMU;
+the unit tests need nothing.
+
 What the tests cannot show: that the models match the real IP. No Xilinx simulation model or
 board was available to compare against; the `VERIFY:` items in STATUS.md are the open questions.
 

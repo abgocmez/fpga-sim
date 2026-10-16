@@ -153,14 +153,32 @@ pub enum BoardSignal {
     Buttons,
     /// A Pmod port, 0..=4 for JA..JE (eight pins, both directions).
     Pmod(u8),
+    /// One slide switch, `board.swN` (bit N of the switches). Only a single-bit input such as a
+    /// timer's `CAPTURETRIG` takes it; a GPIO channel takes a whole bus.
+    Switch(u8),
+    /// One push button, `board.btnN` (bit N of the buttons); see [`BoardSignal::Switch`].
+    Button(u8),
 }
 
 impl BoardSignal {
     /// Parses `board.leds`, `board.sw` (`switches`), `board.btn` (`buttons`), `board.pmod_ja`..
-    /// `board.pmod_je`.
+    /// `board.pmod_je`, and the single bits `board.sw0`..`board.sw7`, `board.btn0`..`board.btn7`.
     pub fn parse(text: &str) -> Result<BoardSignal, String> {
         let t = text.trim().to_ascii_lowercase();
         let name = t.strip_prefix("board.").unwrap_or(&t);
+        let bit = |prefix: &str| -> Option<u8> {
+            let n = name.strip_prefix(prefix)?;
+            match n.as_bytes() {
+                [c @ b'0'..=b'7'] => Some(c - b'0'),
+                _ => None,
+            }
+        };
+        if let Some(n) = bit("sw") {
+            return Ok(BoardSignal::Switch(n));
+        }
+        if let Some(n) = bit("btn") {
+            return Ok(BoardSignal::Button(n));
+        }
         match name {
             "leds" | "led" => Ok(BoardSignal::Leds),
             "sw" | "switches" | "switch" => Ok(BoardSignal::Switches),
@@ -170,8 +188,8 @@ impl BoardSignal {
                 _ => Err(format!("`{text}`: Pmod ports are pmod_ja .. pmod_je")),
             },
             _ => Err(format!(
-                "`{text}` is not a board signal; expected board.leds, board.sw, board.btn \
-                 or board.pmod_ja .. board.pmod_je"
+                "`{text}` is not a board signal; expected board.leds, board.sw, board.btn, \
+                 board.swN, board.btnN (N = 0..7) or board.pmod_ja .. board.pmod_je"
             )),
         }
     }
@@ -180,9 +198,17 @@ impl BoardSignal {
     pub fn width(self) -> u32 {
         match self {
             BoardSignal::Pmod(_) => 8,
+            BoardSignal::Switch(_) | BoardSignal::Button(_) => 1,
             _ => 4,
         }
     }
+}
+
+/// A timer's `CAPTURETRIG<ch>` bound to one board switch or button.
+struct TriggerBind {
+    handle: TimerHandle,
+    ch: usize,
+    sig: BoardSignal,
 }
 
 /// One vendor IP instance to place on the PL.
@@ -271,6 +297,7 @@ pub struct VendorPl {
     rtl: Option<Box<dyn PlTarget + Send>>,
     gpios: Vec<GpioBind>,
     timers: Vec<(String, TimerHandle)>,
+    triggers: Vec<TriggerBind>,
     uarts: Vec<UartBind>,
     dmas: Vec<(String, DmaHandle)>,
     iics: Vec<IicBind>,
@@ -313,6 +340,7 @@ impl VendorPl {
             rtl,
             gpios: Vec::new(),
             timers: Vec::new(),
+            triggers: Vec::new(),
             uarts: Vec::new(),
             dmas: Vec::new(),
             iics: Vec::new(),
@@ -387,7 +415,14 @@ impl VendorPl {
                     if ch >= handle.config().channels() {
                         return Err(ctx(format!("{k} is bound but the IP has one channel")));
                     }
-                    sig[ch] = Some(BoardSignal::parse(v).map_err(ctx)?);
+                    let s = BoardSignal::parse(v).map_err(ctx)?;
+                    if matches!(s, BoardSignal::Switch(_) | BoardSignal::Button(_)) {
+                        return Err(ctx(format!(
+                            "{k} is bound to `{v}`, a single bit: a GPIO channel takes the whole \
+                             bus (board.sw or board.btn); single bits are for CAPTURETRIG<n>"
+                        )));
+                    }
+                    sig[ch] = Some(s);
                 }
                 self.gpios.push(GpioBind {
                     handle,
@@ -398,7 +433,32 @@ impl VendorPl {
             }
             "axi_timer" => {
                 let cfg = TimerConfig::from_params(&inst.params, size).map_err(ctx)?;
+                let one_timer = cfg.one_timer_only;
                 let (t, handle) = AxiTimer::new(&inst.name, cfg);
+                for (k, v) in &inst.bindings {
+                    let ch = match k.as_str() {
+                        "CAPTURETRIG0" => 0,
+                        "CAPTURETRIG1" if !one_timer => 1,
+                        other => {
+                            return Err(ctx(format!(
+                                "binding `{other}` is not a timer capture input (CAPTURETRIG0{})",
+                                if one_timer { "" } else { " or CAPTURETRIG1" }
+                            )));
+                        }
+                    };
+                    let sig = BoardSignal::parse(v).map_err(ctx)?;
+                    if !matches!(sig, BoardSignal::Switch(_) | BoardSignal::Button(_)) {
+                        return Err(ctx(format!(
+                            "{k} is bound to `{v}`: a capture trigger takes one switch or button \
+                             (board.swN or board.btnN)"
+                        )));
+                    }
+                    self.triggers.push(TriggerBind {
+                        handle: handle.clone(),
+                        ch,
+                        sig,
+                    });
+                }
                 self.timers.push((inst.name.clone(), handle));
                 Box::new(t)
             }
@@ -596,7 +656,10 @@ impl VendorPl {
                             feedback.push((gi, ch, u32::from(back)));
                         }
                     }
-                    BoardSignal::Switches | BoardSignal::Buttons => {}
+                    BoardSignal::Switches
+                    | BoardSignal::Buttons
+                    | BoardSignal::Switch(_)
+                    | BoardSignal::Button(_) => {}
                 }
             }
         }
@@ -678,6 +741,7 @@ impl PlTarget for VendorPl {
 
     fn has_board_pins(&self) -> bool {
         self.rtl.as_ref().is_some_and(|r| r.has_board_pins())
+            || !self.triggers.is_empty()
             || self.gpios.iter().any(|g| {
                 g.sig.iter().flatten().any(|s| {
                     matches!(
@@ -689,6 +753,14 @@ impl PlTarget for VendorPl {
     }
 
     fn set_board_inputs(&mut self, switches: u8, buttons: u8, now_ns: u64) {
+        for t in &self.triggers {
+            let level = match t.sig {
+                BoardSignal::Switch(n) => switches >> n & 1 != 0,
+                BoardSignal::Button(n) => buttons >> n & 1 != 0,
+                _ => false,
+            };
+            t.handle.capture_input(t.ch, level, now_ns);
+        }
         for g in &self.gpios {
             for ch in 0..2 {
                 match g.sig[ch] {
@@ -898,6 +970,67 @@ mod tests {
         assert!(BoardSignal::parse("board.pmod_jz").is_err());
         assert!(BoardSignal::parse("hdmi").is_err());
         assert_eq!(BoardSignal::Pmod(0).width(), 8);
+        // Single bits for capture triggers.
+        assert_eq!(BoardSignal::parse("board.btn0"), Ok(BoardSignal::Button(0)));
+        assert_eq!(BoardSignal::parse("board.sw7"), Ok(BoardSignal::Switch(7)));
+        assert_eq!(BoardSignal::parse("board.btn"), Ok(BoardSignal::Buttons));
+        assert!(BoardSignal::parse("board.btn8").is_err());
+        assert!(BoardSignal::parse("board.sw").is_ok());
+        assert_eq!(BoardSignal::Button(3).width(), 1);
+    }
+
+    #[test]
+    fn timer_capture_inputs_are_bound_to_board_bits() {
+        let mut pl = VendorPl::new(None);
+        let mut timer = inst("tmr", "axi_timer", 0x4280_0000, None, &[]);
+        timer
+            .bindings
+            .insert("CAPTURETRIG0".into(), "board.btn0".into());
+        timer
+            .bindings
+            .insert("CAPTURETRIG1".into(), "board.sw2".into());
+        pl.add(&timer).unwrap();
+        assert!(pl.has_board_pins(), "a capture input is a board pin");
+        let mut ps = Ps::default();
+        // Timer 0 in capture mode from 0 at t = 0.
+        wr(&mut pl, &mut ps, 0x4280_0004, 0, 0);
+        wr(&mut pl, &mut ps, 0x4280_0000, 1 << 5, 0);
+        wr(
+            &mut pl,
+            &mut ps,
+            0x4280_0000,
+            (1 << 0) | (1 << 3) | (1 << 7),
+            0,
+        );
+        // Button 0 pressed at 1 us: the counter (100 clocks) is captured.
+        pl.set_board_inputs(0, 0b0001, 1_000);
+        assert_eq!(rd(&mut pl, &mut ps, 0x4280_0004, 1_000), 100);
+        // Button 0 held and button 1 (not bound) pressed: no second edge on CAPTURETRIG0.
+        pl.set_board_inputs(0, 0b0011, 1_500);
+        assert_eq!(pl.timers()[0].1.captures(0), 1, "held high: one edge only");
+        // Switch 2 drives CAPTURETRIG1, but timer 1 is not armed: nothing is captured.
+        pl.set_board_inputs(0b0100, 0, 2_000);
+        assert_eq!(pl.timers()[0].1.captures(0), 1);
+        assert_eq!(pl.timers()[0].1.captures(1), 0, "timer 1 is not armed");
+        // A GPIO channel cannot take a single bit.
+        let mut g = inst("g", "axi_gpio", 0x4120_0000, None, &[("C_GPIO_WIDTH", "4")]);
+        g.bindings.insert("GPIO".into(), "board.btn0".into());
+        let e = VendorPl::new(None).add(&g).unwrap_err();
+        assert!(e.contains("single bit"), "{e}");
+        // A timer cannot take a whole bus, nor a Pmod pin, nor a register it does not have.
+        let mut bad = inst("t2", "axi_timer", 0x4290_0000, None, &[]);
+        bad.bindings
+            .insert("CAPTURETRIG0".into(), "board.btn".into());
+        assert!(VendorPl::new(None).add(&bad).is_err());
+        let mut bad = inst("t3", "axi_timer", 0x4290_0000, None, &[]);
+        bad.bindings
+            .insert("GENERATEOUT0".into(), "board.btn0".into());
+        assert!(
+            VendorPl::new(None)
+                .add(&bad)
+                .unwrap_err()
+                .contains("GENERATEOUT0")
+        );
     }
 
     #[test]

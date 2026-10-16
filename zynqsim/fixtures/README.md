@@ -44,6 +44,8 @@ interrupt, at `0x41210000`), an AXI Timer at `0x42800000` and an AXI UART Lite (
 `examples/gpio-timer-uart` (`elf/rust_gpio_timer_uart.elf`, built from `firmware/gpio_timer_uart`).
 `elf/rust_vendor_mix.elf` (`firmware/vendor_mix`) is the firmware for `zs_math_gpio.xsa` with the
 math RTL in XSim next to the GPIO model.
+`elf/rust_timer_modes.elf` (`firmware/timer_modes`) is the firmware of `examples/timer-modes`: the
+AXI Timer's capture mode on a board button and its 64-bit cascade mode (ADR-026).
 
 `xsa/zs_math_dma.hwh` is **hand-written, not Vivado output**: the math IP plus an AXI DMA (which
 has no model), to test that an unmodelled IP stops the run.
