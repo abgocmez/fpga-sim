@@ -1,0 +1,28 @@
+# The math example with the PL in Verilator: the prototype's `my_math_ip` (fixtures/rtl/math)
+# and its testbench `cosim_top`, which imports the `rp_*` DPI functions. Verilator builds them
+# with `--binary --timing`; the DPI library is the one `cargo xtask dpi` builds.
+# The same firmware and PL as examples/math-qemu, through RTL instead of the native model.
+#
+# Needs: Xilinx QEMU (Vitis), Verilator (see docs/INSTALL.md), the DPI library (`cargo xtask dpi`).
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "verilator"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/math_test.elf"
+
+[rtl]
+files = ["../../fixtures/rtl/math/my_math_ip.v", "../../fixtures/rtl/math/cosim_top.sv"]
+top = "cosim_top"

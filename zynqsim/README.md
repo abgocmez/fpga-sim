@@ -63,10 +63,15 @@ cargo xtask dpi                                    # once: the XSim DPI library
 cargo xtask dpi-shared                             # optional: the shared-object DPI library (Questa, VCS, Xcelium; ADR-028)
 zynqsim run --project examples/math-qemu/project.toml --for 20ms        # QEMU + native PL
 zynqsim run --project examples/dma-regression/project.toml --for 3ms    # QEMU + RTL in XSim
+zynqsim run --project examples/math-verilator/project.toml --for 3ms     # QEMU + RTL in Verilator
 ```
 
 `examples/dma-regression` is the prototype's two-core DMA regression; expect six `PASS` lines and
 `RESULT: ALL PASS`. Add `--json` for the trace digest, which is identical from run to run.
+
+The Verilator line needs Verilator unpacked as described in `docs/INSTALL.md` (no system
+change); `examples/math-verilator` is the math firmware with the same RTL as `math-qemu` and
+prints the same `RESULT: ALL PASS` with 21 bus accesses. Verilator is 2-state; see `docs/RTL_SUBSET.md`.
 
 ### The virtual Zybo (interactive shell, LEDs, switches, buttons, image filter)
 

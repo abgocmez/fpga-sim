@@ -313,7 +313,7 @@ fn project_diagnostics_do_not_replace_a_running_simulation() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|x| x["name"] == "verilator" && x["implemented"] == false)
+            .any(|x| x["name"] == "verilator" && x["implemented"] == true)
     );
 }
 

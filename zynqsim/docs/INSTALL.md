@@ -37,6 +37,26 @@ that matters.
 Install them the way AMD documents for your platform, with a licence for each.
 ZynqSim never bundles them and never downloads them.
 
+### Verilator (optional, open source)
+
+Verilator is the second RTL backend (`pl = "verilator"`, ADR-027). It is installed by unpacking
+a portable build, with nothing written to the system:
+
+1. Download the Windows x64 archive `oss-cad-suite-windows-x64-<date>.tgz` from
+   `github.com/YosysHQ/oss-cad-suite-build/releases` (about 600 MB).
+2. Unpack it into `%TEMP%\zs-tools\verilator` so that `...\verilator\oss-cad-suite\bin\verilator_bin.exe`
+   exists. Do not run anything from it except the programs ZynqSim starts.
+3. Verilator's build also needs three programs that the archive does not contain. Put them on
+   `PATH`, or use the places ZynqSim looks in:
+   * a C++ compiler: MinGW-w64 `g++` (for example the `mingw1310_64` of Qt Tools, or MSYS2);
+   * GNU make: a copy of MinGW's `mingw32-make.exe` named `make.exe` in `%TEMP%\zs-tools\tools`
+     (or `make` on `PATH`);
+   * a POSIX shell `sh.exe`: Git for Windows (`C:\Program Files\Git\usr\bin` is searched).
+
+`zynqsim inspect` shows `verilator` as found when the driver is located. The build needs the
+DPI library (`cargo xtask dpi`), like XSim. Verilator's own `verilator` launcher is a Perl script;
+ZynqSim uses `verilator_bin.exe` directly.
+
 Environment variables (all optional):
 
 | Variable | Value |
@@ -45,9 +65,11 @@ Environment variables (all optional):
 | `ZYNQSIM_DTB` | the co-simulation device tree, if it is not next to QEMU |
 | `ZYNQSIM_VIVADO` | the Vivado install directory, for XSim |
 | `XILINX_VIVADO` | the same directory, read when `ZYNQSIM_VIVADO` is unset; also used for export file lists |
+| `ZYNQSIM_VERILATOR` | `verilator_bin.exe` (or the folder with it), when it is not on `PATH` nor in the default folder above |
+| `VERILATOR_ROOT` | Verilator's `share\verilator` folder, if it is not beside `bin` (read when set) |
 | `ZYNQSIM_DPI_LIB` | the XSim DPI library file (`libxsim_dpi.a`), when it is not in `lib/` next to the programs or in `target/dpi/release` |
 | `ZYNQSIM_WORK_DIR` | where run directories go (default: a `zynqsim` folder in the temporary directory) |
-| `ZYNQSIM_NO_BUILD_CACHE` | `1` disables the XSim build cache |
+| `ZYNQSIM_NO_BUILD_CACHE` | `1` disables the XSim and Verilator build caches |
 
 `zynqsim inspect` lists every backend, whether it was found and where.
 
@@ -107,8 +129,9 @@ job. To run that check again on an archive: `cargo xtask dist-verify <archive>`.
 | The GUI (`zynqsim-gui`): board, 3D view, waveforms, project loader, with the demo engine | Its firmware runs | Its RTL runs |
 | The MCP server (`zynqsim-mcp`): the same tools, for the same engines | | |
 
-Verilator and Icarus Verilog are stubs (`unsupported`, exit code 3), and the
-native RTL engine is not built. Their examples fail with a message, not a crash.
+Verilator needs the install above (`pl = "verilator"`, `examples/math-verilator`). Icarus Verilog
+is not implemented and the native RTL engine is not built: `backends.pl = "icarus"` is refused
+with a message, not a crash.
 
 ## Troubleshooting
 

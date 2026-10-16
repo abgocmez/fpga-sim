@@ -627,7 +627,7 @@ const PL_BACKENDS: &[&str] = &["demo", "verilator", "icarus", "xsim", "native"];
 /// PS backends that exist in this build.
 const IMPLEMENTED_PS: &[&str] = &["demo", "qemu"];
 /// PL backends that exist in this build.
-const IMPLEMENTED_PL: &[&str] = &["demo", "native", "xsim"];
+const IMPLEMENTED_PL: &[&str] = &["demo", "native", "xsim", "verilator"];
 
 impl Project {
     /// The `[rtl] protocol_checkers` setting (the default when there is no `[rtl]`).
@@ -827,45 +827,7 @@ impl Project {
                         bindings: self.native_bindings(name),
                     });
                 }
-                let rtl = if self.backends.pl == "xsim" {
-                    let r = self.rtl.as_ref().ok_or_else(|| {
-                        ApiError::invalid_argument("backends.pl = \"xsim\" needs [rtl]")
-                    })?;
-                    let vivado_root = std::env::var_os("ZYNQSIM_VIVADO")
-                        .map(PathBuf::from)
-                        .or_else(crate::tools::find_vivado)
-                        .ok_or_else(|| {
-                            ApiError::not_found("Vivado (XSim) was not found").with_hint(
-                                "install Vivado, set XILINX_VIVADO, or set ZYNQSIM_VIVADO to the install directory",
-                            )
-                        })?;
-                    let dpi_lib = crate::tools::find_dpi_lib().ok_or_else(|| {
-                        ApiError::not_found("the XSim DPI library (libxsim_dpi.a) was not found")
-                            .with_hint("build it with `cargo xtask dpi`, or set ZYNQSIM_DPI_LIB")
-                    })?;
-                    let resolved = crate::exportsim::resolve_rtl(r, base);
-                    if let Some(e) = resolved.first_error() {
-                        return Err(ApiError::invalid_argument(e));
-                    }
-                    // `protocol_checkers = false`: the generated testbench compiles the
-                    // checkers out (ADR-025).
-                    let mut defines = r.defines.clone();
-                    if r.protocol_checkers == ProtocolCheckers::Off {
-                        defines.push("ZS_NO_PROTOCOL_CHECKERS".to_string());
-                    }
-                    Some(crate::RtlSpec {
-                        vivado_root,
-                        sources: resolved.files,
-                        top: resolved.top.unwrap_or_default(),
-                        defines,
-                        dpi_lib,
-                        waves: r.waves,
-                        export: resolved.export,
-                        protocol_strict: r.protocol_checkers == ProtocolCheckers::Strict,
-                    })
-                } else {
-                    None
-                };
+                let rtl = self.rtl_spec(base)?;
                 let uart = match self.host.get("uart1").map(String::as_str) {
                     Some("tcp") => backend_qemu::UartMode::Tcp,
                     _ => backend_qemu::UartMode::File,
@@ -905,11 +867,12 @@ impl Project {
                     rtl,
                     board: board_def.name.clone(),
                     board_def: Some(board_def),
-                    pl_name: if self.backends.pl == "xsim" {
-                        if self.native.is_empty() {
-                            "xsim"
-                        } else {
-                            "xsim+native"
+                    pl_name: if matches!(self.backends.pl.as_str(), "xsim" | "verilator") {
+                        match (self.backends.pl.as_str(), self.native.is_empty()) {
+                            ("xsim", true) => "xsim",
+                            ("xsim", false) => "xsim+native",
+                            ("verilator", true) => "verilator",
+                            _ => "verilator+native",
                         }
                         .to_string()
                     } else if self.native.is_empty() {
@@ -1034,19 +997,32 @@ impl Project {
                 ));
             }
         }
-        if self.backends.pl == "xsim" {
+        if matches!(self.backends.pl.as_str(), "xsim" | "verilator") {
+            let pl = self.backends.pl.as_str();
             match &self.rtl {
                 Some(r)
                     if (!r.files.is_empty() && r.top.is_some())
                         || r.export_dir.is_some()
                         || r.filelist.is_some() =>
                 {
-                    d.extend(crate::exportsim::resolve_rtl(r, base).diagnostics);
+                    let resolved = crate::exportsim::resolve_rtl(r, base);
+                    if pl == "verilator" {
+                        for msg in verilator_rtl_problems(r, &resolved.files) {
+                            d.push(err("rtl", msg));
+                        }
+                    }
+                    d.extend(resolved.diagnostics);
                 }
                 _ => d.push(err(
                     "rtl",
-                    "backends.pl = \"xsim\" needs [rtl] with `files` and `top`, or an \
-                     `export_dir` / `filelist`",
+                    format!(
+                        "backends.pl = \"{pl}\" needs [rtl] with `files` and `top`{}",
+                        if pl == "xsim" {
+                            ", or an `export_dir` / `filelist`"
+                        } else {
+                            ""
+                        }
+                    ),
                 )),
             }
             if self.backends.ps == "demo" {
@@ -1106,11 +1082,13 @@ impl Project {
                 }
             }
         }
-        if !self.native.is_empty() && !matches!(self.backends.pl.as_str(), "native" | "xsim") {
+        if !self.native.is_empty()
+            && !matches!(self.backends.pl.as_str(), "native" | "xsim" | "verilator")
+        {
             d.push(warn(
                 "native",
-                "ignored: set `backends.pl = \"native\"` (or \"xsim\" next to RTL) to use \
-                 native PL models",
+                "ignored: set `backends.pl = \"native\"` (or \"xsim\" / \"verilator\" next to RTL) \
+                 to use native PL models",
             ));
         }
 
@@ -1332,10 +1310,12 @@ impl Project {
                                 devices::KINDS.join(", ")
                             ),
                         ));
-                    } else if self.backends.pl != "xsim" && !self.native_drives_pmod(port) {
+                    } else if !matches!(self.backends.pl.as_str(), "xsim" | "verilator")
+                        && !self.native_drives_pmod(port)
+                    {
                         d.push(warn(
                             &field,
-                            "Pmod pins are driven only by an RTL design in XSim (backends.pl = \"xsim\") \
+                            "Pmod pins are driven only by an RTL design (backends.pl = \"xsim\" or \"verilator\") \
                              or by a native model bound to the port (`\"axi_iic_0.IIC\" = \"board.pmod_ja\"`)",
                         ));
                     }
@@ -1512,6 +1492,66 @@ impl Project {
 
     /// The SD card and QSPI flash this project attaches. A folder card is
     /// built into an image here, once.
+    /// The PL design of `backends.pl = "xsim"` or `"verilator"`: the simulator is located,
+    /// the sources resolved. `None` for the other PL backends.
+    fn rtl_spec(&self, base: &Path) -> Result<Option<crate::RtlSpec>, ApiError> {
+        let pl = self.backends.pl.as_str();
+        if !matches!(pl, "xsim" | "verilator") {
+            return Ok(None);
+        }
+        let r = self.rtl.as_ref().ok_or_else(|| {
+            ApiError::invalid_argument(format!("backends.pl = \"{pl}\" needs [rtl]"))
+        })?;
+        let tool = if pl == "xsim" {
+            let vivado_root = std::env::var_os("ZYNQSIM_VIVADO")
+                .map(PathBuf::from)
+                .or_else(crate::tools::find_vivado)
+                .ok_or_else(|| {
+                    ApiError::not_found("Vivado (XSim) was not found").with_hint(
+                        "install Vivado, set XILINX_VIVADO, or set ZYNQSIM_VIVADO to the install directory",
+                    )
+                })?;
+            crate::RtlTool::Xsim { vivado_root }
+        } else {
+            let tools = backend_rtl_verilator::tools::find().ok_or_else(|| {
+                ApiError::not_found("Verilator was not found").with_hint(
+                    "unpack the oss-cad-suite Windows archive to <temp>\\zs-tools\\verilator\\oss-cad-suite, \
+                     or set ZYNQSIM_VERILATOR to verilator_bin.exe; see docs/INSTALL.md",
+                )
+            })?;
+            crate::RtlTool::Verilator(tools)
+        };
+        let dpi_lib = crate::tools::find_dpi_lib().ok_or_else(|| {
+            ApiError::not_found("the XSim DPI library (libxsim_dpi.a) was not found")
+                .with_hint("build it with `cargo xtask dpi`, or set ZYNQSIM_DPI_LIB")
+        })?;
+        let resolved = crate::exportsim::resolve_rtl(r, base);
+        if let Some(e) = resolved.first_error() {
+            return Err(ApiError::invalid_argument(e));
+        }
+        if pl == "verilator" {
+            if let Some(e) = verilator_rtl_problems(r, &resolved.files).first() {
+                return Err(ApiError::invalid_argument(e.clone()));
+            }
+        }
+        // `protocol_checkers = false`: the generated testbench compiles the checkers out
+        // (ADR-025).
+        let mut defines = r.defines.clone();
+        if r.protocol_checkers == ProtocolCheckers::Off {
+            defines.push("ZS_NO_PROTOCOL_CHECKERS".to_string());
+        }
+        Ok(Some(crate::RtlSpec {
+            tool,
+            sources: resolved.files,
+            top: resolved.top.unwrap_or_default(),
+            defines,
+            dpi_lib,
+            waves: r.waves,
+            export: resolved.export,
+            protocol_strict: r.protocol_checkers == ProtocolCheckers::Strict,
+        }))
+    }
+
     fn storage_spec(&self, base: &Path) -> Result<crate::StorageSpec, ApiError> {
         let mut spec = crate::StorageSpec::default();
         let Some(s) = &self.storage else {
@@ -1636,6 +1676,35 @@ fn port_missing(board: Option<&BoardDef>, port: u8) -> Option<String> {
     }
 }
 
+/// What `backends.pl = "verilator"` cannot take, as messages for the user: waveforms, Vivado
+/// simulation exports and VHDL are XSim's.
+fn verilator_rtl_problems(r: &RtlSection, files: &[PathBuf]) -> Vec<String> {
+    let mut out = Vec::new();
+    if r.waves {
+        out.push(
+            "`[rtl] waves = true` is not recorded by the Verilator backend yet; use \
+             backends.pl = \"xsim\" for a waveform database"
+                .to_string(),
+        );
+    }
+    if r.export_dir.is_some() || r.filelist.is_some() {
+        out.push(
+            "`export_dir` / `filelist` (Vivado simulation exports) run in XSim only; list the \
+             sources in `files` with `top` for backends.pl = \"verilator\""
+                .to_string(),
+        );
+    }
+    for f in files {
+        if xsim_export::Lang::from_path(f).is_some_and(xsim_export::Lang::is_vhdl) {
+            out.push(format!(
+                "{}: VHDL is not supported by the Verilator backend; use backends.pl = \"xsim\"",
+                f.display()
+            ));
+        }
+    }
+    out
+}
+
 fn resolve(base: &Path, rel: &str) -> PathBuf {
     let p = Path::new(rel);
     if p.is_absolute() {
@@ -1726,7 +1795,7 @@ pub fn starter_project_toml() -> &'static str {
      \n\
      [backends]\n\
      ps = \"demo\"   # \"qemu\" and \"native\" are not implemented yet\n\
-     pl = \"demo\"   # \"verilator\" | \"icarus\" | \"xsim\" | \"native\" not implemented yet\n\
+     pl = \"demo\"   # \"icarus\" is not implemented yet; \"verilator\", \"xsim\" and \"native\" need a PS and [rtl] or [native]\n\
      \n\
      [sim]\n\
      quantum_ns = 1000\n\
@@ -2197,5 +2266,36 @@ tmr = \"axi_timer\"
             errors("\"tmr.CAPTURETRIG0\" = \"board.pmod_ja\"")[0].contains("one switch or button")
         );
         assert!(errors("\"tmr.GENERATEOUT0\" = \"board.btn0\"")[0].contains("not a capture input"));
+    }
+
+    #[test]
+    fn verilator_refuses_what_only_xsim_can_run() {
+        let dir = std::env::temp_dir().join(format!("zs-verilator-proj-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("top.sv"), "module top; endmodule\n").unwrap();
+        std::fs::write(dir.join("core.vhd"), "entity core is end;\n").unwrap();
+        let errors_for = |rtl: &str| -> Vec<String> {
+            let text = format!(
+                "schema_version = 1\n[board]\nname = \"zybo-z7-20\"\n[backends]\nps = \"qemu\"\n\
+                 pl = \"verilator\"\n[boot]\nmode = \"elf\"\n[cpu0]\nelf = \"x.elf\"\n[rtl]\n{rtl}\n"
+            );
+            let p = Project::from_toml(&text).unwrap();
+            p.validate(&dir)
+                .into_iter()
+                .filter(|d| d.severity == Severity::Error && d.field == "rtl")
+                .map(|d| d.message)
+                .collect()
+        };
+        // A plain design is accepted (no error on `rtl`).
+        assert!(errors_for("files = [\"top.sv\"]\ntop = \"top\"").is_empty());
+        let waves = errors_for("files = [\"top.sv\"]\ntop = \"top\"\nwaves = true");
+        assert!(waves.iter().any(|m| m.contains("waves")), "{waves:?}");
+        let export = errors_for("export_dir = \"exp\"");
+        assert!(export.iter().any(|m| m.contains("XSim only")), "{export:?}");
+        let vhdl = errors_for("files = [\"core.vhd\"]\ntop = \"core\"");
+        assert!(vhdl.iter().any(|m| m.contains("VHDL")), "{vhdl:?}");
+        let none = errors_for("top = \"top\"");
+        assert!(none.iter().any(|m| m.contains("needs [rtl]")), "{none:?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

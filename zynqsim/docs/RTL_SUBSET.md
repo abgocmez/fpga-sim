@@ -5,7 +5,7 @@ The tool prints **file, line and construct** for anything it cannot take: list-l
 and `project_validate`; language-level problems are the compiler's, quoted from `build.log` in
 the error (`xvlog` / `xvhdl` / `xelab` messages carry file and line).
 
-## `xsim` (Vivado XSim; the only RTL backend in this build)
+## `xsim` (Vivado XSim)
 
 XSim is the vendor simulator, so the language support is Vivado's, not a subset ZynqSim defines.
 What ZynqSim adds or restricts:
@@ -22,11 +22,35 @@ What ZynqSim adds or restricts:
 | Design-side DPI/VPI of the export (`-sv_lib`) | no (reported); the testbench's `rp_*` DPI is ZynqSim's own | `xsim-export::tests::dpi_libraries_...` |
 | The testbench top | user-supplied, or generated for an AXI4-Lite slave (`init --ip`, `init --export-sim`) | `sim-api::tbgen`, `zynqsim::init_ip_*` |
 
-## `verilator`, `icarus`
+## `verilator` (Verilator 5, `--binary --timing`; ADR-027)
 
-Not built (`backends.pl` rejects them with a message). Verilator is 2-state and has no UNISIM
-library here; Icarus would need `unisims_ver` compiled for it. Their subsets will be listed when
-the adapters exist.
+Verilator translates the sources to C++ and compiles them with the host's C++ compiler; the
+testbench's `rp_*` DPI imports are satisfied by the same `xsim-dpi` archive XSim uses. Windows only
+for now, and **2-state**: there is no X or Z, an uninitialised variable starts at 0.
+
+| Input | Support | Evidence |
+|---|---|---|
+| Verilog-2001 and SystemVerilog as Verilator 5.053 reads them (`.v`, `.sv`), `` `include ``, `-D` defines (`NAME=VALUE`) | yes | `backend-rtl-verilator::tests::math` (`my_math_ip` + `cosim_top`), `cli::verilator` |
+| Behavioural testbench: `initial`, `#` delays, `$display`, `$finish`, `$readmemh` | yes (`--timing` is passed; `--binary` enables it too) | `cosim_top` uses `#5` clocks and `@(posedge)`; `$readmemh` not run here |
+| DPI-C imports with `string`, `longint`, `output int` arguments | yes | `cosim_top.sv` (`rp_open`, `rp_next`, `rp_done`) |
+| Classes with `rand` and `randomize()`, `covergroup`, concurrent `assert property`, `bind`, `fork`/`join`, `program` blocks, `real` | accepted by the front end; the build succeeded and only warnings were printed (`IMPLICITSTATIC`, `WIDTHTRUNC`). Not run | probes, `--binary` only (Verilator 5.053) |
+| `specify` blocks | ignored with `%Warning-SPECIFYIGN`; the timing they describe is **not** simulated | probe |
+| `interface` declared inside a module, then instantiated | **refused**: `%Error-UNSUPPORTED: Unsupported: interface decls within module decls`, reported with file, line and the instance text | probe |
+| Syntax errors | refused: `%Error: file:line:col: syntax error ...` with the source line | probe |
+| VHDL | **no**: refused by the project check (`backends.pl = "xsim"` for VHDL) | `sim-api::project` tests |
+| `export_dir` / `filelist` (Vivado simulation exports, UNISIM, `write_verilog` netlists) | **no**: refused by the project check | `sim-api::project` tests |
+| `[rtl] waves = true` (VCD/FST) | **no**: refused by the project check; use XSim's `.wdb` | `sim-api::project` tests |
+| Unisims, Vivado IP, encrypted IP | no UNISIM library is given to Verilator here | not tested |
+| Design-side DPI/VPI of the design (`-sv_lib`) | no, as for XSim | not tested |
+
+The messages are `%Error` / `%Warning` lines of Verilator, parsed by `backend-rtl-verilator::diag`;
+the adapter prints the first errors with file, line and construct when the build fails.
+
+## `icarus`
+
+Not built, and not planned for now. Icarus Verilog has no DPI-C: the testbench's `rp_*` imports
+would need a VPI module written in Rust (a second `cdylib` with the VPI entry points), which is
+not done (ADR-027). `backends.pl = "icarus"` is refused with a message.
 
 ## `native` (Rust PL models)
 

@@ -12,6 +12,7 @@ workspace = true
 devices = { path = "../devices" }
 backend-qemu = { version = "0.1.0", path = "../backend-qemu" }
 backend-rtl-xsim = { version = "0.1.0", path = "../backend-rtl-xsim" }
+backend-rtl-verilator = { version = "0.1.0", path = "../backend-rtl-verilator" }
 fatfs = { version = "0.3.6", default-features = false, features = ["std", "alloc"] }
 fscommon = "0.1.1"
 gimli = { version = "0.34.0", default-features = false, features = ["read", "std"] }
