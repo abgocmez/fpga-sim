@@ -1198,7 +1198,32 @@ endmodule
 /// `to` relative to the directory `from` (both made absolute first), with
 /// forward slashes; `to` itself if they share no root (other drive).
 pub fn relative_path(from: &std::path::Path, to: &std::path::Path) -> String {
-    let abs = |p: &std::path::Path| std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
+    // Resolve symbolic links of the part that exists (macOS: /var is
+    // /private/var, so a temp dir and a checkout would not share a root);
+    // the rest is appended as given. Both sides get the same treatment, so a
+    // Windows `\?\` prefix cancels out.
+    let abs = |p: &std::path::Path| {
+        let a = std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
+        let mut existing = a.clone();
+        let mut tail: Vec<std::ffi::OsString> = Vec::new();
+        loop {
+            if let Ok(real) = existing.canonicalize() {
+                let mut out = real;
+                out.extend(tail.iter().rev());
+                return out;
+            }
+            match (
+                existing.file_name().map(|n| n.to_os_string()),
+                existing.parent(),
+            ) {
+                (Some(n), Some(parent)) => {
+                    tail.push(n);
+                    existing = parent.to_path_buf();
+                }
+                _ => return a,
+            }
+        }
+    };
     let (f, t) = (abs(from), abs(to));
     let fc: Vec<_> = f.components().collect();
     let tc: Vec<_> = t.components().collect();
