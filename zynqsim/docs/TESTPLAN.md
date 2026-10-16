@@ -223,3 +223,17 @@ tests against the bus; they are not run on the native engine.
 
 Not covered: determinism across processes; any comparison with QEMU or a board; the interrupt
 path through a real core (the core is the other engineer's crate).
+## Native PS ISS (P5, `cpu-a9`)
+
+| Area | Tests | What they establish |
+|---|---|---|
+| `cpu-a9` `dp_props` (3) | 10000 seeded inputs per data-processing opcode against an independent reference of the NZCV rules; random immediate shifts; register shift by zero keeps C | the flag and carry rules of the ARM ARM hold for the interpreter |
+| `cpu-a9` `isa` (31) | assembled programs (`tests/data/isa_words.inc.rs`, from `gen_isa.py`): branches, loads and stores, LDM/STM, multiplies, halfword multiplies, bit operations, extends, saturation, parallel ops, PKH, MSR/MRS, banking, SVC, undefined, data and prefetch aborts, IRQ and FIQ with return, WFI/WFE/SEV, CP15, MMU refusal, exclusive monitor, VFP and Thumb reporting | each class of ADR-030 works as the ARM ARM says, or is reported as unimplemented |
+| `cpu-a9` `rust_firmware` (3) | `rust_hello.elf` runs to completion; every distinct instruction word of the 31 Rust firmware images decodes to an implemented class; a per-image report (`RUSTFW` lines) | the firmware the repository builds runs on the interpreter; no image needs Thumb, VFP or the MMU |
+| `zynqsim` `cpu_a9_diff` (1, skips without QEMU) | `rust_hello` through `zynqsim run` (Xilinx QEMU) and through the interpreter: UART text identical | a native run prints what QEMU prints for that image |
+
+To rebuild the assembled test words: `python crates/cpu-a9/tests/data/gen_isa.py crates/cpu-a9/tests/data/isa_groups.s crates/cpu-a9/tests/data/isa_words.inc.rs`
+(needs the Xilinx GNU assembler; `ARM_GCC_BIN` overrides its directory). The tests do not need the toolchain.
+
+Limits: no instruction-by-instruction differential run (needs the QEMU gdb stub driven per step); the
+firmware word sweep proves decoding, not behaviour; `rust_firmware` assertions cover one image only.
