@@ -154,12 +154,7 @@ impl ProjectDraft {
             if files.is_empty() {
                 return Err("the PL needs at least one RTL source file".to_string());
             }
-            let prev = p.rtl.take().unwrap_or(RtlSection {
-                files: Vec::new(),
-                top: None,
-                defines: Vec::new(),
-                waves: false,
-            });
+            let prev = p.rtl.take().unwrap_or_default();
             p.rtl = Some(RtlSection {
                 files,
                 top: non_empty(&self.rtl_top),

@@ -28,6 +28,7 @@ toml = "1.1.8"
 trace = { version = "0.1.0", path = "../trace" }
 vendor-ip = { version = "0.1.0", path = "../vendor-ip" }
 xsa-import = { version = "0.1.0", path = "../xsa-import" }
+xsim-export = { version = "0.1.0", path = "../xsim-export" }
 yaxpeax-arch = "0.3.2"
 yaxpeax-arm = "0.5.0"
 

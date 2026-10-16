@@ -14,6 +14,8 @@ mod duration;
 mod elf;
 mod engine;
 mod error;
+pub mod exportinit;
+pub mod exportsim;
 mod netlog;
 mod project;
 mod qemu_engine;

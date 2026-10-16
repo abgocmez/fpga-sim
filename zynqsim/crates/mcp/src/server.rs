@@ -282,6 +282,7 @@ impl McpServer {
             "project_validate" => self.project_validate(a),
             "project_create_from_xsa" => self.project_create_from_xsa(a),
             "boot_inspect" => self.boot_inspect(a),
+            "project_create_from_export" => self.project_create_from_export(a),
             "sim_run" => {
                 let d = parse_duration(str_arg(a, "duration")?)?;
                 self.run_chunked(d, call)?;
@@ -851,6 +852,50 @@ impl McpServer {
             "interrupts": d.interrupts,
             "testbench_module": plan.testbench_module,
             "unmodelled": plan.unmodelled,
+            "warnings": plan.warnings,
+            "diagnostics": diagnostics,
+            "errors": errors,
+            "runnable": errors == 0,
+        })))
+    }
+
+    /// `project_create_from_export`: a project from a Vivado simulation export.
+    fn project_create_from_export(&mut self, a: &Value) -> Result<Out, ApiError> {
+        use sim_api::exportinit::{InitOptions, plan_init};
+        let export = self.resolve(str_arg(a, "export_path")?, true)?;
+        let out_dir = self.resolve(str_arg(a, "out_dir")?, false)?;
+        let opts = InitOptions {
+            elf: a.get("elf").and_then(Value::as_str).map(|e| {
+                self.resolve(e, true)
+                    .map_or_else(|_| e.to_string(), |p| p.display().to_string())
+            }),
+            elf1: None,
+            module: a.get("module").and_then(Value::as_str).map(String::from),
+            base: None,
+        };
+        let plan = plan_init(&export, &out_dir, &opts)?;
+        let created = plan.write(&out_dir)?;
+        let file = out_dir.join("project.toml");
+        let project = Project::load(&file)?;
+        let diagnostics = project.validate(&out_dir);
+        let errors = diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .count();
+        Ok(Out::json(json!({
+            "project": file.display().to_string(),
+            "report": out_dir.join("export-report.md").display().to_string(),
+            "created": created.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+            "top": plan.top,
+            "driven_module": plan.driven_module,
+            "sources": plan.design.sources.iter().map(|s| json!({
+                "path": s.path.display().to_string(),
+                "language": s.lang.prj_word(),
+                "library": s.library,
+                "listed_at": s.origin.to_string(),
+            })).collect::<Vec<_>>(),
+            "link_libraries": plan.design.link_libs,
+            "export_tops": plan.design.tops,
             "warnings": plan.warnings,
             "diagnostics": diagnostics,
             "errors": errors,

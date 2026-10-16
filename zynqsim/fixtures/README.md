@@ -44,6 +44,18 @@ math RTL in XSim next to the GPIO model.
 `xsa/zs_math_dma.hwh` is **hand-written, not Vivado output**: the math IP plus an AXI DMA (which
 has no model), to test that an unmodelled IP stops the run.
 
+## `export/`
+
+Vivado 2022.1 simulation exports of `my_math_ip` + `cosim_top`, written by
+`export/make_export.tcl` (batch mode; the script documents how to run it): `rtl/` (the two
+sources the lists name), `behav/xsim/` (`export_simulation -simulator xsim`), `postsynth/`
+(`launch_simulation -mode post-synthesis -type functional -scripts_only`: the funcsim netlist
+`cosim_top_func_synth.v`, `cosim_top_vlog.prj`, the `.bat` scripts), `my_math_ip_funcsim.v`
+(`write_verilog -mode funcsim`, UNISIM cells), and `vhdl/` (a hand-written VHDL twin of the math
+IP and a `.prj` in Vivado's shape). The only edit to Vivado's output is that the source paths in
+the lists were rewritten to `rtl/NAME` (relative to each list) so the folders resolve anywhere.
+Used by `xsim-export`, `backend-rtl-xsim`, `sim-api`, `zynqsim` and `zynqsim-mcp` tests.
+
 ## `rtl/`
 
 User-supplied RTL and testbench tops from the prototype, used as inputs to the XSim backend.

@@ -1,0 +1,9 @@
+verilog xil_defaultlib  \
+"../../rtl/my_math_ip.v" \
+
+sv xil_defaultlib  \
+"../../rtl/cosim_top.sv" \
+
+verilog xil_defaultlib "glbl.v"
+
+nosort

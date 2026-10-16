@@ -498,6 +498,7 @@ dependencies = [
  "backend-qemu",
  "interop",
  "pl-api",
+ "xsim-export",
 ]
 
 [[package]]
@@ -3056,6 +3057,7 @@ dependencies = [
  "trace",
  "vendor-ip",
  "xsa-import",
+ "xsim-export",
  "yaxpeax-arch",
  "yaxpeax-arm",
 ]
@@ -4635,6 +4637,10 @@ version = "0.1.0"
 dependencies = [
  "interop",
 ]
+
+[[package]]
+name = "xsim-export"
+version = "0.1.0"
 
 [[package]]
 name = "xtask"

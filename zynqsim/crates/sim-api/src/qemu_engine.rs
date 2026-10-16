@@ -83,6 +83,8 @@ pub struct RtlSpec {
     pub dpi_lib: PathBuf,
     /// Record a waveform database.
     pub waves: bool,
+    /// A Vivado simulation export compiled before `sources` (`[rtl] export_dir`/`filelist`).
+    pub export: Option<xsim_export::ExportDesign>,
 }
 
 /// Where the contents of the SD card or the QSPI flash come from.
@@ -759,12 +761,14 @@ impl QemuEngine {
                         .then(|| spec.work_dir.parent().map(|p| p.join("xsim-cache")))
                         .flatten(),
                 };
-                Some(Box::new(backend_rtl_xsim::XsimPl::start(&cfg).map_err(
-                    |e| {
-                        ApiError::io(e.to_string())
-                            .with_hint("see build.log / xsim.out.log in the run directory")
-                    },
-                )?))
+                Some(Box::new(
+                    backend_rtl_xsim::XsimPl::start_with(&cfg, rtl.export.as_ref()).map_err(
+                        |e| {
+                            ApiError::io(e.to_string())
+                                .with_hint("see build.log / xsim.out.log in the run directory")
+                        },
+                    )?,
+                ))
             }
             None => None,
         };

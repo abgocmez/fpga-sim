@@ -69,8 +69,8 @@ control plane drive it). Caveats are listed under *Known limits of the P1 engine
   Tests that need it print `SKIPPED:` and pass vacuously when it is absent, so check the output.
 * **The RTL testbench top is user-supplied**, except that `zynqsim init --ip` generates one for an
   AXI4-Lite slave, or `init --xsa` from a Vivado handoff (see *XSA / HWH ingestion*). Generation
-  from `[connect]`, `[connect]` for RTL ports and globs in `rtl.files` are not implemented
-  (milestone P3).
+  from `[connect]` and `[connect]` for RTL ports are not implemented (milestone P3). Globs in
+  `rtl.files` and Vivado simulation exports are (see *Vivado simulation exports and netlists*).
 * **QEMU sessions cannot** change the quantum, and cannot read registers *at an arbitrary
   time*. A machine that is merely paused sits in QEMU's sync wait holding the global lock, so
   neither the monitor nor the gdb stub can answer (measured: the `-gdb` port accepts the TCP
@@ -286,6 +286,7 @@ front-end table's `unsupported` row.
 | MCP tools needing PL signals/network | stub | `unsupported` naming the missing capability |
 | `zynqsim init --ip FILE`: testbench + `project.toml` generated from the module header of an AXI4-Lite slave IP (32-bit data, any prefix/case, active-low or high reset, extra clocks tied to FCLK0, other inputs tied low) | verified | `sim-api::tbgen::tests::*` (header parsing incl. attributes/comments/parameters/non-ANSI, detection, rejections with reasons), `zynqsim::init_ip_generates_a_project_that_passes_with_the_real_firmware` (generated for `my_math_ip.v`: the real firmware passes with the same 21 bus accesses and 329 trace records as the native model). The parser reads module headers only, it is not a Verilog parser; IPs with AXI masters, interrupts or other bus flavours are refused (use a hand-written testbench). An AXI4 **master** interface (32-bit, `*ARADDR`... `*BREADY`, 25 signals) is bridged to PS memory through S_AXI_HP0 with a modelled 16-clock DDR latency: `zynqsim::init_ip_generates_the_dma_testbench_with_a_memory_bridge` generates the testbench for `dma_xform.v` and the two-core DMA regression gives **the same trace digest and 687 bus accesses** as the hand-written testbench. Other AXI4 slave flavours (full slave, AXI-Stream) are not generated; a master with other than 32-bit data is refused. One-bit outputs named `*irq*`/`*interrupt*`/`*intr*` (up to 16) become `IRQ_F2P[0..]`: `zynqsim::init_ip_forwards_interrupts_to_a_firmware_handler` (a generated testbench for `fixtures/rtl/irq/irq_ip.v`, level-high; the Rust firmware's GIC setup and handler took 3 of 3 events, 0 spurious). Only level-high is exercised; edge-style outputs are forwarded as levels |
 | `pmod_attach` | verified | `mcp::scenario::pmod_oled_through_mcp` (OLED), `pmod_sensors_through_mcp` |
+| `project_create_from_export` | verified | `mcp::export::*`: a real Vivado 2022.1 export folder and a bare funcsim netlist become valid projects, a list with a missing file is refused with `file:line`; see *Vivado simulation exports and netlists* |
 | `project_create_from_xsa` | verified | `mcp::xsa::*`: reads a real Vivado 2022.1 XSA, writes `project.toml` + report + testbench, lists the unmodelled IP, `project_open` then refuses to start; see *XSA / HWH ingestion* |
 | CLI: `run` (any engine, `--at` inputs incl. `uartN:`/`swN:`/`btnN:`, `--dump-mem`, `--dump-image`), `inspect`, `init`, `trace`, `test` (exit codes 0/1/2/3, `--json`) | verified | `crates/cli/tests/cli.rs` |
 | CLI: `mcp`, `gui` launchers | implemented-untested | not covered by a test |
@@ -380,6 +381,34 @@ the machine); it passed alone and in the second full run.
 | FSBL execution, `ps7_init` replay | **not-planned** (stub) | the FSBL partition is never run; its register-init pairs are listed (`register_init_applied: false`) and **not applied**: PS clocks, MIO, DDR and peripheral enables change nothing (QEMU's machine has everything configured). Prompt §12's "run the FSBL as software" is not done |
 | Boot-ROM behaviour: timing, QSPI/SD image load, boot-mode pins, FSBL handoff logic, a second application image started on core 1 | not-planned | core 0 starts at the first application partition's execution address (which partition the real FSBL hands off to is FSBL logic, `VERIFY:`); further application images are loaded into RAM but not started; symbols are absent (bootgen strips the ELF), so breakpoints need addresses |
 | ZynqMP / Versal images | not-planned | only the Zynq-7000 layout is read; a ZynqMP image shares the magic words and is not told apart reliably |
+
+## Vivado simulation exports and netlists (milestone P3)
+
+`zynqsim init --export-sim PATH --out DIR [--elf FILE] [--module M]`, MCP
+`project_create_from_export`, and `[rtl] export_dir = "..."` / `filelist = "..."` (ADR-017,
+per-backend subset: `docs/RTL_SUBSET.md`). The exports are **real Vivado 2022.1 output**
+(`fixtures/export/make_export.tcl`: `export_simulation`, `write_verilog -mode funcsim`,
+`launch_simulation -mode post-synthesis -type functional -scripts_only`, on `my_math_ip` with its
+testbench; ~150 KB). The VHDL design file in `fixtures/export/vhdl` is hand-written.
+
+| Feature | Status | Evidence / note |
+|---|---|---|
+| Reader: folder, `.prj` (`verilog`/`sv`/`vhdl`/`vhdl2008 LIB [-i] [-d] [-L] "file"`, continuations, comments, quoted paths, relative `..`, `nosort`), `.f` (`+incdir+`, `+define+`, `-f`, `-work`, `-sv`, comments), `elab.opt` (`-L`, tops, `-timescale`, `-generic_top`), `xsim.ini` mappings, `.sh`/`.bat` scripts (`xvlog`/`xvhdl`/`xelab` lines, script variables), a single `.v/.sv/.vhd`; `$VAR`/`%VAR%` expansion | verified | `xsim-export::tests` (14), including the two real Vivado exports (`the_real_vivado_2022_1_behavioural_export_is_read`, `the_real_post_synthesis_export_names_the_netlist_and_unisim`) |
+| Unsupported or unusable input is reported with **file, line and construct** (unknown option or directive: warning; `-y`/`-sourcelibdir`, `-sv_lib`: warning; missing source, unresolved variable, unreadable list: error); several flows in one folder are refused with the candidates | verified | `xsim-export::tests::{unknown_options_and_missing_files_name_file_line_and_construct, dpi_libraries_and_search_directories_..., environment_variables_expand_and_an_unknown_one_is_an_error_with_its_line, a_folder_with_two_flows_asks_for_one}`, `zynqsim::export_sim::an_unreadable_export_names_file_line_and_construct`, `mcp::export::an_export_that_cannot_be_read_...` |
+| XSim adapter builds an export prj-style: one `.prj` line per file with its library, `-i`/`-d`, `xvlog -prj` then `xvhdl -prj`, `xelab -L <libraries> -L unisims_ver ... LIB.top LIB.glbl`, `glbl` from the netlist/sources or Vivado's copy, `-timescale`, `-generic_top` quoted, `--relax` | verified | command-line construction `backend-rtl-xsim::export::tests` (5); real XSim: `backend-rtl-xsim::export::{the_rtl_export_and_the_funcsim_netlist_give_the_same_answers, prj_includes_and_defines_reach_xvlog_and_the_build_is_cached}` (a testbench that fails to compile without the include directory and the define builds) |
+| **Post-synthesis functional netlist** (UNISIM `LUT`/`FDRE`, `-L unisims_ver`, `glbl`) behaves like the RTL: same 7 writes, 14 reads, same answers | verified | `backend-rtl-xsim::export::the_rtl_export_and_the_funcsim_netlist_give_the_same_answers` (Vivado 2023.1 on this machine ran the 2022.1-generated export) |
+| **End to end**: the real firmware (`math_test.elf`) on QEMU against the RTL export, the post-synthesis netlist flow and a bare funcsim netlist with a generated testbench: `RESULT: ALL PASS`, 21 bus accesses, 329 trace records and **one trace digest** (`fnv1a64:c801168503080d41`, also the digest of the native-model and `init --ip` routes) | verified (Windows, needs QEMU + Vivado + DPI library) | `zynqsim::export_sim::rtl_export_and_funcsim_netlist_pass_with_the_real_firmware_and_agree` |
+| VHDL design file (`xvhdl`) mixed with the Verilog testbench; `.vhd` in `rtl.files` | verified for one hand-written design / implemented-untested for Vivado-generated VHDL IP | `backend-rtl-xsim::export::a_vhdl_design_file_is_compiled_with_xvhdl_and_answers_like_the_verilog` |
+| Snapshot build cache keyed by the project files, elaboration arguments and every source and header | verified | `backend-rtl-xsim::export::prj_includes_and_defines_reach_xvlog_and_the_build_is_cached` (hit on the second start, miss after a header changes) |
+| Glob patterns in `rtl.files` (`*`, `?`, `[a-z]`, `[!x]`, `**`; sorted per pattern, relative to the project, absolute allowed, empty match is an error naming the pattern) | verified | `sim-api::exportsim::tests::*` (4), `zynqsim::export_sim::a_project_with_globs_and_an_export_validates_and_says_what_is_missing` |
+| `[rtl] export_dir` / `filelist` validated (`export_dir` and `filelist` are alternatives, diagnostics carry the list's `file:line`), `top` taken from the export's single top | verified | `sim-api::exportsim::tests::export_and_filelist_are_alternatives`, `zynqsim::export_sim::*` |
+| `init --export-sim` (export's own testbench, or generated for the AXI4-Lite slave in it; `export-report.md`; refuses to overwrite) | verified | `zynqsim::export_sim::*`, `mcp::export::*` |
+| Compiled Vivado IP libraries (`xsim.ini` mappings of `blk_mem_gen...`, `-lib_map_path`) passed as `-L name=dir` | implemented-untested | unit-tested command line only (`backend-rtl-xsim::export::tests::a_compiled_ip_library_with_a_directory_is_mapped_...`); no IP library was compiled or run here |
+| Encrypted IP / `secureip`, `xpm` and other Xilinx simulation libraries | implemented-untested | named in `-L` and left to Vivado's own `xsim.ini`; no design using them was run |
+| Timing / SDF simulation (`simprims_ver`, `write_verilog -mode timesim`) | stub | not read specially; would compile without SDF and say nothing |
+| The export's own DPI libraries (`-sv_lib`), library search (`-y`, `-v`), simulator scripts of other simulators (`.do`, Questa/VCS) | stub | reported as unsupported, never executed |
+| Verilator / Icarus on an export | stub | no such backend (P4) |
+| GUI import of an export | stub | the project window lists `files` only |
 
 ## Backends
 

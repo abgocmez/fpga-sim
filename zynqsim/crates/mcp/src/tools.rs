@@ -126,6 +126,53 @@ pub fn tool_defs() -> Vec<ToolDef> {
             ),
         ),
         t(
+            "project_create_from_export",
+            "Create a project from a Vivado simulation export (`export_simulation -simulator \
+             xsim` folder, a `.prj`/`.f` list, or one `write_verilog -mode funcsim` netlist): \
+             reads the ordered sources with their libraries, include directories, defines, \
+             `-L` libraries (unisims_ver, xpm, secureip) and tops, writes project.toml with \
+             `[rtl] export_dir`, a generated testbench for the AXI4-Lite slave in it (unless \
+             the export brings a testbench that calls the rp_* DPI) and export-report.md into \
+             `out_dir`. Anything not supported is reported with file, line and construct under \
+             `diagnostics`/`warnings`. Existing files are never overwritten.",
+            Open,
+            object(
+                vec![
+                    (
+                        "export_path",
+                        string(
+                            "The export folder, or one .prj/.f list, or a netlist .v file.",
+                            &["export/xsim"],
+                        ),
+                    ),
+                    (
+                        "out_dir",
+                        string(
+                            "Directory for the project (created; project.toml must not exist).",
+                            &["projects/netlist"],
+                        ),
+                    ),
+                    (
+                        "module",
+                        string(
+                            "The module the generated testbench drives (default: a top of the \
+                             export or the first AXI4-Lite slave in it).",
+                            &["my_math_ip"],
+                        ),
+                    ),
+                    (
+                        "elf",
+                        string(
+                            "Firmware ELF for core 0 (path as it should appear in project.toml; \
+                             default fw/app.elf).",
+                            &["fw/app.elf"],
+                        ),
+                    ),
+                ],
+                &["export_path", "out_dir"],
+            ),
+        ),
+        t(
             "project_validate",
             "Validate a project file (or the open project) and list every error and warning with its \
              field path, without starting a simulation.",
@@ -943,6 +990,7 @@ mod tests {
                 &"pmod_frame",
                 &"pmod_set",
                 &"pmod_state",
+                &"project_create_from_export",
                 &"source_line",
                 &"trace_get",
                 &"waveform_get"
