@@ -327,6 +327,24 @@ backend are listed but return `unsupported` until those backends exist. `video_f
 `audio_capture` return the HDMI picture (PNG) and codec output (WAV); `media_source_set` chooses
 what the board receives.
 
+## Working on this repository with AI agents (token budget)
+
+Development of this repository is done with Claude Code and sub-agents. Tokens are a budget, so:
+
+* **Haiku for mechanical work**: formatting, `cargo clippy`, running and reading `cargo xtask ci`,
+  committing finished worktrees, filling in docs rows from test names, re-running a flaky test
+  alone. Give such an agent a short, numbered checklist and ask for a report under 150 words.
+* **Sonnet for design and new features**: new device models, protocols, ingestion formats,
+  anything where a wrong first decision costs a re-run. Resume a stopped agent with its id
+  (`SendMessage`) instead of starting a new one, so its context is not re-derived.
+* **One full gate per merge, not per branch**: `cargo xtask ci` takes 15+ minutes and is flaky
+  when several gates, builds and XSim runs share the machine (see STATUS.md, "Known intermittent
+  test failure"). Branch agents run targeted tests (`cargo test -p <crate> <name>`); the merged tree
+  gets the one full run.
+* **Agents in worktrees start from the repository's first commit**, not from your branch: begin
+  with `git merge --ff-only <your-branch>`.
+* Keep reports short and in files: long logs go to a file and only the failing lines are read.
+
 ## Layout
 
 | Path | Contents |
