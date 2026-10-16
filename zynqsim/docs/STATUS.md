@@ -538,6 +538,7 @@ They show that inputs do not panic or hang. They do not show that the answers ar
 | `.github/workflows/ci.yml` runs `dist` | not-planned | left alone: on Windows the default MSVC toolchain cannot build `libxsim_dpi.a`, so `dist` would fail the Windows job, and the DPI build adds minutes to every push |
 | Installation documented: prerequisites per OS, install from archive, build from source, Xilinx variables, what needs what, troubleshooting | implemented-untested | `docs/INSTALL.md`, linked from `README.md`. Not followed step by step on a clean machine; the archive steps are what the clean-directory check runs on Windows; the Linux and macOS commands are not run |
 | Every crate inherits `version`, `license` and `edition` from the workspace; root `LICENSE` (Apache-2.0) is in the archive | verified | `Cargo.toml` `[workspace.package]`. Gap: the workspace declares `Apache-2.0` only, so no `LICENSE-MIT`/`LICENSE-APACHE` pair was added; `repository` is still the placeholder `https://example.invalid/zynqsim` |
+| Peripheral conformance, TTC (xttcps) and PL330 DMAC (xdmaps), Rust firmware self-checks on QEMU (spec §14.2): 13 of 14 and 12 of 12 checks pass; TTC is partly modelled (match flag read-to-clear, one N/A) | verified | `docs/conformance/ttc-dma.md`; test `conformance_ttc_dma` |
 
 ## Deviations from the prompt (so far)
 
