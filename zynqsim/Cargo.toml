@@ -4,6 +4,7 @@ resolver = "3"
 exclude = ["fuzz"]
 members = [
     "crates/sim-core",
+    "crates/ps-bus",
     "crates/trace",
     "crates/xsa-import",
     "crates/boot",
@@ -25,6 +26,7 @@ members = [
 ]
 default-members = [
     "crates/sim-core",
+    "crates/ps-bus",
     "crates/trace",
     "crates/xsa-import",
     "crates/boot",
