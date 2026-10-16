@@ -61,6 +61,8 @@ const CASES: &[Case] = &[
     case("dma-loopback", "20ms"),
     case("dma-sg", "20ms"),
     case("gpio-timer-uart", "20ms"),
+    case("conf-gpiops", "20ms"),
+    case("conf-scutimer", "200ms"),
     case("intc-demo", "20ms"),
     case("iic-bram-demo", "20ms"),
     case("net-demo", "20ms"),

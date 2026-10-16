@@ -557,3 +557,9 @@ They show that inputs do not panic or hang. They do not show that the answers ar
 * The workspace lives in `zynqsim/` inside the prototype directory; the prototype files are
   untouched (prompt §16 migration is partly done: remote-port client, runner and driver logic now
   exist in Rust; the web UI and PowerShell scripts are not yet retired).
+
+## Peripheral conformance (spec §14.2)
+
+| Block | Status | Evidence / note |
+|---|---|---|
+| xgpiops (PS GPIO), xscutimer and global timer | private timer fully modelled (checked features); global timer partly; PS GPIO not modelled | `docs/conformance/gpio-timer.md`; tests `conf_gpiops_checks_match_the_expected_na_list`, `conf_scutimer_checks_match_the_expected_na_list` |

@@ -163,6 +163,8 @@ const FIRMWARE: &[(&str, &str)] = &[
     ("intc_demo", "rust_intc_demo.elf"),
     ("iic_bram_demo", "rust_iic_bram.elf"),
     ("dma_sg", "rust_dma_sg.elf"),
+    ("conf_gpiops", "rust_conf_gpiops.elf"),
+    ("conf_scutimer", "rust_conf_scutimer.elf"),
 ];
 
 /// Builds `firmware/` (its own workspace) and copies the ELFs into `fixtures/elf`.

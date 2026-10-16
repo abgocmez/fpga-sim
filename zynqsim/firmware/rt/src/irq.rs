@@ -125,6 +125,16 @@ pub fn enable_spi(id: usize) {
     write32(ICDISER + 4 * (id / 32), 1 << (id % 32));
 }
 
+/// Enables private peripheral interrupt `id` (16..=31, e.g. the global timer
+/// is 27 and the private timer 29) as level, priority 0xA0, for this core.
+/// Its handler is registered with [`set_handler`] like an SPI's.
+pub fn enable_ppi(id: usize) {
+    assert!((16..32).contains(&id), "not a private peripheral interrupt");
+    // SAFETY: byte-wide GIC register; PPI targets are banked and read-only.
+    unsafe { write_volatile((ICDIPR + id) as *mut u8, 0xA0) };
+    write32(ICDISER, 1 << id);
+}
+
 /// Unmasks IRQs in the CPU.
 pub fn enable() {
     // SAFETY: clears the I bit of the CPSR.
