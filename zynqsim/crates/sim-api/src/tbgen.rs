@@ -1195,6 +1195,15 @@ endmodule
     s
 }
 
+/// Windows `canonicalize` returns a verbatim path (backslash, backslash, question mark, backslash, then the drive); tools and TOML files want the plain drive path.
+fn strip_verbatim(p: std::path::PathBuf) -> std::path::PathBuf {
+    let s = p.to_string_lossy();
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) if !rest.starts_with("UNC\\") => std::path::PathBuf::from(rest),
+        _ => p,
+    }
+}
+
 /// `to` relative to the directory `from` (both made absolute first), with
 /// forward slashes; `to` itself if they share no root (other drive).
 pub fn relative_path(from: &std::path::Path, to: &std::path::Path) -> String {
@@ -1208,7 +1217,7 @@ pub fn relative_path(from: &std::path::Path, to: &std::path::Path) -> String {
         let mut tail: Vec<std::ffi::OsString> = Vec::new();
         loop {
             if let Ok(real) = existing.canonicalize() {
-                let mut out = real;
+                let mut out = strip_verbatim(real);
                 out.extend(tail.iter().rev());
                 return out;
             }
