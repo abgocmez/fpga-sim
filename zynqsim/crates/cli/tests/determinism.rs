@@ -110,6 +110,16 @@ const CASES: &[Case] = &[
     },
     Case {
         xsim: true,
+        extra: &[
+            "--device-set",
+            "3ms@JB.btn0=1",
+            "--device-set",
+            "3ms@JB.sw2=1",
+        ],
+        ..case("pmod-simple-demo", "40ms")
+    },
+    Case {
+        xsim: true,
         ..case("pcam-demo", "20ms")
     },
     Case {

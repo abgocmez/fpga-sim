@@ -1246,6 +1246,51 @@ fn als_demo_reads_the_host_set_light_over_spi() {
     assert_eq!(v["devices"][0]["kind"], "als");
 }
 
+/// Firmware -> AXI-Lite -> one PL block -> JA (a Pmod 8LD: the firmware's LED
+/// patterns) and JB (a Pmod BTN: buttons and switches the host sets at run
+/// time). The LEDs end on the last pattern the firmware wrote, the firmware
+/// reads the host's values, and the run is deterministic.
+#[test]
+fn pmod_simple_demo_lights_the_8ld_and_reads_the_buttons() {
+    if !qemu_available() || !xsim_available() {
+        eprintln!("SKIPPED: needs the Xilinx QEMU and Vivado XSim");
+        return;
+    }
+    ensure_dpi_lib();
+    let args = [
+        "--device-set",
+        "3ms@JB.btn0=1",
+        "--device-set",
+        "3ms@JB.sw2=1",
+    ];
+    let a = run_sensor("pmod-simple-demo", "40ms", &args);
+    let text = uart1(&a);
+    assert!(text.contains("LEDS 0xA5\r\n"), "{text}");
+    assert!(
+        text.contains("BTN 0x00\r\nBTN 0x41\r\n"),
+        "the values set by the host reach the firmware: {text}"
+    );
+    assert!(text.contains("LEDS 0x3C\r\nRESULT: ALL PASS\r\n"), "{text}");
+
+    // device_state[0] is the 8LD: it shows the last pattern written.
+    assert_eq!(a["devices"][0]["kind"], "8ld");
+    let leds = &a["device_state"][0]["registers"][0];
+    assert_eq!(leds["name"], "LEDS");
+    assert_eq!(leds["value"], 0x3C, "{a}");
+    // Before the second pattern the first one is on the pins.
+    let early = run_sensor("pmod-simple-demo", "2ms", &[]);
+    assert_eq!(early["device_state"][0]["registers"][0]["value"], 0xA5);
+    // device_state[1] is the BTN: the host's buttons and switches.
+    let btn = &a["device_state"][1]["registers"];
+    assert_eq!(btn[0]["value"], 0x01, "BUTTONS: btn0");
+    assert_eq!(btn[1]["value"], 0x04, "SWITCHES: sw2");
+
+    // Same inputs, same outputs.
+    let b = run_sensor("pmod-simple-demo", "40ms", &args);
+    assert_eq!(a["trace_hash"], b["trace_hash"]);
+    assert_eq!(uart1(&a), uart1(&b));
+}
+
 /// SPI mode 3 with register read/write and a multi-byte burst.
 #[test]
 fn acl_demo_reads_the_host_set_acceleration_over_spi() {

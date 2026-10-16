@@ -13,10 +13,13 @@ mod adc081;
 mod adt7420;
 mod adxl345;
 mod bank;
+mod buttons;
 mod i2c;
+mod led8;
 mod ov5640;
 mod readout;
 mod spi;
+mod ssd;
 mod ssd1306;
 
 pub mod font5x7 {
@@ -28,10 +31,13 @@ pub use adc081::Adc081;
 pub use adt7420::Adt7420;
 pub use adxl345::Adxl345;
 pub use bank::Bank;
+pub use buttons::{Inputs, Module as InputModule};
 pub use i2c::{I2cDevice, I2cSlave, PointerSlave, Registers};
+pub use led8::Led8;
 pub use ov5640::{Ov5640, pattern_line};
 pub use readout::readout;
 pub use spi::{SpiDevice, SpiSlave};
+pub use ssd::Ssd;
 pub use ssd1306::Ssd1306;
 
 /// A picture a device shows, tightly packed opaque RGBA.
@@ -141,7 +147,9 @@ pub trait BoardDevice: Send {
 }
 
 /// Device kinds `[devices]` accepts.
-pub const KINDS: &[&str] = &["oled", "tmp2", "als", "acl", "pcam"];
+pub const KINDS: &[&str] = &[
+    "oled", "tmp2", "als", "acl", "pcam", "8ld", "ssd", "btn", "swt",
+];
 
 /// Creates a device by kind.
 pub fn create(kind: &str) -> Option<Box<dyn BoardDevice>> {
@@ -151,6 +159,10 @@ pub fn create(kind: &str) -> Option<Box<dyn BoardDevice>> {
         "als" => Some(Box::new(Adc081::new())),
         "acl" => Some(Box::new(Adxl345::new())),
         "pcam" => Some(Box::new(Ov5640::new())),
+        "8ld" => Some(Box::new(Led8::new())),
+        "ssd" => Some(Box::new(Ssd::new())),
+        "btn" => Some(Box::new(Inputs::btn())),
+        "swt" => Some(Box::new(Inputs::swt())),
         _ => None,
     }
 }

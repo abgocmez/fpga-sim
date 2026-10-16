@@ -146,6 +146,7 @@ const FIRMWARE: &[(&str, &str)] = &[
     ("hdmi_demo", "rust_hdmi.elf"),
     ("irq_demo", "rust_irq.elf"),
     ("oled_demo", "rust_oled.elf"),
+    ("pmod_simple_demo", "rust_pmod_simple.elf"),
     ("rgb_demo", "rust_rgb.elf"),
     ("tmp2_demo", "rust_tmp2.elf"),
     ("als_demo", "rust_als.elf"),

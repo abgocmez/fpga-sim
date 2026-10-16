@@ -1,0 +1,40 @@
+# Two simple Pmod modules on one PL block (fixtures/rtl/pmod/pmod_simple.v): a Digilent
+# Pmod 8LD on JA (the firmware in firmware/pmod_simple_demo lights a pattern on its LEDs) and a
+# Pmod BTN on JB (the host sets its buttons and switches; the firmware reads and prints them).
+# The PL drives JA and samples JB from the host's levels, once a microsecond.
+#
+#   zynqsim run --project examples/pmod-simple-demo/project.toml --for 40ms
+#   zynqsim run --project examples/pmod-simple-demo/project.toml --for 40ms \
+#       --device-set 3ms@JB.btn0=1 --device-set 3ms@JB.sw2=1 --json
+#   (or the MCP tools pmod_set / pmod_state, or [device_values.pmod_jb] below)
+#
+# Needs: Xilinx QEMU (Vitis), Vivado XSim, and the DPI library (`cargo xtask dpi`).
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "xsim"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_pmod_simple.elf"
+
+[rtl]
+files = [
+    "../../fixtures/rtl/pmod/pmod_simple.v",
+    "../../fixtures/rtl/pmod/pmod_simple_top.sv",
+]
+top = "cosim_top"
+
+[devices]
+pmod_ja = "8ld"
+pmod_jb = "btn"
