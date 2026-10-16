@@ -116,7 +116,8 @@ control plane drive it). Caveats are listed under *Known limits of the P1 engine
 | Waveform picture (one scene drawn by the GUI, as SVG and as PNG; no diagonals, sub-pixel changes folded) | verified (geometry and content) / implemented-untested (colours, font) | `trace::wave_scene::tests::*`; a PNG was viewed once by hand |
 | MCP `waveform_get`: catalogue, window, truncation, errors, SVG/PNG render and `path` inside the allowed roots | verified | `mcp::tests::waveform::{waveform_get_on_the_demo_engine, waveform_get_renders_svg_and_png, waveform_get_shows_the_bus_of_a_qemu_project}` (the last needs Xilinx QEMU and ran here: the 21 PL accesses of `math-qemu` are 21 samples of `bus.M_AXI_GP0.addr`) |
 | PL-internal nets, IRQ lines and AXI handshakes as waveforms | not-planned | only signals recorded at the boundary exist (ADR-014); the XSim `.wdb` below covers internals |
-| Waveforms from XSim (`.wdb`) | verified by hand | `[rtl] waves = true` records `xsim/zs_snap.wdb` in the run directory (`%TEMP%\zynqsimun-*`), which is **kept** (also with `ZYNQSIM_KEEP_RUN=1`; the path is printed on stderr); XSim is ended cleanly so the database is closed. Run on the board demo: 11 MB file written. No automated test, and the file was not opened in the Vivado viewer |
+| Waveforms from XSim (`.wdb`) | verified by hand | `[rtl] waves = true` records `xsim/zs_snap.wdb` in the run directory (`%TEMP%\zynqsim
+un-*`), which is **kept** (also with `ZYNQSIM_KEEP_RUN=1`; the path is printed on stderr); XSim is ended cleanly so the database is closed. Run on the board demo: 11 MB file written. No automated test, and the file was not opened in the Vivado viewer |
 | FST export | not-planned | VCD is sufficient for now |
 | AXI protocol checkers, latency histograms | stub | not implemented |
 
@@ -203,7 +204,7 @@ front-end table's `unsupported` row.
 | Feature | Status | Evidence / note |
 |---|---|---|
 | `[network]` (`enable`, `mac`, `subnet`, `gateway`, `restrict`) attaches GEM0 to a simulated LAN (`-netdev user` + `filter-dump`); without it the NIC is unplugged (`-net none`) instead of QEMU's implicit user-mode network | verified | `backend-qemu::net::{qemu_arguments_bind_gem0_and_mirror_to_the_capture_file, an_unplugged_nic_gets_no_answers_and_captures_nothing}`. **Behaviour change**: projects without `[network]` used to get that implicit network, invisible to the host |
-| Rust firmware (`firmware/net_demo`, prebuilt `fixtures/elf/rust_net.elf`, `examples/net-demo`): MDIO PHY scan, reset and auto-negotiation, descriptor rings, polled RX/TX, **smoltcp** ARP + DHCP + ICMP echo; four pings with 32 bytes, payload echoed unchanged | verified | `backend-qemu::net::firmware_pings_the_gateway_and_every_frame_is_captured` (14 frames: 4 DHCP, ARP pair, 4 echo pairs), `zynqsim::net::net_demo_pings_the_gateway_and_exports_a_matching_pcap`. smoltcp stands in for the BSP's lwIP, which is C; the Xilinx lwIP/xemacps applications themselves were **not** run |
+| Rust firmware (`firmware/net_demo`, prebuilt `fixtures/elf/rust_net.elf`, `examples/net-demo`): MDIO PHY scan, reset and auto-negotiation, descriptor rings, polled RX/TX, **smoltcp** ARP + DHCP + ICMP echo; four pings with 32 bytes, payload echoed unchanged | verified | `backend-qemu::net::firmware_pings_the_gateway_and_every_frame_is_captured` (14 frames: 4 DHCP, ARP pair, 4 echo pairs), `zynqsim::net::net_demo_pings_the_gateway_and_exports_a_matching_pcap`. smoltcp stands in for the BSP's lwIP, which is C; the Xilinx lwIP applications were **not** run (the xemacps DMA example was, see *Unmodified Xilinx BSP applications*) |
 | Frames visible to the host: classified (ARP/ICMP/UDP/TCP), IPv4 and ICMP checksums verified, summarised, counted, 1 us virtual-time stamps; trace markers and `net.*_frames` signals; `.pcap` export | verified | `backend-qemu::net::tests::*` (decoder, malformed frames, partial reads, time recovery, pcap writer), `zynqsim::net::{net_demo_*, network_frames_are_in_the_trace_and_the_vcd}` |
 | **Determinism**: same project, same frames, same bytes, same virtual times, same measured round trips, same `.pcap` bytes, same trace digest | verified | `backend-qemu::net::{two_runs_produce_identical_frames_times_and_uart, frame_times_do_not_depend_on_how_the_run_is_sliced}` (7 us vs 1 ms slices give identical frames and times), `zynqsim::net::two_processes_agree_on_digest_pcap_and_uart`. Holds because slirp answers inside the transmitting instruction |
 | Record/replay, snapshot/restore (by re-execution) of a network session | verified | `zynqsim::net::a_network_session_records_and_replays_to_the_same_digest`, `mcp::net::network_project_through_mcp` (snapshot, restore, `session_replay`) |
@@ -484,6 +485,37 @@ means a construct the backend does not run, listed with the diagnostic the test 
 
 Known limits: the corpus runs each design once with its own testbench or the stated check; no
 timing (SDF) simulation; UVM is only probed with the library, not a full UVM testbench.
+
+## Unmodified Xilinx BSP applications (milestone P4, success criterion 2)
+
+`fixtures/bsp` (`SOURCE.md`, `build_bsp.tcl`, `zs_ps_all.xsa`, 24 ELFs), `examples/bsp-hello`,
+`examples/bsp-peripherals`, `crates/cli/tests/bsp_apps.rs`, ADR-023, results and every deviation in
+`docs/conformance/bsp-apps.md`. Xilinx's own standalone BSP (Vitis 2022.1, `-Os`) and its own
+application templates and driver examples, **built without any C of ours** and run on the Xilinx
+QEMU (PS only). "Passes" means the application printed its own success line; nothing was compared
+with a board. Not run behind an FSBL/`ps7_init`.
+
+| Feature | Status | Evidence / note |
+|---|---|---|
+| Vitis 2022.1 `xsct` builds a standalone BSP and the Hello World / Peripheral Tests templates and Xilinx driver examples from the command line, offline, from a PS-only XSA | verified (this machine) | `fixtures/bsp/build_bsp.tcl` run twice with different XSAs; `bsp_apps::every_bsp_elf_is_small_and_documented` checks the committed ELFs (24, each < 300 KB, each in `SOURCE.md`) |
+| Hello World template: `xil_printf` over xuartps (UART1) | verified | `bsp_apps::bsp_hello_world_runs_unmodified_and_deterministically` (two runs, one digest). `bsp-hello` and `bsp-peripherals` are also in the `determinism.rs` table; five separate processes each gave one digest by hand (the full determinism test was not re-run for this entry) |
+| xuartps polled / interrupt / selftest examples (local loopback mode) | verified | `bsp_apps::bsp_driver_examples_match_the_recorded_results` |
+| GIC examples (`xscugic_example`, low level / software-generated interrupts) | verified | same test |
+| SCU timer polled and interrupt examples | verified (the timer runs at 100 MHz, see below) | same test |
+| TTC0 examples: tapp, low level, interrupt with PWM (about 5 s of simulated time for the last) | verified | same test (`bsp_ttcps_intr` uses `quantum_ns = 100000`) |
+| PL330 DMA example with done interrupt and data compare | verified | same test (`bsp_dmaps_intr`) |
+| QSPI and I2C self tests | verified (register self tests only; no flash or I2C device traffic) | same test |
+| SD raw read/write example (SDHCI, ADMA, 16 sectors at the 100 MiB mark) | verified on a 128 MiB card; fails on the default 8 MiB `sd_dir` card because of the sector it addresses | same test (`bsp_sdps_raw`, `sd_size_mb = 128`) |
+| GEM0 DMA/interrupt/PHY-loopback example (`xemacps_example_intr_dma`) | verified, slow | `bsp_apps::bsp_emacps_intr_dma_prints_its_success_line` (`#[ignore]`, about 13 min, 40 s of simulated time). lwIP applications: **not built** |
+| Peripheral Tests template: GIC, PL330 DMA, I2C, QSPI and SCU timer tests PASSED; CAN, CAN interrupt and devcfg tests FAILED; the SCU watchdog interrupt test never returns | verified (as the recorded behaviour of this machine, not as hardware behaviour) | `bsp_apps::bsp_peripheral_tests_report_what_the_model_implements` |
+| **DEVIATION D1**: PS GPIO, SPI0/1, CAN0/1, USB0/1, device configuration, DDR controller, OCM controller, eFuse, L2C (PL310) and the SCU watchdog are not in the QEMU machine (reads 0, writes dropped, no abort). `xgpiops` (2 examples), `xspips`, `xcanps`, `xdevcfg` examples print their failure; `xscuwdt` and the Peripheral Tests' watchdog test spin forever | verified as observed behaviour; the criterion-2 applications for GPIO, SPI, CAN, USB **fail** | `bsp_apps` `DEVIATIONS` table, asserted; probe + `info mtree` in the conformance document (the probe is not committed) |
+| **DEVIATION D2**: XADC returns zero data (temperature -273.149 C, rails 0.000 V) although the driver runs to its success line | verified | `bsp_apps` `DEVIATIONS` (`bsp_xadcps_polled`) |
+| **DEVIATION D3**: the A9 global and private timers tick at 100 MHz (measured: 1,000,094 ticks in 10 ms); the BSP's `COUNTS_PER_SECOND` is 333,333,343, so `sleep()`/`usleep()`/SCU timer deadlines are 3.3x too long in simulated time | measured with a throw-away probe, **no test** | conformance document, D3 |
+| lwIP/FatFs applications, flash and EEPROM examples, FSBL/`ps7_init`, multicore, any comparison with hardware | not built / not covered | ADR-023, conformance document |
+
+**Criterion 2 is partly shown, not met**: UART, GIC, timers (SCU, TTC), QSPI (self test), SD
+(raw), GEM (DMA example), I2C (self test), XADC (driver runs, data wrong) and PL330 DMA applications
+run unmodified; GPIO, SPI, CAN, USB, devcfg and the watchdog fail because the machine lacks them.
 
 ## Backends
 

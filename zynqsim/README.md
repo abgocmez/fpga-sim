@@ -375,7 +375,7 @@ licences: [docs/CORPUS.md](docs/CORPUS.md); decision: [docs/adr/020-corpus.md](d
 | `crates/` | `sim-core`, `trace`, `board-zybo`, `devices`, `sim-api`, `mcp`, `cli`, `gui`, `xtask`, `interop`, `pl-api`, `pl-native`, `backend-qemu`, `backend-rtl-xsim`, `xsim-dpi` |
 | `boards/` | board descriptions (TOML) |
 | `docs/` | `DESIGN.md`, `STATUS.md`, `TESTPLAN.md`, `adr/` |
-| `examples/` | `demo`, `custom-board`, `zedboard-demo`, `math-qemu`, `math-debug`, `dma-regression`, `board-demo`, `audio-demo`, `hdmi-demo`, `irq-demo`, `oled-demo`, `rgb-demo`, `rust-hello`, `rust-debug`, `net-demo`, `sd-demo`, `qspi-demo`, `gpio-timer-uart`, `dma-loopback`, `dma-sg`, `iic-bram-demo`, `intc-demo` projects |
+| `examples/` | `demo`, `custom-board`, `zedboard-demo`, `math-qemu`, `math-debug`, `dma-regression`, `board-demo`, `audio-demo`, `hdmi-demo`, `irq-demo`, `oled-demo`, `rgb-demo`, `rust-hello`, `rust-debug`, `net-demo`, `sd-demo`, `qspi-demo`, `bsp-hello`, `bsp-peripherals` (Xilinx's own BSP templates, unmodified), `gpio-timer-uart`, `dma-loopback`, `dma-sg`, `iic-bram-demo`, `intc-demo` projects |
 | `firmware/` | Rust `no_std` Cortex-A9 firmware (`hello`, `audio_demo`, `hdmi_demo`, `irq_demo`, `oled_demo`, `rgb_demo`, `net_demo`, `sd_demo`, `qspi_demo`, `gpio_timer_uart`, `dma_loopback`, `dma_sg`, `iic_bram_demo`, `intc_demo`, `vendor_mix`); its own workspace, built by `cargo xtask firmware` |
 | `fixtures/` | prototype firmware ELFs, the prebuilt Rust ELFs (`rust_*.elf`) and the RTL used by the examples and tests |
 
