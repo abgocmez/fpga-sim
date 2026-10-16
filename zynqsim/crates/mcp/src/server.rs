@@ -9,6 +9,7 @@ use sim_api::{
 };
 use std::path::{Path, PathBuf};
 
+mod boot;
 mod net;
 mod source;
 mod waves;
@@ -280,6 +281,7 @@ impl McpServer {
             "project_open" => self.project_open(a),
             "project_validate" => self.project_validate(a),
             "project_create_from_xsa" => self.project_create_from_xsa(a),
+            "boot_inspect" => self.boot_inspect(a),
             "sim_run" => {
                 let d = parse_duration(str_arg(a, "duration")?)?;
                 self.run_chunked(d, call)?;

@@ -3040,6 +3040,7 @@ dependencies = [
  "backend-qemu",
  "backend-rtl-xsim",
  "board-zybo",
+ "boot",
  "devices",
  "fatfs",
  "fscommon",

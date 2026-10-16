@@ -7,6 +7,7 @@
 //! In milestone P0 the engine behind the API is the built-in *demo* model
 //! (see [`sim`]); every status reports it as [`Fidelity::Demo`].
 
+pub mod bootbin;
 mod bytelog;
 mod disasm;
 mod duration;

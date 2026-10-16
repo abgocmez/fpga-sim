@@ -513,6 +513,7 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
         sim: SimSection::default(),
         boot: Some(BootSection {
             mode: "elf".to_string(),
+            file: None,
         }),
         cpu0: Some(CpuSection { elf: esc(&elf) }),
         cpu1: elf1.as_ref().map(|e| CpuSection { elf: esc(e) }),

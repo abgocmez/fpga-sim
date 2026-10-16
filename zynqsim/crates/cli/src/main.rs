@@ -139,6 +139,15 @@ enum Cmd {
         /// With --ip: the IP's base address, for the comment in project.toml.
         #[arg(long)]
         base: Option<String>,
+        /// Create a project that boots this BOOT.BIN (the image is copied into the
+        /// project directory; the application partitions run, the FSBL does not).
+        #[arg(long)]
+        boot: Option<PathBuf>,
+    },
+    /// List the partitions of a Zynq-7000 BOOT.BIN and say whether ZynqSim can boot it.
+    BootInfo {
+        /// The BOOT.BIN.
+        file: PathBuf,
     },
     /// Show the board, the backends and, with --project, validate a project.
     Inspect {
@@ -309,6 +318,24 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
             elf,
             elf1,
             base,
+            boot,
+        } if boot.is_some() => {
+            let _ = (xsa, rtl, filelist, ip, module, elf, elf1, base);
+            init_from_boot(json, &out.unwrap_or(dir), &boot.unwrap_or_default())
+        }
+        Cmd::BootInfo { file } => cmd_boot_info(json, &file),
+        Cmd::Init {
+            dir,
+            xsa,
+            out,
+            rtl,
+            filelist,
+            ip,
+            module,
+            elf,
+            elf1,
+            base,
+            boot: _,
         } => cmd_init(
             json,
             &out.unwrap_or(dir),
@@ -1136,6 +1163,71 @@ fn init_from_ip(json: bool, dir: &Path, o: InitIp) -> Result<u8, Failure> {
         );
     }
     Ok(0)
+}
+
+/// `boot-info`: the partitions of a BOOT.BIN and whether it can be booted.
+fn cmd_boot_info(json: bool, file: &Path) -> Result<u8, Failure> {
+    let report = sim_api::bootbin::inspect(file)?;
+    let failed =
+        report["errors"].as_array().is_some_and(|e| !e.is_empty()) || report["runnable"] != true;
+    if json {
+        println!("{report}");
+    } else {
+        print!("{}", sim_api::bootbin::inspect_text(file)?);
+    }
+    Ok(if failed { 2 } else { 0 })
+}
+
+/// `init --boot`: a project that boots a BOOT.BIN.
+fn init_from_boot(json: bool, dir: &Path, bin: &Path) -> Result<u8, Failure> {
+    let plan = sim_api::bootbin::plan_project(bin)?;
+    std::fs::create_dir_all(dir)
+        .map_err(|e| fail(2, format!("cannot create {}: {e}", dir.display())))?;
+    let file = dir.join("project.toml");
+    let image = dir.join(&plan.image_name);
+    for p in [&file, &image] {
+        if p.exists() {
+            return Err(fail(
+                2,
+                format!("{} already exists; refusing to overwrite", p.display()),
+            ));
+        }
+    }
+    write_file(&image, &plan.loaded.bytes)?;
+    write_file(&file, plan.project_toml.as_bytes())?;
+    let diagnostics = Project::load(&file)
+        .map(|p| p.validate(dir))
+        .map_err(|e| fail(2, e.message))?;
+    let runnable = diagnostics.iter().all(|d| d.severity != Severity::Error);
+    if json {
+        println!(
+            "{}",
+            json!({
+                "created": [file.display().to_string(), image.display().to_string()],
+                "project": file.display().to_string(),
+                "boot": sim_api::bootbin::inspect(&image)?,
+                "diagnostics": diagnostics,
+                "runnable": runnable,
+            })
+        );
+    } else {
+        print!("{}", plan.loaded.image.describe());
+        println!("created   : {}", file.display());
+        println!("created   : {}", image.display());
+        for dg in &diagnostics {
+            println!("{:?}: {}: {}", dg.severity, dg.field, dg.message);
+        }
+        for n in sim_api::bootbin::NOTES {
+            println!("note      : {n}");
+        }
+        if runnable {
+            println!(
+                "run       : zynqsim run --project {} --for 20ms",
+                file.display()
+            );
+        }
+    }
+    Ok(if runnable { 0 } else { 2 })
 }
 
 /// `init --xsa`: a project from a Vivado hardware handoff.

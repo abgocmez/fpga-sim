@@ -121,13 +121,21 @@ impl ProjectDraft {
         }
         .to_string();
         if self.use_qemu {
-            let elf = non_empty(&self.cpu0)
-                .ok_or_else(|| "the PS needs a core 0 ELF to run".to_string())?;
-            p.cpu0 = Some(CpuSection { elf });
+            // A BOOT.BIN project has no core 0 ELF: it comes from `[boot] file`.
+            let boot_bin = p
+                .boot
+                .as_ref()
+                .is_some_and(|b| sim_api::bootbin::is_boot_bin_mode(&b.mode));
+            match non_empty(&self.cpu0) {
+                Some(elf) => p.cpu0 = Some(CpuSection { elf }),
+                None if boot_bin => p.cpu0 = None,
+                None => return Err("the PS needs a core 0 ELF to run".to_string()),
+            }
             p.cpu1 = non_empty(&self.cpu1).map(|elf| CpuSection { elf });
             if p.boot.is_none() {
                 p.boot = Some(sim_api::BootSection {
                     mode: "elf".to_string(),
+                    file: None,
                 });
             }
         } else {

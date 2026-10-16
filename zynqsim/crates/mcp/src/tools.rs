@@ -818,6 +818,23 @@ pub fn tool_defs() -> Vec<ToolDef> {
         ),
         // --- configuration -------------------------------------------------------
         t(
+            "boot_inspect",
+            "Read a Zynq-7000 BOOT.BIN (bootgen output) without running it: boot header, FSBL, \
+             register-init table, and every partition (FSBL, PL bitstream, application segments) \
+             with load/execution addresses, checksums and what is malformed, with the file offset \
+             of each problem. `runnable` says whether a project with `[boot] mode = \"boot_bin\"` \
+             can start it (not when encrypted, authenticated, damaged or without an application). \
+             The FSBL is never executed and its register-init table is not applied (see `notes`).",
+            Open,
+            object(
+                vec![(
+                    "path",
+                    string("Path to the BOOT.BIN.", &["fixtures/boot/BOOT.BIN"]),
+                )],
+                &["path"],
+            ),
+        ),
+        t(
             "config_set",
             "Change simulator configuration. `quantum` sets the lock-step quantum. `seed` re-seeds \
              the PRNG and resets the system (recorded, so replays match). Fidelity is determined by \
@@ -911,6 +928,7 @@ mod tests {
         assert_eq!(
             extra,
             vec![
+                &"boot_inspect",
                 &"media_source_set",
                 &"pmod_frame",
                 &"pmod_set",

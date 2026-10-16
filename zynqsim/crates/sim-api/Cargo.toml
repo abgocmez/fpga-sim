@@ -17,6 +17,7 @@ fscommon = "0.1.1"
 gimli = { version = "0.34.0", default-features = false, features = ["read", "std"] }
 object = { version = "0.40.0", default-features = false, features = ["read_core", "elf", "std"] }
 board-zybo = { version = "0.1.0", path = "../board-zybo" }
+boot = { version = "0.1.0", path = "../boot" }
 pl-api = { version = "0.1.0", path = "../pl-api" }
 pl-native = { version = "0.1.0", path = "../pl-native" }
 serde = { version = "1.0.229", features = ["derive"] }

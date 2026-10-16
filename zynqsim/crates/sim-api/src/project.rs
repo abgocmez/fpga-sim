@@ -80,8 +80,12 @@ impl Default for SimSection {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BootSection {
-    /// `elf` or `boot_bin`.
+    /// `elf` or `boot_bin` (`bootbin` is accepted as an alias).
     pub mode: String,
+    /// With `boot_bin`: the `BOOT.BIN`, relative to the project file. The application
+    /// partitions are loaded and started; the FSBL is not run (ADR-018).
+    #[serde(default)]
+    pub file: Option<String>,
 }
 
 /// `[cpu0]` / `[cpu1]` sections.
@@ -476,6 +480,15 @@ impl Project {
         Project::from_toml(&text)
     }
 
+    /// The boot image of a `boot_bin` project, resolved against `base`.
+    pub fn boot_bin_file(&self, base: &Path) -> Option<PathBuf> {
+        let b = self.boot.as_ref()?;
+        if !crate::bootbin::is_boot_bin_mode(&b.mode) {
+            return None;
+        }
+        b.file.as_ref().map(|f| resolve(base, f))
+    }
+
     /// The `(gp, base address)` a native instance is connected to, from the
     /// `[connect]` entry `"<instance>.<port>" = "M_AXI_GP<n>@<addr>"`.
     pub fn native_placement(&self, instance: &str) -> Option<(u8, u64)> {
@@ -542,8 +555,12 @@ impl Project {
                         .with_hint("set ZYNQSIM_DTB to the co-simulation device tree")
                     })?;
                 let cpu = |c: &Option<CpuSection>| c.as_ref().map(|c| resolve(base, &c.elf));
-                let elf0 = cpu(&self.cpu0)
-                    .ok_or_else(|| ApiError::invalid_argument("cpu0.elf is required"))?;
+                let work_dir = work_root().join(unique_run_name());
+                let elf0 = match self.boot_bin_file(base) {
+                    Some(bin) => crate::bootbin::stage_application(&bin, &work_dir)?,
+                    None => cpu(&self.cpu0)
+                        .ok_or_else(|| ApiError::invalid_argument("cpu0.elf is required"))?,
+                };
                 let mut natives = Vec::new();
                 for (name, model) in &self.native {
                     let (gp, addr) = self.native_placement(name).ok_or_else(|| {
@@ -614,7 +631,7 @@ impl Project {
                     dtb,
                     elf0,
                     elf1: cpu(&self.cpu1),
-                    work_dir: work_root().join(unique_run_name()),
+                    work_dir,
                     quantum_ns: self.sim.quantum_ns,
                     icount_shift: self.sim.icount_shift,
                     uart,
@@ -839,29 +856,64 @@ impl Project {
             }
         }
 
+        let uses_cpu = self.backends.ps != "demo";
+        let boot_bin = self
+            .boot
+            .as_ref()
+            .is_some_and(|b| crate::bootbin::is_boot_bin_mode(&b.mode));
         if let Some(boot) = &self.boot {
-            if boot.mode != "elf" && boot.mode != "boot_bin" {
+            if boot.mode != "elf" && !boot_bin {
                 d.push(err(
                     "boot.mode",
                     format!("`{}` is not valid; expected `elf` or `boot_bin`", boot.mode),
                 ));
             }
+            if boot_bin {
+                match &boot.file {
+                    None => d.push(err(
+                        "boot.file",
+                        "is required when boot.mode = \"boot_bin\"",
+                    )),
+                    Some(f) if !resolve(base, f).is_file() => {
+                        d.push(err("boot.file", format!("file `{f}` does not exist")));
+                    }
+                    Some(f) if uses_cpu => {
+                        for (is_error, message) in crate::bootbin::validate_file(&resolve(base, f))
+                        {
+                            let m = format!("`{f}`: {message}");
+                            d.push(if is_error {
+                                err("boot.file", m)
+                            } else {
+                                warn("boot.file", m)
+                            });
+                        }
+                    }
+                    Some(_) => {}
+                }
+            } else if boot.file.is_some() {
+                d.push(warn("boot.file", "ignored: boot.mode is not `boot_bin`"));
+            }
         }
-        let uses_cpu = self.backends.ps != "demo";
         for (field, cpu) in [("cpu0.elf", &self.cpu0), ("cpu1.elf", &self.cpu1)] {
             match cpu {
                 Some(c) => {
                     if !resolve(base, &c.elf).is_file() {
                         d.push(err(field, format!("file `{}` does not exist", c.elf)));
                     }
-                    if !uses_cpu {
+                    if boot_bin && field == "cpu0.elf" {
+                        d.push(warn(
+                            field,
+                            "ignored: boot.mode = \"boot_bin\" runs the application \
+                             partitions of boot.file",
+                        ));
+                    } else if !uses_cpu {
                         d.push(warn(
                             field,
                             "ignored: the `demo` PS backend runs no software",
                         ));
                     }
                 }
-                None if field == "cpu0.elf" && uses_cpu => {
+                None if field == "cpu0.elf" && uses_cpu && !boot_bin => {
                     d.push(err(
                         "cpu0.elf",
                         "is required when a CPU backend is selected",
