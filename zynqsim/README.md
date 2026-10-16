@@ -392,8 +392,16 @@ between runs. The shell with the light theme, and its keyboard shortcuts window 
 | **Keyboard shortcuts (F1)** | |
 | ![Shortcuts](docs/screenshots/shell-shortcuts.png) | |
 
+| **Registers and memory while stopped** (`examples/rust-debug`, `--run-ms 1 --mem-hex`) | **Storage table** (`examples/sd-demo`) |
+|---|---|
+| ![Registers and memory](docs/screenshots/rust-debug-registers-memory.png) | ![Storage table](docs/screenshots/sd-demo-storage-table.png) |
+
 The side panel scrolls above a fixed trace strip; with the Source, HDMI or Audio panel open, the
-sections below it are reached by scrolling it.
+sections below it are reached by scrolling it. Each section header shows a one-line summary while
+it is closed, and the open or closed state is kept between runs. The speed row above the sections
+offers 0.01x to max and shows the measured simulated-to-wall ratio. `--sections source=0,memory=1`
+sets the sections for one run (automated checks and screenshots); `--mem-hex` opens the memory
+viewer as a hex dump.
 
 ## Working on this repository with AI agents (token budget)
 

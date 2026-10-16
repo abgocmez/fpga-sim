@@ -32,6 +32,8 @@ Options for automated checks:
   --screenshot FILE  save a PNG of the window, then exit
   --uart TEXT      send TEXT (with \\r \\n escapes) to UART1, then run 5 ms; repeatable
   --mem ADDR       open the memory viewer at ADDR as a 64x64 image
+  --mem-hex        with --mem: show the hex dump instead of the image
+  --sections LIST  open or close side-panel sections, e.g. source=0,memory=1
   --view3d         start on the 3D board view
   --wave NAME      open the Waveforms tab with this signal shown; repeatable
   --waves-tab      open the Waveforms tab with the default signals
@@ -53,6 +55,8 @@ fn main() -> eframe::Result {
     let mut opts = Opts::default();
     let mut defaults = false;
     let mut theme: Option<bool> = None;
+    // `--sections` overrides the remembered state for this run.
+    let mut sections: Option<String> = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -108,6 +112,8 @@ fn main() -> eframe::Result {
                 };
                 opts.mem = Some(n.unwrap_or_else(|_| die("--mem expects an address")));
             }
+            "--mem-hex" => opts.mem_hex = true,
+            "--sections" => sections = Some(value("--sections").replace(',', "\n")),
             "-h" | "--help" => {
                 print!("{USAGE}");
                 return Ok(());
@@ -132,11 +138,15 @@ fn main() -> eframe::Result {
     opts.prefs = prefs;
 
     opts.project = project.clone();
-    let client = match &project {
+    let (client, cpu1) = match &project {
         Some(file) => open_project(file),
-        None => SimClient::spawn(SimConfig::default()).unwrap_or_else(|e| die(&e.to_string())),
+        None => (
+            SimClient::spawn(SimConfig::default()).unwrap_or_else(|e| die(&e.to_string())),
+            false,
+        ),
     };
     let mut model = Model::new(client).unwrap_or_else(|e| die(&e.to_string()));
+    model.set_cpu1_declared(cpu1);
     for i in toggles {
         model.toggle_switch(i);
     }
@@ -166,11 +176,21 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "ZynqSim",
         native,
-        Box::new(move |_cc| Ok(Box::new(App::new(model, opts)))),
+        Box::new(move |cc| {
+            let mut app = App::new(model, opts);
+            if let Some(saved) = cc.storage.and_then(|s| s.get_string(app::SECTIONS_KEY)) {
+                app.restore_sections(&saved);
+            }
+            if let Some(list) = &sections {
+                app.restore_sections(list);
+            }
+            Ok(Box::new(app))
+        }),
     )
 }
 
-fn open_project(file: &Path) -> SimClient {
+/// Opens a project file; also says whether it declares a second core.
+fn open_project(file: &Path) -> (SimClient, bool) {
     let p = Project::load(file).unwrap_or_else(|e| die(&e.message));
     let base = file.parent().unwrap_or(Path::new("."));
     let errors: Vec<String> = p
@@ -182,6 +202,7 @@ fn open_project(file: &Path) -> SimClient {
     if !errors.is_empty() {
         die(&format!("project has errors:\n  {}", errors.join("\n  ")));
     }
+    let cpu1 = p.cpu1.is_some();
     let engine = p.build_engine(base).unwrap_or_else(|e| die(&e.message));
-    SimClient::spawn_engine(engine)
+    (SimClient::spawn_engine(engine), cpu1)
 }
