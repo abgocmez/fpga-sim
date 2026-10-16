@@ -36,6 +36,16 @@ pub const DPI_BUILD: &[&str] = &[
     "target/dpi",
 ];
 
+/// Arguments of `cargo xtask dpi-shared`: the shared-object DPI library
+/// (`dpi-cdylib`), built in the normal target directory and then copied.
+pub const DPI_SHARED_BUILD: &[&str] = &["build", "--release", "-p", "dpi-cdylib"];
+
+/// The shared-object DPI library's file name: `zynqsim_dpi.dll`, `.so` or
+/// `.dylib`. Cargo names the Unix files `libzynqsim_dpi.*`; the copy drops the `lib`.
+pub fn dpi_shared_file() -> String {
+    format!("zynqsim_dpi{}", env::consts::DLL_SUFFIX)
+}
+
 /// The binaries in the archive (file names without the platform suffix).
 const PROGRAMS: [&str; 3] = ["zynqsim", "zynqsim-gui", "zynqsim-mcp"];
 
@@ -133,7 +143,39 @@ fn install_txt(version: &str, os: &str, arch: &str) -> String {
     )
 }
 
-/// Builds the release binaries and the DPI library, assembles the archive,
+/// `cargo xtask dpi-shared`: builds the shared-object DPI library and copies it to
+/// `target/dpi/release/zynqsim_dpi.{dll,so,dylib}`.
+pub fn run_dpi_shared(root: &Path) -> bool {
+    match build_dpi_shared(root) {
+        Ok(path) => {
+            eprintln!("xtask: shared DPI library: {}", path.display());
+            true
+        }
+        Err(e) => {
+            eprintln!("xtask: dpi-shared failed: {e}");
+            false
+        }
+    }
+}
+
+/// Builds `dpi-cdylib` and copies it into `target/dpi/release/`. Returns the copy.
+fn build_dpi_shared(root: &Path) -> Result<PathBuf, String> {
+    cargo(root, DPI_SHARED_BUILD)?;
+    let built = root.join("target").join("release").join(format!(
+        "{}zynqsim_dpi{}",
+        env::consts::DLL_PREFIX,
+        env::consts::DLL_SUFFIX
+    ));
+    let dest = root
+        .join("target")
+        .join("dpi")
+        .join("release")
+        .join(dpi_shared_file());
+    copy_file(&built, &dest)?;
+    Ok(dest)
+}
+
+/// Builds the release binaries and the DPI libraries, assembles the archive,
 /// writes `SHA256SUMS` and checks the archive from a clean directory.
 pub fn run(root: &Path) -> bool {
     match build_and_pack(root) {
@@ -185,13 +227,21 @@ fn build_and_pack(root: &Path) -> Result<PathBuf, String> {
         ],
     )?;
     cargo(root, DPI_BUILD)?;
+    // The shared object is shipped when it builds; the archive is complete without it.
+    let shared = match build_dpi_shared(root) {
+        Ok(_) => true,
+        Err(e) => {
+            eprintln!("xtask: shared DPI library left out of the archive: {e}");
+            false
+        }
+    };
 
     let (os, arch) = (env::consts::OS, env::consts::ARCH);
     let name = dir_name(env!("CARGO_PKG_VERSION"), os, arch);
     let dist = root.join("dist");
     let stage = dist.join(&name);
     let _ = fs::remove_dir_all(&stage);
-    assemble(root, &stage)?;
+    assemble(root, &stage, shared)?;
     eprintln!("xtask: assembled {}", stage.display());
 
     let archive = dist.join(archive_name(&name, os));
@@ -226,8 +276,9 @@ fn cargo(root: &Path, args: &[&str]) -> Result<(), String> {
     }
 }
 
-/// Copies the files of the archive into `stage`.
-fn assemble(root: &Path, stage: &Path) -> Result<(), String> {
+/// Copies the files of the archive into `stage`. `shared` says whether the
+/// shared-object DPI library was built in this run.
+fn assemble(root: &Path, stage: &Path, shared: bool) -> Result<(), String> {
     let exe = env::consts::EXE_SUFFIX;
     let release = root.join("target").join("release");
     for p in PROGRAMS {
@@ -249,6 +300,11 @@ fn assemble(root: &Path, stage: &Path) -> Result<(), String> {
         ));
     }
     copy_file(&dpi, &stage.join("lib").join(DPI_ARCHIVE))?;
+    if shared {
+        let file = dpi_shared_file();
+        let built = root.join("target").join("dpi").join("release").join(&file);
+        copy_file(&built, &stage.join("lib").join(&file))?;
+    }
     copy_tree(&root.join("examples"), &stage.join("examples"), &|_| true)?;
     copy_tree(&root.join("boards"), &stage.join("boards"), &|_| true)?;
     copy_tree(&root.join("docs"), &stage.join("docs"), &|p| {
@@ -454,6 +510,20 @@ fn check_unpacked(archive: &Path, name: &str, work: &Path) -> Result<Vec<String>
         return Err(format!("{} does not export rp_open", lib.display()));
     }
     steps.push("lib/libxsim_dpi.a is present and exports rp_open".to_string());
+
+    // The shared object is optional in the archive; when present it must export the
+    // same names (its export table holds them as plain strings).
+    let shared = root.join("lib").join(dpi_shared_file());
+    if shared.is_file() {
+        let bytes = fs::read(&shared).map_err(|e| format!("{}: {e}", shared.display()))?;
+        if !bytes.windows(7).any(|w| w == b"rp_open") {
+            return Err(format!("{} does not export rp_open", shared.display()));
+        }
+        steps.push(format!(
+            "lib/{} is present and exports rp_open",
+            dpi_shared_file()
+        ));
+    }
 
     let out = clean_command(&exe("zynqsim"), &root, &tmp)
         .arg("--version")

@@ -154,6 +154,17 @@ audited, and interrupt-driven operation, checksum offload and jumbo frames are n
 Rust has no stable runtime-skip, so a skipped test is reported as passed. Run with
 `cargo test -- --nocapture | findstr SKIPPED` to see which ones did not actually run.
 
+## Shared-object DPI library (P4, ADR-028)
+
+| Test | Needs | What it establishes |
+|---|---|---|
+| `dpi-cdylib` `symbols` (3) | nothing (builds the shared object on demand) | the imports of every `.sv` fixture and of the testbench generated for `fixtures/rtl/math/my_math_ip.v` are 31 names with the `rp_`, `zs_` and `tel_` prefixes; each one resolves in the loaded library; on Windows the PE export table of the library is exactly that set |
+| `dpi-cdylib` `abi` (1) | nothing (builds the shared object on demand) | the shared object, loaded with `libloading` and called through `extern "C"` pointers with the DPI-C types, speaks remote-port with a fake peer (`interop`): hello, a PS read with latency, a PS write, pin out and in, a pin exchange, an acknowledged wire, a codec register, an LED event from a C string, board inputs, lock-step, PL-to-PS write and read through the memory master, close; malformed endpoints are refused. **No commercial simulator loads it here** |
+| `xtask dist` (when `dpi-shared` builds) | the Windows build tools | `lib/zynqsim_dpi.dll` is packed and its unpacked copy must export `rp_open`. Not run for this change (`cargo xtask dist` was not run) |
+
+`cargo xtask dpi-shared` builds the shared object into `target/dpi/release/` for use outside the
+tests. `ZYNQSIM_DPI_CDYLIB` points the ABI tests at another build.
+
 ## Packaging (P4)
 
 | Test | Needs | What it establishes |

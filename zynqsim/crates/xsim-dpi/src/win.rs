@@ -1,14 +1,15 @@
 //! Windows glue: `kernel32` only, Winsock bound at run time, DPI exports.
 //!
-//! This is the only `unsafe` in the crate. It is a thin translation layer; the
+//! The DPI exports are not written here: `abi` generates them, and this module
+//! supplies the platform part (`rp_open`'s endpoint, the allocator, Winsock). The
 //! protocol logic is in `core.rs` and is tested on the host.
 
 #![allow(unsafe_code, non_snake_case, clippy::missing_safety_doc)]
 
-use crate::core::{parse_endpoint, Beat, Dpi, Next, Transport};
+use crate::core::{parse_endpoint, Dpi, Transport};
 use ::core::alloc::{GlobalAlloc, Layout};
 use ::core::cell::UnsafeCell;
-use ::core::ffi::{c_char, c_void};
+use ::core::ffi::c_void;
 
 // ------------------------------------------------------------------ kernel32
 
@@ -262,29 +263,18 @@ fn dpi() -> &'static mut Dpi<WinSock> {
     }
 }
 
-unsafe fn cstr<'a>(p: *const c_char) -> &'a [u8] {
-    if p.is_null() {
-        return &[];
-    }
-    let mut n = 0;
-    while *p.add(n) != 0 {
-        n += 1;
-    }
-    ::core::slice::from_raw_parts(p as *const u8, n)
-}
-
-// ------------------------------------------------------------- DPI exports
-
-#[no_mangle]
-pub unsafe extern "C" fn rp_open(descr: *const c_char) -> i32 {
-    let given = cstr(descr);
+/// `rp_open` on Windows: `given` is the endpoint text, or empty for `RP_SOCKET`.
+fn open_endpoint(given: &[u8]) -> i32 {
     let mut env = [0u8; 256];
     let target: &[u8] = if given.is_empty() {
-        let n = GetEnvironmentVariableA(
-            c"RP_SOCKET".as_ptr().cast::<u8>(),
-            env.as_mut_ptr(),
-            env.len() as u32,
-        );
+        // SAFETY: the buffer and the NUL-terminated name are valid for the call.
+        let n = unsafe {
+            GetEnvironmentVariableA(
+                c"RP_SOCKET".as_ptr().cast::<u8>(),
+                env.as_mut_ptr(),
+                env.len() as u32,
+            )
+        };
         if n == 0 || n as usize >= env.len() {
             log(b"rp_open: RP_SOCKET is not set\n");
             return -1;
@@ -305,226 +295,5 @@ pub unsafe extern "C" fn rp_open(descr: *const c_char) -> i32 {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn rp_next(
-    now_ns: i64,
-    idle_ms: i32,
-    addr: *mut i32,
-    wdata: *mut i32,
-    wstrb: *mut i32,
-    is_write: *mut i32,
-) -> i32 {
-    match dpi().next(now_ns.max(0) as u64, idle_ms) {
-        Next::Closed => 0,
-        Next::Idle => 2,
-        Next::Sync => 3,
-        Next::Beat(Beat {
-            addr: a,
-            wdata: w,
-            wstrb: s,
-            is_write: wr,
-        }) => {
-            *addr = a as i32;
-            *wdata = w as i32;
-            *wstrb = s as i32;
-            *is_write = i32::from(wr);
-            1
-        }
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn rp_done(rdata: i32, ok: i32) {
-    dpi().done(rdata as u32, ok != 0);
-}
-
-#[no_mangle]
-pub extern "C" fn rp_done_t(rdata: i32, ok: i32, now_ns: i64) {
-    dpi().done_t(rdata as u32, ok != 0, now_ns.max(0) as u64);
-}
-
-#[no_mangle]
-pub extern "C" fn rp_poll(timeout_ms: i32) -> i32 {
-    dpi().poll(timeout_ms)
-}
-
-#[no_mangle]
-pub extern "C" fn rp_lockstep(on: i32) {
-    dpi().set_lockstep(on != 0);
-}
-
-#[no_mangle]
-pub extern "C" fn rp_sync_target() -> i64 {
-    dpi().sync_target()
-}
-
-#[no_mangle]
-pub extern "C" fn rp_sync_ack(now_ns: i64) {
-    dpi().sync_ack(now_ns.max(0) as u64);
-}
-
-#[no_mangle]
-pub extern "C" fn rp_req_ts() -> i64 {
-    dpi().req_ts()
-}
-
-#[no_mangle]
-pub extern "C" fn rp_mem_put(idx: i32, word: i32) {
-    dpi().mem_put(idx, word as u32);
-}
-
-#[no_mangle]
-pub extern "C" fn rp_mem_start(now_ns: i64, dev: i32, is_write: i32, addr: i32, len: i32) -> i32 {
-    dpi().mem_start(
-        now_ns.max(0) as u64,
-        dev as u32,
-        is_write != 0,
-        addr as u32,
-        len,
-    )
-}
-
-#[no_mangle]
-pub extern "C" fn rp_mem_poll(slot: i32) -> i32 {
-    dpi().mem_poll(slot)
-}
-
-#[no_mangle]
-pub extern "C" fn rp_mem_wait(slot: i32) -> i32 {
-    dpi().mem_wait(slot)
-}
-
-#[no_mangle]
-pub extern "C" fn rp_mem_get(slot: i32, idx: i32) -> i32 {
-    dpi().mem_get(slot, idx) as i32
-}
-
-#[no_mangle]
-pub extern "C" fn rp_mem_free(slot: i32) {
-    dpi().mem_free(slot);
-}
-
-#[no_mangle]
-pub extern "C" fn rp_irq(now_ns: i64, line: i32, val: i32) {
-    dpi().irq(now_ns.max(0) as u64, line as u32, val != 0);
-}
-
-#[no_mangle]
-pub extern "C" fn rp_close() {
-    dpi().close();
-}
-
-// Telemetry hooks of the prototype's UI. `tel_publish` (periodic state dumps)
-// is discarded: the GUI reads the trace through the control plane. `tel_event`
-// forwards LED changes to the host and drops the rest; `tel_ctrl` hands the
-// testbench the board's switches and buttons.
-#[no_mangle]
-pub extern "C" fn tel_publish(_json: *const c_char) {}
-
-#[no_mangle]
-pub unsafe extern "C" fn tel_event(json: *const c_char) {
-    dpi().telemetry_event(cstr(json), 0);
-}
-
-// Media: pin-level models in the testbench exchange pixels and samples with
-// the host through these. See `fixtures/rtl/media/zs_media.sv`.
-
-/// One HDMI TX pixel-clock sample (`vs` active-high).
-#[no_mangle]
-pub extern "C" fn zs_video_tx_pixel(de: i32, vs: i32, rgb: i32, now_ns: i64) {
-    dpi().video_tx_pixel(de != 0, vs != 0, rgb as u32, now_ns.max(0) as u64);
-}
-
-/// Fetches an HDMI RX line from the host; returns 0 on success.
-#[no_mangle]
-pub extern "C" fn zs_video_rx_line(frame: i32, y: i32, w: i32, h: i32, now_ns: i64) -> i32 {
-    dpi().video_rx_line(
-        frame as u32,
-        y as u32,
-        w.max(0) as u32,
-        h.max(0) as u32,
-        now_ns.max(0) as u64,
-    )
-}
-
-/// Pixel `x` of the line fetched by `zs_video_rx_line`.
-#[no_mangle]
-pub extern "C" fn zs_video_rx_pixel(x: i32) -> i32 {
-    dpi().video_rx_pixel(x.max(0) as u32) as i32
-}
-
-/// One stereo frame from the codec DAC.
-#[no_mangle]
-pub extern "C" fn zs_audio_tx_frame(left: i32, right: i32, now_ns: i64) {
-    dpi().audio_tx_frame(left as i16, right as i16, now_ns.max(0) as u64);
-}
-
-/// Sends any buffered DAC frames (call when the stream pauses or ends).
-#[no_mangle]
-pub extern "C" fn zs_audio_flush() {
-    dpi().audio_flush();
-}
-
-/// The next stereo frame for the codec ADC.
-#[no_mangle]
-pub unsafe extern "C" fn zs_audio_rx_frame(left: *mut i32, right: *mut i32, now_ns: i64) {
-    let (l, r) = dpi().audio_rx_frame(now_ns.max(0) as u64);
-    *left = i32::from(l);
-    *right = i32::from(r);
-}
-
-/// A codec register write observed on the I2C pins.
-#[no_mangle]
-pub extern "C" fn zs_codec_reg(reg: i32, value: i32, now_ns: i64) {
-    dpi().codec_register(reg as u32, value as u32, now_ns.max(0) as u64);
-}
-
-/// An AXI protocol-checker finding (`fixtures/rtl/common/zs_axi_checker.sv`, ADR-025):
-/// `port` (0 AXI4-Lite slave, 1 AXI4 master), `channel` (0 AW, 1 W, 2 B, 3 AR, 4 R),
-/// `rule` (see `pl_api::protocol::RULES`), `info` (1 = informational), `detail`.
-#[no_mangle]
-pub extern "C" fn zs_protocol_check(
-    port: i32,
-    channel: i32,
-    rule: i32,
-    info: i32,
-    detail: i64,
-    now_ns: i64,
-) {
-    dpi().protocol_check(
-        now_ns.max(0) as u64,
-        port as u32,
-        channel as u32,
-        rule as u32,
-        info != 0,
-        detail as u64,
-    );
-}
-
-/// The levels of pin group `group` (a Pmod port or the RGB LEDs) changed.
-#[no_mangle]
-pub extern "C" fn zs_pin_out(group: i32, levels: i32, now_ns: i64) {
-    dpi().pin_out(group as u32, levels as u32, now_ns.max(0) as u64);
-}
-
-/// Reports the levels of pin group `group` and returns what the devices on
-/// the port drive into the PL's input pins of that group (blocks until the
-/// host answers; no simulated time passes).
-#[no_mangle]
-pub extern "C" fn zs_pin_xchg(group: i32, levels: i32, now_ns: i64) -> i32 {
-    i32::from(dpi().pin_xchg(group as u32, levels as u32, now_ns.max(0) as u64))
-}
-
-/// The host-driven levels of pin group `group`.
-#[no_mangle]
-pub extern "C" fn zs_pin_in(group: i32) -> i32 {
-    i32::from(dpi().pin_in(group as u32))
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn tel_ctrl(sw: *mut i32, btn: *mut i32) -> i32 {
-    let (s, b) = dpi().board_inputs();
-    *sw = i32::from(s);
-    *btn = i32::from(b);
-    0
-}
+// The DPI-C exports (names and signatures shared with `dpi-cdylib`, see `abi`).
+crate::export_dpi_abi!(dpi, open_endpoint);

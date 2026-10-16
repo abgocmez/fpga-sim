@@ -9,7 +9,9 @@
 //! `xsimk.exe` from starting.
 //!
 //! The protocol logic ([`core`]) is independent of sockets and is unit-tested
-//! on the host. Only `win` touches the OS and `unsafe`.
+//! on the host. `abi` holds the export table that every package exposing the
+//! library expands (the archive's `win` and the shared object `dpi-cdylib`);
+//! `win` is the only part that touches the Windows API.
 //!
 //! The exported functions have the names and signatures of the prototype's
 //! `rp_dpi.c`, so an existing testbench works unchanged.
@@ -23,6 +25,7 @@
 
 extern crate alloc;
 
+pub mod abi;
 pub mod core;
 
 #[cfg(all(windows, feature = "freestanding"))]
