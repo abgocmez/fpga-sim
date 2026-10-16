@@ -31,3 +31,75 @@ the adapters exist.
 ## `native` (Rust PL models)
 
 Not RTL: transaction-level models of the listed IP (`pl-native`).
+
+## Native front end (`crates/rtl-frontend`, milestone P6)
+
+The native front end reads source without any external tool. It preprocesses, parses and elaborates
+the design. It does not simulate; the native engine is a later phase (see `docs/STATUS.md`, *Native RTL*).
+Every construct it cannot take is a diagnostic `file:line:col: construct: message`. The `construct`
+column names the item in the tables below. Parsing continues after the construct where feasible.
+
+Command: `zynqsim rtl-check FILE... [--top M] [-I DIR] [-D NAME=VAL] [--json]`. Exit 0 when there
+are no diagnostics, 1 when there are some, 2 when a file cannot be read.
+
+### Supported
+
+| Area | Accepted |
+|---|---|
+| Lexing | identifiers and escaped identifiers; sized, based (`8'hFF`, `4'b10x1`, `4'sd5`, `32'h_DE_AD`), unsized (`42`) and fill (`'0`, `'1`, `'x`, `'z`) literals; strings; every Verilog and SystemVerilog operator (`**`, `<<<`, `>>>`, `===`, `!==`, `+:`, `-:`, `++`, `--` in statements); `//` and `/* */` comments; `\`-continued lines |
+| Preprocessor | `` `define `` (object-like, function-like, default arguments, `` `"arg`" `` stringify), `` `undef ``, `` `ifdef `` / `` `ifndef `` / `` `elsif `` / `` `else `` / `` `endif `` (nested), `` `include `` (relative to the including file, then `-I`; cycles rejected), `` `timescale `` and `` `default_nettype `` (recorded), `` `__FILE__ `` and `` `__LINE__ ``; ignored: `resetall`, `celldefine`, `begin_keywords` and similar |
+| Modules | ANSI and non-ANSI headers; `parameter` and `localparam` (header and body); `#(...)` overrides in instances; `input`/`output`/`inout` with `wire`, `reg`, `logic`, `bit`, `signed`, packed ranges |
+| Declarations | `wire`, `tri*`, `wand`, `wor`, `supply0/1` (drive strengths skipped), `reg`, `logic`, `bit`, `integer`, `int`, `byte`, `shortint`, `longint`, `time`, `genvar`; unpacked dimensions (memories); declaration initialisers; `typedef` of vectors and of enums (members become constants) |
+| Behaviour | `assign` (with `#` delay, flagged); `always`, `always_ff`, `always_comb`, `always_latch`, `always @(...)`, `always @*`; `initial` (kept, flagged not synthesizable); blocking and non-blocking assignments; `+=`-style compound assignments; `if`/`else`; `case`/`casez`/`casex` with `default`; `for` (also with a declaration in the initialiser); `while`; `repeat`; `forever`; `begin`/`end` with names and local declarations; `#` delays and `@`/`wait` controls (flagged); labels; `return`, `break`, `continue`; `disable` (flagged) |
+| Routines | `task` and `function`, `automatic`/`static`, ANSI and non-ANSI arguments, local declarations, return types |
+| Instances | named and positional connections, `.name` implicit connections, `.*`, `#(...)` overrides, gate primitives (`and`, `or`, `nand`, `nor`, `xor`, `xnor`, `not`, `buf`) |
+| Generate | `generate ... endgenerate` regions, `for` (with `genvar`), `if`/`else if`/`else`, `case`; labels become `label[i]` and `label.` path segments |
+| Expressions | full Verilog precedence (see the test list in `docs/STATUS.md`); concatenation, replication, bit and part selects, `+:` and `-:`; ternary; reductions; `$clog2`, `$signed`, `$unsigned`, `$bits`; `signed'(x)` and `unsigned'(x)`; size casts `N'(x)`; hierarchical names `a.b.c` (parsed, not resolved) |
+| Other | attributes `(* ... *)` skipped; `$error`, `$warning`, `$info`, `$fatal` at module level accepted (elaboration-time, no effect) |
+
+Elaboration (`--top M`): parameters with overrides (named and positional) are evaluated in
+order; constant expressions use 128-bit integers with the Verilog width and sign rules, `$clog2`
+and constant functions (loops, returns, a 10^6-step limit); generate constructs are unrolled
+(10 000 iterations per loop at most); the instance tree and the widths of ports and nets are
+reported (`--json`). Checks: undefined module, unknown named port, too many positional
+connections, undeclared identifier (a bare identifier in a port connection is an implicit net and
+is accepted), undefined function or task, duplicate module, instantiation depth over 64.
+
+### Unsupported (each one is a diagnostic; the construct column is shown in backticks)
+
+| Construct (diagnostic) | Behaviour |
+|---|---|
+| `package`, `import pkg::...` at file level | skipped to `endpackage` / `;` |
+| `import pkg::item` or `import pkg::*` in a module | accepted; names are not resolved, and a wildcard import disables the undeclared-name check |
+| `DPI import` | `import "DPI-C" ...` is reported; the function is not declared |
+| `interface`, `class`, `program`, `config` | skipped to the matching `end...` |
+| `covergroup`, `bind`, `property`, `sequence`, `assertion` (`assert`, `assume`, `cover`, `expect` in code and at module level) | skipped |
+| `typedef struct`, `typedef union` | rejected; the name is still declared as a type |
+| `parameter type`, `parameter` of a package type | reported; the parameter is not declared as a type |
+| `package reference` (`pkg::name` in an expression) | reported |
+| `real literal` (`1.5`, `2e3`), `real`, `realtime` declarations | reported |
+| `system task` (`$itor`, `$pow`, `$rtoi`, and any unknown `$name`) | reported |
+| `fork/join`, `do ... while`, `final`, `specify`, `specparam`, `defparam`, `procedural assign` (`assign`, `force`, `release` in code) | reported |
+| `assignment pattern` (`'{...}`) | reported; the value is 0 |
+| `packed array` (`logic [A][B] x`) | reported |
+| `event` declarations | reported |
+| `lexical` (for example `$` as in `[$]` queues) | reported |
+| `port expression`, `interface port` (`.name(expr)` port lists, interface and modport ports) | reported |
+| `indexed range` in a declaration (`[a +: b]`) | reported |
+| `instance array` (`mod u [N] (...)`) | parsed; not elaborated (reported at `--top`) |
+| `macro`, `include`, `conditional` | undefined macro, missing or recursive include, unmatched or unclosed conditional |
+| `syntax`, `budget` | the parse error, and the step budget being exhausted (default 20 million steps) |
+
+### Corpus status
+
+`fixtures/`, `examples/` and `tests/` contain 148 Verilog and SystemVerilog files (including the
+third-party designs in `tests/rtl/`: picorv32, serv, the forencich and secworks cores, the
+dpretet FIFO, uriscv). **109 parse clean** and **39 still give diagnostics**. The 39 are pinned
+per file in `crates/rtl-frontend/tests/corpus.rs`: the cosim tops and peripheral models that use
+DPI-C imports for the `rp_*` protocol (DPI is outside the subset by design), the negative and probe cases (which are meant to fail), the pulp-common-cells
+files (parameter types from packages, assertions, multi-dimensional packed arrays, `$` queues)
+and the real-valued media models. The third-party cores in `tests/rtl/` that are not negative
+or probe cases parse clean, including picorv32, serv, the forencich AXI-stream and UART, the
+secworks crypto cores and the dpretet FIFO.
+
+Parsing clean is not elaboration or simulation: it means the front end found no construct it cannot take.
