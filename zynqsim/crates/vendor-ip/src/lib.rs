@@ -41,6 +41,30 @@ pub fn is_model(name: &str) -> bool {
     MODELS.contains(&name)
 }
 
+/// The IP parameters (Vivado names) a model reads, so a handoff importer can pick them out of
+/// the block design.
+pub fn param_names(model: &str) -> &'static [&'static str] {
+    match model {
+        "axi_gpio" => &[
+            "C_GPIO_WIDTH",
+            "C_GPIO2_WIDTH",
+            "C_IS_DUAL",
+            "C_ALL_INPUTS",
+            "C_ALL_INPUTS_2",
+            "C_ALL_OUTPUTS",
+            "C_ALL_OUTPUTS_2",
+            "C_DOUT_DEFAULT",
+            "C_DOUT_DEFAULT_2",
+            "C_TRI_DEFAULT",
+            "C_TRI_DEFAULT_2",
+            "C_INTERRUPT_PRESENT",
+        ],
+        "axi_timer" => &["C_COUNT_WIDTH", "C_ONE_TIMER_ONLY"],
+        "axi_uartlite" => &["C_BAUDRATE", "C_DATA_BITS", "C_USE_PARITY"],
+        _ => &[],
+    }
+}
+
 /// A board signal a GPIO channel can be bound to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BoardSignal {
@@ -632,14 +656,16 @@ mod tests {
         wr(&mut pl, &mut ps, 0x4121_0128, 1, 200);
         wr(&mut pl, &mut ps, 0x4121_011C, 0x8000_0000, 210);
         pl.set_board_inputs(0b0100, 0, 300);
-        assert_eq!(rd(&mut pl, &mut ps, 0x4121_0000, 310), 0b0100);
-        assert!(ps.irqs.is_empty(), "never from inside an access");
+        // A board input has no bus access to ride on: the line follows at the next advance.
+        assert!(ps.irqs.is_empty());
         pl.advance(1_000, &mut ps);
         assert_eq!(ps.irqs, vec![(2, true, 1_000)]);
-        // Acknowledge (toggle on write), the line drops at the next advance.
+        assert_eq!(rd(&mut pl, &mut ps, 0x4121_0000, 1_050), 0b0100);
+        // Acknowledge (toggle on write): the line falls with the access, not a quantum later.
         wr(&mut pl, &mut ps, 0x4121_0120, 1, 1_100);
+        assert_eq!(ps.irqs.last(), Some(&(2, false, 1_100)));
         pl.advance(2_000, &mut ps);
-        assert_eq!(ps.irqs.last(), Some(&(2, false, 2_000)));
+        assert_eq!(ps.irqs.len(), 2);
         // Unmapped addresses without an RTL design are decode errors.
         let mut b = [0u8; 4];
         assert_eq!(

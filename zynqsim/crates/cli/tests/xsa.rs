@@ -64,12 +64,13 @@ fn ensure_dpi_lib() {
     }
 }
 
-/// The design with an AXI GPIO: the project is generated, the report names the unmodelled IP,
-/// and `run` stops with the diagnostic instead of simulating a design that is not there.
+/// The design with an AXI DMA (no model): the project is generated, the report names the
+/// unmodelled IP, and `run` stops with the diagnostic instead of simulating a design that is
+/// not there. (The AXI GPIO of `zs_math_gpio.xsa` has a vendor-ip model, see below.)
 #[test]
 fn an_unmodelled_ip_is_reported_and_stops_the_run() {
-    let d = temp("gpio");
-    let xsa = fixtures().join("xsa/zs_math_gpio.xsa");
+    let d = temp("dma");
+    let xsa = fixtures().join("xsa/zs_math_dma.hwh");
     let rtl = fixtures().join("rtl/math/my_math_ip.v");
     let elf = fixtures().join("elf/math_test.elf");
     let o = zynqsim(&[
@@ -86,19 +87,19 @@ fn an_unmodelled_ip_is_reported_and_stops_the_run() {
     ]);
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     let v: Value = serde_json::from_str(&stdout(&o)).unwrap();
-    assert_eq!(v["design"], "design_1");
+    assert_eq!(v["design"], "design_dma");
     assert_eq!(v["testbench_module"], "my_math_ip");
     assert_eq!(v["runnable"], false);
     let un = v["unmodelled"].as_array().unwrap();
     assert_eq!(un.len(), 1);
-    assert_eq!(un[0]["instance"], "axi_gpio_0");
-    assert_eq!(un[0]["vlnv"], "xilinx.com:ip:axi_gpio:2.0");
-    assert_eq!(un[0]["base"], "0x41200000");
+    assert_eq!(un[0]["instance"], "axi_dma_0");
+    assert_eq!(un[0]["vlnv"], "xilinx.com:ip:axi_dma:7.1");
+    assert_eq!(un[0]["base"], "0x40400000");
     assert!(
         un[0]["reason"]
             .as_str()
             .unwrap()
-            .contains("vendor-ip` model (milestone P3, not built yet)")
+            .contains("`vendor-ip` model that does not exist yet")
     );
 
     let toml = std::fs::read_to_string(d.join("project.toml")).unwrap();
@@ -107,7 +108,7 @@ fn an_unmodelled_ip_is_reported_and_stops_the_run() {
         "{toml}"
     );
     assert!(
-        toml.contains("\"axi_gpio_0.ip2intc_irpt\" = \"IRQ_F2P[0]\""),
+        toml.contains("\"axi_dma_0.mm2s_introut\" = \"IRQ_F2P[0]\""),
         "{toml}"
     );
     assert!(
@@ -116,7 +117,7 @@ fn an_unmodelled_ip_is_reported_and_stops_the_run() {
     );
     let report = std::fs::read_to_string(d.join("xsa-report.md")).unwrap();
     assert!(report.contains("NOT RUNNABLE"), "{report}");
-    assert!(report.contains("xilinx.com:ip:axi_gpio:2.0"), "{report}");
+    assert!(report.contains("xilinx.com:ip:axi_dma:7.1"), "{report}");
     assert!(report.contains("0x43C00000"), "{report}");
     assert!(report.contains("IRQ_F2P[0]"), "{report}");
     assert!(d.join("tb/cosim_top.sv").is_file());
@@ -132,9 +133,9 @@ fn an_unmodelled_ip_is_reported_and_stops_the_run() {
     assert_eq!(r.status.code(), Some(1), "{}", stderr(&r));
     let e = stderr(&r);
     assert!(
-        e.contains("axi_gpio_0")
-            && e.contains("xilinx.com:ip:axi_gpio:2.0")
-            && e.contains("0x41200000"),
+        e.contains("axi_dma_0")
+            && e.contains("xilinx.com:ip:axi_dma:7.1")
+            && e.contains("0x40400000"),
         "{e}"
     );
 
@@ -236,4 +237,115 @@ fn a_user_rtl_only_handoff_runs_the_real_firmware() {
     let uart = r["uart"]["1"].as_str().unwrap();
     assert!(uart.contains("RESULT: ALL PASS"), "{uart}");
     assert_eq!(r["bus_accesses"], 21);
+}
+
+/// A handoff made only of Xilinx IP (real Vivado 2022.1 output: two AXI GPIOs, an AXI Timer and an
+/// AXI UART Lite) imports without unmodelled IP and runs the real firmware on QEMU alone: the
+/// vendor-ip models answer, the timer interrupt is taken, the UART Lite's bytes reach the host.
+#[test]
+fn a_vendor_ip_handoff_runs_the_real_firmware_on_the_models() {
+    if !backend_found("qemu") {
+        eprintln!("SKIPPED: needs the Xilinx QEMU");
+        return;
+    }
+    let d = temp("vendor");
+    let xsa = fixtures().join("xsa/zs_vendor_ip.xsa");
+    let elf = fixtures().join("elf/rust_gpio_timer_uart.elf");
+    let o = zynqsim(&[
+        "--json",
+        "init",
+        "--xsa",
+        xsa.to_str().unwrap(),
+        "--out",
+        d.to_str().unwrap(),
+        "--elf",
+        elf.to_str().unwrap(),
+    ]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let v: Value = serde_json::from_str(&stdout(&o)).unwrap();
+    assert_eq!(v["runnable"], true, "{v}");
+    assert!(v["unmodelled"].as_array().unwrap().is_empty());
+    let toml = std::fs::read_to_string(d.join("project.toml")).unwrap();
+    assert!(toml.contains("axi_timer_0 = \"axi_timer\""), "{toml}");
+    assert!(
+        toml.contains("\"axi_gpio_0.GPIO\" = \"board.leds\""),
+        "{toml}"
+    );
+    assert!(toml.contains("pl = \"native\""), "{toml}");
+
+    let r = zynqsim(&[
+        "--json",
+        "run",
+        "--project",
+        d.join("project.toml").to_str().unwrap(),
+        "--for",
+        "6ms",
+    ]);
+    assert_eq!(r.status.code(), Some(0), "{} {}", stdout(&r), stderr(&r));
+    let r: Value = serde_json::from_str(&stdout(&r)).unwrap();
+    let u1 = r["uart"]["1"].as_str().unwrap();
+    assert!(u1.contains("timer ticks=3"), "{u1}");
+    assert!(u1.contains("RESULT: ALL PASS"), "{u1}");
+    assert_eq!(
+        r["uart"]["pl"]["2"].as_str().unwrap(),
+        "Hello from AXI UART Lite\r\n"
+    );
+    assert_eq!(r["backend"]["pl"], "native");
+}
+
+/// The user's RTL (XSim) and an AXI GPIO model share one PL: accesses in the GPIO's window go to
+/// the model, the rest to the RTL, and the model's output reaches the board LEDs.
+#[test]
+fn user_rtl_in_xsim_and_a_vendor_model_share_one_pl() {
+    if !backend_found("qemu") || !backend_found("xsim") {
+        eprintln!("SKIPPED: needs the Xilinx QEMU and Vivado XSim");
+        return;
+    }
+    ensure_dpi_lib();
+    let d = temp("mixed");
+    let xsa = fixtures().join("xsa/zs_math_gpio.xsa");
+    let rtl = fixtures().join("rtl/math/my_math_ip.v");
+    let elf = fixtures().join("elf/rust_vendor_mix.elf");
+    let o = zynqsim(&[
+        "--json",
+        "init",
+        "--xsa",
+        xsa.to_str().unwrap(),
+        "--out",
+        d.to_str().unwrap(),
+        "--rtl",
+        rtl.to_str().unwrap(),
+        "--elf",
+        elf.to_str().unwrap(),
+    ]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let v: Value = serde_json::from_str(&stdout(&o)).unwrap();
+    assert_eq!(v["runnable"], true, "{v}");
+
+    let r = zynqsim(&[
+        "--json",
+        "run",
+        "--project",
+        d.join("project.toml").to_str().unwrap(),
+        "--for",
+        "5ms",
+    ]);
+    assert_eq!(r.status.code(), Some(0), "{} {}", stdout(&r), stderr(&r));
+    let r: Value = serde_json::from_str(&stdout(&r)).unwrap();
+    let u1 = r["uart"]["1"].as_str().unwrap();
+    assert!(u1.contains("math: 0x15 * 2 = 0x2a"), "{u1}");
+    assert!(u1.contains("gpio: tri=0x0 data=0x9"), "{u1}");
+    assert!(u1.contains("RESULT: ALL PASS"), "{u1}");
+    assert_eq!(r["backend"]["pl"], "xsim+native");
+    let duty: Vec<u64> = r["leds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["duty"].as_u64().unwrap())
+        .collect();
+    assert_eq!(
+        duty,
+        vec![255, 0, 0, 255],
+        "LED0 and LED3 from GPIO bits 0 and 3"
+    );
 }

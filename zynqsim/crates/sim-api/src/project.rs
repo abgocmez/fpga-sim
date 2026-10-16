@@ -315,6 +315,11 @@ pub struct Project {
     /// Native PL models: instance name to model name (`u_math = "my_math_ip"`).
     #[serde(default)]
     pub native: BTreeMap<String, String>,
+    /// Parameters of the native models by instance, with the IP's Vivado names:
+    /// `[native_params.axi_gpio_0] C_GPIO_WIDTH = 4`. `ADDRESS_SIZE` sets the window size
+    /// (default 64 KiB) and `CLK_FREQ_HZ` the AXI clock (default 100 MHz).
+    #[serde(default)]
+    pub native_params: BTreeMap<String, BTreeMap<String, NativeParam>>,
     /// HDMI RX and audio LINE IN sources.
     #[serde(default)]
     pub media: Option<MediaSection>,
@@ -327,6 +332,28 @@ pub struct Project {
     /// microSD card and QSPI flash.
     #[serde(default)]
     pub storage: Option<StorageSection>,
+}
+
+/// One IP parameter value in `[native_params.<instance>]`: a number, a boolean or text.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum NativeParam {
+    /// A boolean (`C_ALL_OUTPUTS = true`).
+    Bool(bool),
+    /// An integer (`C_GPIO_WIDTH = 4`).
+    Int(i64),
+    /// Text (`C_DOUT_DEFAULT = "0x0F"`).
+    Text(String),
+}
+
+impl std::fmt::Display for NativeParam {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NativeParam::Bool(b) => write!(f, "{}", u8::from(*b)),
+            NativeParam::Int(i) => write!(f, "{i}"),
+            NativeParam::Text(t) => f.write_str(t),
+        }
+    }
 }
 
 /// Parses a video source description (see [`MediaSection::video_in`]).
@@ -496,6 +523,34 @@ impl Project {
         })
     }
 
+    /// The `IRQ_F2P` bit a native instance drives, from a `[connect]` entry
+    /// `"<instance>.<port>" = "IRQ_F2P[<n>]"`.
+    pub fn native_irq(&self, instance: &str) -> Option<u32> {
+        let prefix = format!("{instance}.");
+        self.connect.iter().find_map(|(k, v)| {
+            if !k.starts_with(&prefix) {
+                return None;
+            }
+            let t = v.trim().strip_prefix("IRQ_F2P[")?.strip_suffix(']')?;
+            t.trim().parse().ok()
+        })
+    }
+
+    /// The board bindings of a native instance: `[connect]` entries
+    /// `"<instance>.GPIO" = "board.leds"` as `(interface, signal)`.
+    pub fn native_bindings(&self, instance: &str) -> BTreeMap<String, String> {
+        let prefix = format!("{instance}.");
+        self.connect
+            .iter()
+            .filter_map(|(k, v)| {
+                let port = k.strip_prefix(&prefix)?;
+                v.trim()
+                    .starts_with("board.")
+                    .then(|| (port.to_string(), v.trim().to_string()))
+            })
+            .collect()
+    }
+
     /// Validates the project and builds the engine it asks for.
     ///
     /// `base` is the directory relative paths resolve against. Fails with every
@@ -549,11 +604,30 @@ impl Project {
                     let (gp, addr) = self.native_placement(name).ok_or_else(|| {
                         ApiError::invalid_argument(format!("native.{name} has no [connect] entry"))
                     })?;
+                    let mut params: BTreeMap<String, String> = self
+                        .native_params
+                        .get(name)
+                        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.to_string())).collect())
+                        .unwrap_or_default();
+                    let size = params
+                        .remove("ADDRESS_SIZE")
+                        .map(|v| {
+                            vendor_ip::parse_number(&v).ok_or_else(|| {
+                                ApiError::invalid_argument(format!(
+                                    "native_params.{name}.ADDRESS_SIZE = `{v}` is not a number"
+                                ))
+                            })
+                        })
+                        .transpose()?;
                     natives.push(crate::NativeInstance {
                         name: name.clone(),
                         model: model.clone(),
                         gp,
                         base: addr,
+                        size,
+                        irq: self.native_irq(name),
+                        params,
+                        bindings: self.native_bindings(name),
                     });
                 }
                 let rtl = if self.backends.pl == "xsim" {
@@ -622,7 +696,7 @@ impl Project {
                     rtl,
                     board: self.board.name.clone(),
                     pl_name: if self.backends.pl == "xsim" {
-                        "xsim".to_string()
+                        if self.native.is_empty() { "xsim" } else { "xsim+native" }.to_string()
                     } else if self.native.is_empty() {
                         "none".to_string()
                     } else {
@@ -759,12 +833,6 @@ impl Project {
                     "an RTL design needs a PS that issues bus accesses; set `backends.ps = \"qemu\"`",
                 ));
             }
-            if !self.native.is_empty() {
-                d.push(err(
-                    "native",
-                    "native PL models and an RTL design cannot be combined yet",
-                ));
-            }
         }
         if self.backends.pl == "native" && self.backends.ps == "demo" {
             d.push(err(
@@ -800,10 +868,27 @@ impl Project {
                 ));
             }
         }
-        if !self.native.is_empty() && self.backends.pl != "native" {
+        for (inst, params) in &self.native_params {
+            if !self.native.contains_key(inst) {
+                d.push(warn(
+                    &format!("native_params.{inst}"),
+                    "ignored: no `[native]` instance of that name",
+                ));
+            }
+            if let Some(NativeParam::Text(t)) = params.get("ADDRESS_SIZE") {
+                if vendor_ip::parse_number(t).is_none() {
+                    d.push(err(
+                        &format!("native_params.{inst}.ADDRESS_SIZE"),
+                        format!("`{t}` is not a number"),
+                    ));
+                }
+            }
+        }
+        if !self.native.is_empty() && !matches!(self.backends.pl.as_str(), "native" | "xsim") {
             d.push(warn(
                 "native",
-                "ignored: set `backends.pl = \"native\"` to use native PL models",
+                "ignored: set `backends.pl = \"native\"` (or \"xsim\" next to RTL) to use \
+                 native PL models",
             ));
         }
 
@@ -1242,6 +1327,11 @@ fn check_connection(value: &str, board: Option<&BoardDef>) -> Option<String> {
     }
     if let Some(ok) = indexed("EMIO[", 64) {
         return (!ok).then(|| "EMIO index must be 0..63".to_string());
+    }
+    // A vendor-ip GPIO channel bound to a board signal group (`board.leds`, `board.sw`,
+    // `board.btn`, `board.pmod_ja` .. `board.pmod_je`).
+    if port.starts_with("board.") {
+        return vendor_ip::BoardSignal::parse(port).err();
     }
     if let Some(b) = board {
         let known = b.switches.iter().any(|s| s.id == port)

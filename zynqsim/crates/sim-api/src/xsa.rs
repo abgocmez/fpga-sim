@@ -10,8 +10,8 @@ pub use xsa_import::*;
 
 use crate::error::ApiError;
 use crate::project::{
-    BackendsSection, BoardSection, BootSection, CpuSection, Diagnostic, Project, RtlSection,
-    Severity, SimSection,
+    BackendsSection, BoardSection, BootSection, CpuSection, Diagnostic, NativeParam, Project,
+    RtlSection, Severity, SimSection,
 };
 use crate::tbgen;
 use serde::{Deserialize, Serialize};
@@ -257,6 +257,11 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
     let mut tb_module_instance: Option<String> = None;
     let mut mapped_user: Vec<String> = Vec::new();
     let mut module_notes: Vec<String> = Vec::new();
+    // Vendor IP the vendor-ip library models: instance -> model, parameters, board bindings.
+    let mut native: BTreeMap<String, String> = BTreeMap::new();
+    let mut native_params: BTreeMap<String, BTreeMap<String, NativeParam>> = BTreeMap::new();
+    let mut native_bindings: BTreeMap<String, String> = BTreeMap::new();
+    let mut claimed_signals: Vec<&'static str> = Vec::new();
 
     for ip in &design.ips {
         let base = ip.address.first();
@@ -275,8 +280,137 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
         };
         match &ip.class {
             IpClass::Ps7 | IpClass::Infrastructure { .. } => {}
-            IpClass::VendorIp { title, .. } => unmodelled.push(mk(
-                "needs a `vendor-ip` model (milestone P3, not built yet)".to_string(),
+            IpClass::VendorIp { name, .. }
+                if vendor_ip::is_model(name)
+                    && base.is_some_and(|a| {
+                        matches!(a.master_interface.as_str(), "M_AXI_GP0" | "M_AXI_GP1")
+                    }) =>
+            {
+                let a = base.expect("checked above");
+                let mut params: BTreeMap<String, NativeParam> = BTreeMap::new();
+                let mut text: BTreeMap<String, String> = BTreeMap::new();
+                for k in vendor_ip::param_names(name) {
+                    if let Some(v) = ip.params.get(*k) {
+                        text.insert((*k).to_string(), v.clone());
+                    }
+                }
+                let hz = design
+                    .clocks_of(&ip.instance)
+                    .find_map(|c| c.hz)
+                    .or_else(|| {
+                        ip.params
+                            .get("C_S_AXI_ACLK_FREQ_HZ")
+                            .and_then(|v| vendor_ip::parse_number(v))
+                    });
+                if let Some(hz) = hz {
+                    text.insert("CLK_FREQ_HZ".to_string(), hz.to_string());
+                }
+                for (k, v) in &text {
+                    params.insert(
+                        k.clone(),
+                        match v.parse::<i64>() {
+                            Ok(i) => NativeParam::Int(i),
+                            Err(_) => NativeParam::Text(v.clone()),
+                        },
+                    );
+                }
+                params.insert(
+                    "ADDRESS_SIZE".to_string(),
+                    NativeParam::Text(format!("{:#x}", a.size())),
+                );
+                // Board bindings of a GPIO's channels, from the external ports' names.
+                if name == "axi_gpio" {
+                    let cfg = vendor_ip::gpio::GpioConfig::from_params(&text, a.size());
+                    match cfg {
+                        Err(e) => {
+                            unmodelled.push(mk(
+                                format!("AXI GPIO parameters are not usable: {e}"),
+                                Some("AXI GPIO".to_string()),
+                            ));
+                            continue;
+                        }
+                        Ok(cfg) => {
+                            for ch in 0..cfg.channels() {
+                                let (iface, prefix) = if ch == 0 {
+                                    ("GPIO", "gpio_io_")
+                                } else {
+                                    ("GPIO2", "gpio2_io_")
+                                };
+                                let hint = ip.ports.iter().find_map(|p| {
+                                    if !p.name.starts_with(prefix) {
+                                        return None;
+                                    }
+                                    p.connections.iter().find_map(|c| {
+                                        let internal = c.instance == ps.instance
+                                            || design.ip(&c.instance).is_some();
+                                        (!internal).then(|| c.port.to_ascii_lowercase())
+                                    })
+                                });
+                                let Some(hint) = hint else { continue };
+                                let narrow = cfg.width[ch] <= 4;
+                                let signal: Option<&'static str> = if hint.contains("led") {
+                                    Some("board.leds")
+                                } else if hint.contains("sw") {
+                                    Some("board.sw")
+                                } else if hint.contains("btn") || hint.contains("button") {
+                                    Some("board.btn")
+                                } else if narrow && cfg.all_outputs[ch] {
+                                    Some("board.leds")
+                                } else if narrow && cfg.all_inputs[ch] {
+                                    Some("board.sw")
+                                } else {
+                                    None
+                                };
+                                match signal {
+                                    Some(sig) if !claimed_signals.contains(&sig) => {
+                                        claimed_signals.push(sig);
+                                        native_bindings
+                                            .insert(format!("{}.{iface}", ip.instance), sig.into());
+                                        module_notes.push(format!(
+                                            "`{}.{iface}` (external `{hint}`) is bound to {sig} \
+                                             {}; change `[connect]` to rebind it",
+                                            ip.instance,
+                                            if hint.contains("led")
+                                                || hint.contains("sw")
+                                                || hint.contains("btn")
+                                                || hint.contains("button")
+                                            {
+                                                "by the port's name"
+                                            } else {
+                                                "as a guess from its direction and width"
+                                            }
+                                        ));
+                                    }
+                                    Some(sig) => module_notes.push(format!(
+                                        "`{}.{iface}` (external `{hint}`) would map to {sig}, \
+                                         which another GPIO channel already uses: left unbound",
+                                        ip.instance
+                                    )),
+                                    None => module_notes.push(format!(
+                                        "`{}.{iface}` (external `{hint}`) is not bound to a \
+                                         board signal: add `\"{}.{iface}\" = \"board.leds\"` \
+                                         (or board.sw, board.btn, board.pmod_ja..je) to \
+                                         `[connect]`",
+                                        ip.instance, ip.instance
+                                    )),
+                                }
+                            }
+                        }
+                    }
+                }
+                native.insert(ip.instance.clone(), name.clone());
+                native_params.insert(ip.instance.clone(), params);
+            }
+            IpClass::VendorIp { name, title } => unmodelled.push(mk(
+                if vendor_ip::is_model(name) {
+                    "has a vendor-ip model, but the instance is not reachable from \
+                     M_AXI_GP0/M_AXI_GP1 in the address map"
+                        .to_string()
+                } else {
+                    "needs a `vendor-ip` model that does not exist yet (the library has AXI GPIO, \
+                     AXI Timer and AXI UART Lite)"
+                        .to_string()
+                },
                 Some(title.clone()),
             )),
             IpClass::UnknownVendorIp => unmodelled.push(mk(
@@ -466,6 +600,8 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
         }
     }
 
+    connect.extend(native_bindings);
+
     let elf = {
         let e = opts.elf.clone().unwrap_or_else(|| "fw/app.elf".to_string());
         if Path::new(&e).is_file() {
@@ -508,7 +644,14 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
         },
         backends: BackendsSection {
             ps: "qemu".to_string(),
-            pl: if tb.is_some() { "xsim" } else { "demo" }.to_string(),
+            pl: if tb.is_some() {
+                "xsim"
+            } else if !native.is_empty() {
+                "native"
+            } else {
+                "demo"
+            }
+            .to_string(),
         },
         sim: SimSection::default(),
         boot: Some(BootSection {
@@ -526,7 +669,8 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
         devices: BTreeMap::new(),
         device_values: BTreeMap::new(),
         host: BTreeMap::new(),
-        native: BTreeMap::new(),
+        native,
+        native_params,
         media: None,
         debug: None,
         network: None,
@@ -747,6 +891,11 @@ fn render_report(
             .collect();
         let disp = if let Some(u) = unmodelled.iter().find(|u| u.instance == ip.instance) {
             format!("**not supported**: {}", u.reason)
+        } else if let Some(m) = project.native.get(&ip.instance) {
+            format!(
+                "vendor-ip model `{m}` (native, register level; unverified register facts are \
+                 marked VERIFY in the model docs)"
+            )
         } else if mapped_user.contains(&ip.instance) {
             format!(
                 "RTL in XSim (module `{}`)",
@@ -839,6 +988,21 @@ fn render_report(
         "* `cpu0.elf = \"{}\"` (the project does not validate while this file is missing).",
         project.cpu0.as_ref().map_or("", |c| c.elf.as_str()),
     );
+    if !project.native.is_empty() {
+        let _ = writeln!(
+            r,
+            "* `[native]`: {} vendor-ip model(s) (`{}`). They answer in their own address \
+             windows; every other PL access goes to the RTL (ADR-016). Interrupts reach the PS \
+             at the next lock-step sync (at most one quantum late).",
+            project.native.len(),
+            project
+                .native
+                .iter()
+                .map(|(i, m)| format!("{i}: {m}"))
+                .collect::<Vec<_>>()
+                .join("`, `")
+        );
+    }
     if !project.connect.is_empty() {
         let _ = writeln!(r, "\n`[connect]`:\n");
         for (k, v) in &project.connect {

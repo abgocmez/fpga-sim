@@ -83,9 +83,10 @@ impl NativePl {
     }
 
     /// Like [`NativePl::map`], and drives `IRQ_F2P[irq]` from the block's
-    /// [`RegisterBlock::irq_level`]. Changes reach the PS on the next
-    /// lock-step [`PlTarget::advance`] (never from inside a bus access), so
-    /// an interrupt is delayed by at most one quantum.
+    /// [`RegisterBlock::irq_level`]. A change caused by a bus access is sent
+    /// with that access; one caused by time passing (a timer) or by a board
+    /// input reaches the PS on the next lock-step [`PlTarget::advance`], at
+    /// most one quantum later.
     pub fn map_irq(&mut self, gp: u8, base: u64, block: Box<dyn RegisterBlock>, irq: Option<u32>) {
         self.map(gp, base, block);
         if let Some(m) = self.blocks.last_mut() {
@@ -99,6 +100,25 @@ impl NativePl {
             .iter()
             .map(|m| (m.gp, m.base, m.block.size(), m.block.name().to_string()))
             .collect()
+    }
+
+    /// Forwards a change of any block's interrupt output to the PS.
+    ///
+    /// Called at the end of every bus access and on every lock-step `advance`. Sending the
+    /// change from inside the access that caused it (the way an RTL design's interrupt reaches
+    /// the PS while an access is outstanding) is what lets a level interrupt fall before the
+    /// guest's handler returns; waiting for the next sync would make it fire again.
+    fn sync_irqs(&mut self, now_ns: u64, ps: &mut dyn PsPort) {
+        for m in &mut self.blocks {
+            if let Some(line) = m.irq {
+                let level = m.block.irq_level();
+                if level != m.irq_state {
+                    m.irq_state = level;
+                    // A PS that rejects the update is not the model's problem.
+                    let _ = ps.irq(line, level, now_ns);
+                }
+            }
+        }
     }
 
     /// True when `addr` on `M_AXI_GP<gp>` is inside a mapped window.
@@ -126,7 +146,7 @@ impl PlTarget for NativePl {
         addr: u64,
         buf: &mut [u8],
         now_ns: u64,
-        _ps: &mut dyn PsPort,
+        ps: &mut dyn PsPort,
     ) -> BusResult<()> {
         self.accesses += 1;
         let mut done = 0usize;
@@ -140,6 +160,7 @@ impl PlTarget for NativePl {
             buf[done..done + n].copy_from_slice(&word[lane..lane + n]);
             done += n;
         }
+        self.sync_irqs(now_ns, ps);
         Ok(())
     }
 
@@ -149,7 +170,7 @@ impl PlTarget for NativePl {
         addr: u64,
         data: &[u8],
         now_ns: u64,
-        _ps: &mut dyn PsPort,
+        ps: &mut dyn PsPort,
     ) -> BusResult<()> {
         self.accesses += 1;
         let mut done = 0usize;
@@ -168,21 +189,15 @@ impl PlTarget for NativePl {
             }
             done += n;
         }
+        self.sync_irqs(now_ns, ps);
         Ok(())
     }
 
     fn advance(&mut self, now_ns: u64, ps: &mut dyn PsPort) {
         for m in &mut self.blocks {
             m.block.advance(now_ns);
-            let level = m.block.irq_level();
-            if let Some(line) = m.irq {
-                if level != m.irq_state {
-                    m.irq_state = level;
-                    // A PS that rejects the update is not the model's problem.
-                    let _ = ps.irq(line, level, now_ns);
-                }
-            }
         }
+        self.sync_irqs(now_ns, ps);
     }
 
     fn wire(&mut self, line: u32, level: bool, _now_ns: u64) {
