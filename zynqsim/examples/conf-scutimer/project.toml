@@ -1,0 +1,27 @@
+# Conformance self-test of the Cortex-A9 private timer (xscutimer, 0xF8F00600)
+# and global timer (0xF8F00200), written in Rust (no_std, armv7a-none-eabi) from
+# ../../firmware/conf_scutimer. Each check prints "CHECK n name: PASS|FAIL|N/A
+# why"; "RESULT: ALL PASS" only if no check failed. The global timer's known
+# QEMU deviations are N/A (see docs/conformance/gpio-timer.md).
+#
+#   zynqsim run --project examples/conf-scutimer/project.toml --for 200ms
+#
+# Needs: the Xilinx QEMU (Vitis). No PL and no Vivado.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "demo"          # no PL
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_conf_scutimer.elf"
