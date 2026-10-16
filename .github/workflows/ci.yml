@@ -1,11 +1,25 @@
 # Runs on GitHub-hosted runners. Everything that needs the Xilinx tools
 # (QEMU, Vivado XSim) skips itself there, so this checks the build, lints and
-# the tests that do not need them, on three operating systems.
+# the tests that do not need them.
+#
+# Minutes are billed 1x on Linux, 2x on Windows and 10x on macOS, and the free
+# quota (2000 min) ran out with the full matrix on every push of a stack of
+# pull requests. So: pull requests run Linux only; the three-OS matrix runs on
+# pushes to main and on demand (Actions tab > ci > Run workflow); a newer push
+# to the same ref cancels the older run; documentation-only changes skip it.
 name: ci
 on:
   push:
     branches: [main]
   pull_request:
+    paths-ignore:
+      - "**.md"
+      - "zynqsim/docs/**"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 defaults:
   run:
@@ -16,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest","windows-latest","macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -41,4 +55,5 @@ jobs:
       - name: test
         run: cargo test --workspace --no-fail-fast
       - name: release build (zynqsim, zynqsim-gui, zynqsim-mcp)
+        if: github.event_name != 'pull_request'
         run: cargo build --release
