@@ -143,6 +143,15 @@ A Rust firmware drives an SPI master in the PL; the testbench reports the Pmod p
 where an SSD1306 model turns the traffic into the 128x32 picture. In the GUI the **Pmod devices**
 panel shows it; MCP has `pmod_attach` and `pmod_frame`.
 
+Device kinds for `[devices]`, `pmod_attach` and `--device-set`: `oled` (SSD1306 OLED), `tmp2`
+(temperature), `als` (light), `acl` (acceleration), `pcam` (camera, on the CAM connector),
+`8ld` (eight LEDs), `ssd` (two seven-segment digits), `btn` (four buttons and four switches, set
+by the host) and `swt` (four switches, set by the host). The simple modules have a run example:
+
+```
+zynqsim run --project examples/pmod-simple-demo/project.toml --for 40ms --device-set 3ms@JB.btn0=1 --json
+```
+
 ### Test your own firmware and IP
 
 ```

@@ -868,6 +868,13 @@ impl QemuEngine {
             })?;
             devices::set_checked(dev, name, *value).map_err(ApiError::invalid_argument)?;
         }
+        // Host-driven inputs (a Pmod BTN's buttons) reach the PL through the
+        // input path, which the testbench samples: give it the starting levels.
+        for (port, dev) in bank.iter() {
+            if dev.drive().mask != 0 {
+                pl.set_pin_inputs(port, bank.input_levels(port), 0);
+            }
+        }
         let devs = Arc::new(Mutex::new(bank));
         pl.set_pin_sink(Box::new(BankSink(Arc::clone(&devs))));
         let symbols = Symbols::load(&spec.elf0).unwrap_or_default();
@@ -1849,14 +1856,18 @@ impl QemuEngine {
                         "this PL does not report Pmod pins (an RTL design using the zs_pin_* DPI)",
                     ));
                 }
-                let stored = {
+                let (stored, levels) = {
                     let mut bank = self.bank();
                     let dev = bank.get_mut(port).ok_or_else(|| {
                         ApiError::not_found(format!("no device is attached to Pmod port {port}"))
                     })?;
-                    devices::set_checked(dev, &name, value).map_err(ApiError::invalid_argument)?
+                    let stored = devices::set_checked(dev, &name, value)
+                        .map_err(ApiError::invalid_argument)?;
+                    (stored, bank.input_levels(port))
                 };
                 let now = self.now_ps();
+                // The PL sees a host-driven input at its next sample (zs_pin_in).
+                self.pl.set_pin_inputs(port, levels, now.0 / 1000);
                 self.trace.push(
                     now,
                     TraceEvent::Input {

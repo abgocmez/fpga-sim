@@ -570,7 +570,12 @@ pub fn tool_defs() -> Vec<ToolDef> {
              1 CS, 2 SDIN, 4 SCLK, 7 D/C, 8 RES); `tmp2` (Pmod TMP2, ADT7420 temperature sensor, \
              I2C 0x4B: 3 SCL, 4 SDA); `als` (Pmod ALS, ADC081S021 light sensor, SPI mode 0: \
              1 CS, 3 SDO, 4 SCLK); `acl` (Pmod ACL, ADXL345 accelerometer, SPI mode 3: 1 CS, \
-             2 SDI, 3 SDO, 4 SCLK); `pcam` (Pcam 5C, OV5640 image sensor: SCCB at I2C 0x3C on \
+             2 SDI, 3 SDO, 4 SCLK); `8ld` (Pmod 8LD, eight active-high LEDs on the eight pins: \
+             the picture shows what the PL drives); `ssd` (Pmod SSD, two seven-segment digits \
+             multiplexed by the PL: segments on pins 1..7, digit select on pin 8, unit-tested \
+             only); `btn` (Pmod BTN: four buttons and four switches, host-driven inputs set with \
+             `pmod_set`: `btn0`..`btn3`, `sw0`..`sw3`); `swt` (Pmod SWT: four switches `sw0`..`sw3`, \
+             host-driven); `pcam` (Pcam 5C, OV5640 image sensor: SCCB at I2C 0x3C on \
              the camera connector CAM, frames through the PL's video input; MIPI CSI-2 is not \
              simulated). Only RTL designs that report their Pmod pins (the \
              `zs_pin_out` / `zs_pin_xchg` DPI, see fixtures/rtl/pmod) have a module to talk to. \
@@ -605,7 +610,9 @@ pub fn tool_defs() -> Vec<ToolDef> {
             "pmod_set",
             "Set a physical quantity a Pmod sensor measures: `temperature` in degC for `tmp2` \
              (-55..150), `light` as the 8-bit ADC code 0..255 for `als`, `accel_x`, `accel_y`, \
-             `accel_z` in g for `acl` (+-16). The value is clamped to the model's range and \
+             `accel_z` in g for `acl` (+-16); `btn0`..`btn3` and `sw0`..`sw3` (0 or 1) for `btn`, \
+             `sw0`..`sw3` for `swt` (host-driven inputs, sampled by the PL's input path). The \
+             value is clamped to the model's range and \
              reaches the PL at the next time the firmware reads the sensor, so the result is \
              deterministic. Returns the stored value and the model state. `pmod_state` lists \
              what a module accepts.",
