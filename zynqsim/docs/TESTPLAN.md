@@ -17,9 +17,9 @@ release build). Regenerate golden images: `cargo xtask golden` (review the diff)
 | 5. Universality corpus (>= 10 third-party designs) | **done**: 13 third-party permissively licensed designs (MIT, ISC, BSD-2-Clause, Apache-2.0, SHL-0.51) pass in XSim, plus 18 negative cases and 7 construct probes; table in `docs/CORPUS.md` | `backend-rtl-xsim::corpus::corpus_*` (14), `negative_*` (18), `probe_*` (7), `the_manifest_matches_the_files_on_disk`, `every_negative_case_has_a_test`, `corpus_table_is_current` |
 | 6. Determinism, 5 runs, identical hashes | **done**: demo model (5 runs, in-process and 5 processes), QEMU+native PL (3 processes), QEMU+XSim DMA (3 processes in the test, 5 runs manually) | `sim-api::sim::tests::five_runs_one_digest_and_replay_agrees`, `zynqsim::five_separate_processes_produce_one_trace_hash`, `zynqsim::qemu_project_runs_the_firmware_and_is_deterministic`, `zynqsim::dma_regression_passes_and_is_deterministic_across_processes`, `backend-qemu::two_runs_are_identical_in_time_and_traffic` |
 | 7. GUI headless render vs golden PNGs | **done for the board renderer** | `board-zybo::render::tests::default_board_matches_golden`, `active_board_matches_golden` |
-| 8. MCP schema validation, scenario, fuzzed inputs | **done** | `crates/mcp/tests/{scenario,fuzz,stdio}.rs`, `tools::tests::*`, `schema::tests::*` |
+| 8. MCP schema validation, scenario, fuzzed inputs | **done** | `crates/mcp/tests/{scenario,fuzz,fuzz_requests,stdio}.rs`, `tools::tests::*`, `schema::tests::*`. `fuzz_requests`: every tool from `tools/list` gets 200 random argument objects, with and without the demo open, plus raw JSON-RPC lines; 5 s per call (60 s for rendering tools) |
 | 9. Performance report | not started | n/a |
-| 10. `cargo fuzz` for parsers and packets | **not set up**; a seeded property test stands in for the MCP surface | `mcp/tests/fuzz.rs` |
+| 10. Fuzzing of the project parser, MCP requests and remote-port packets | **done** as seeded tests on stable Rust (`verified`); `cargo-fuzz` targets exist in `fuzz/` (`implemented-untested`, never run under libFuzzer) | `sim-api/tests/fuzz_project.rs`, `mcp/tests/fuzz.rs`, `mcp/tests/fuzz_requests.rs`, `interop/tests/fuzz_packets.rs`; `fuzz/fuzz_targets/*` |
 
 ## Test inventory (P0)
 
@@ -147,7 +147,8 @@ Rust has no stable runtime-skip, so a skipped test is reported as passed. Run wi
 * **Sound output**: a test opens the real output device and checks the queue drains in real time;
   nobody has verified by ear that the sound is right.
 * **Linux and macOS**: CI passes there, but without QEMU/Vivado, so the engine tests skip; they are only exercised on the Windows development machine. macOS has no run of the XSim crates at all (Windows-only).
-* **Coverage-guided fuzzing**: `cargo fuzz` targets do not exist yet.
+* **Coverage-guided fuzzing**: the `fuzz/` cargo-fuzz targets are written and type-checked but have
+  never run under libFuzzer (needs Linux and nightly). The seeded tests are the verified part.
 * **Third-party viewers**: VCD was not opened in GTKWave and Perfetto JSON was not loaded in the
   Perfetto UI; only their formats are checked.
 * **Hardware correctness**: nothing is compared with a real board. Pin assignments are unverified.

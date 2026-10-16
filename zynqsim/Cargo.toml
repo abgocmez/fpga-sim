@@ -1,5 +1,7 @@
 [workspace]
 resolver = "3"
+# cargo-fuzz targets need nightly and libFuzzer; they build from their own manifest.
+exclude = ["fuzz"]
 members = [
     "crates/sim-core",
     "crates/trace",
