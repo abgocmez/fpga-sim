@@ -1,0 +1,13 @@
+[package]
+name = "mem-sys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Zynq-7000 physical address map and system bus for the native PS engine"
+
+[dependencies]
+ps-bus = { path = "../ps-bus" }
+
+[lints]
+workspace = true

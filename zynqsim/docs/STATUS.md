@@ -649,3 +649,36 @@ They show that inputs do not panic or hang. They do not show that the answers ar
 | Block | Status | Evidence / note |
 |---|---|---|
 | xgpiops (PS GPIO), xscutimer and global timer | private timer fully modelled (checked features); global timer partly; PS GPIO not modelled | `docs/conformance/gpio-timer.md`; tests `conf_gpiops_checks_match_the_expected_na_list`, `conf_scutimer_checks_match_the_expected_na_list` |
+
+## Native PS (P5, optional)
+
+Part owned by the memory-system and peripheral crates (`mem-sys`, `ps-periph`; ADR-031). The
+`cpu-a9` core is built by another engineer and is not listed here. **Nothing here is compared with a board, and the register facts are from UG585 as
+remembered** (`VERIFY:` in the code). "verified" below means the named test proves the model
+does what the test says; the firmware checks in `firmware/conf_*` were encoded as tests, not run
+on the native engine.
+
+| Feature | Status | Evidence / note |
+|---|---|---|
+| Physical address map as data (`ZYNQ_MAP`, `MPCORE_BLOCKS`, `IOP_BLOCKS`), printable as a table | verified (names, overlaps, MPCore containment, firmware literals) | `mem_sys::map::tests::*`; addresses themselves are `VERIFY:` against UG585 Table 2-1 |
+| `SystemBus`: DDR from 0 (sparse, 64 KiB pages, default 512 MiB), OCM 256 KiB at 0xFFFC0000 (high mapping only), bounds and straddling accesses, sizes 1/2/4/8 | verified | `mem_sys::bus::tests::{ddr_and_ocm_store_bytes_and_bounds_are_enforced, overlapping_and_invalid_regions_are_refused}`, `mem_sys::ram::tests::*` |
+| Unmapped accesses: policy Fault or RAZ/WI, always logged (first 1024 kept, all counted) | verified | `mem_sys::bus::tests::{unmapped_accesses_fault_by_default_and_are_logged, raz_wi_policy_reads_zero_and_still_logs}` |
+| OCM remap through SLCR `OCM_CFG` (low mapping) | not-planned | only the reset (high) mapping is modelled; the register is stored |
+| `Device` trait (read, write, tick, irq lines, core IRQ, state) and per-core views (`CoreBus`) | verified | `mem_sys::bus::tests::core_views_select_their_bank_and_tick_reaches_devices`, `ps_periph::gic_timer::*` |
+| RAM snapshot and restore (`Vec<u8>`, DDR pages and OCM; device state not included) and state hash (FNV-1a) | verified | `mem_sys::bus::tests::{ram_snapshot_round_trips_and_checks_its_size, state_hash_follows_state_and_nothing_else}`, `ps-periph::determinism::ram_snapshot_round_trips_after_a_session` |
+| Determinism: the same session with the same ticks gives the same hash at every step (five runs in one process) | verified in process only | `ps-periph::determinism::{the_same_session_gives_the_same_hash_at_every_step, five_runs_in_one_process_agree}`; not run across processes |
+| Register access lanes (byte and half-word access to 32-bit registers, write-1-to-clear merge) | verified | `mem_sys::device::tests::*`, `ps_periph::uart::tests::byte_lanes_of_a_register_are_merged_not_clobbered` |
+| UART0/UART1 (xuartps): control, mode, interrupt enable/disable/status, baud generator and divider, 64-byte FIFOs at 0x30, status flags, transmit at the baud rate into a host log, receive injection, interrupt line | verified (model) | `ps_periph::uart::tests::*` (10 tests). Not modelled: RX timeout, modem lines, break, parity and framing, IrDA; the reference clock is an assumed 100 MHz (`VERIFY:`) |
+| SLCR: lock (0x004) and unlock (0x008) keys, LOCKSTA, protected writes ignored while locked, PSS/FPGA reset bits, level shifter, OCM_CFG | verified (lock) | `ps_periph::slcr::tests::{protected_registers_ignore_writes_while_locked, wrong_keys_do_nothing, ...}` |
+| SLCR reset values and clock/PLL register values | implemented-untested | the table `ps_periph::slcr::REGS` is marked `VERIFY:`; no test compares it with UG585 |
+| SLCR soft reset (PSS_RST_CTRL) | stub | recorded (`soft_reset_requested`), no machine reset is performed |
+| GIC (PL390): 96 IDs, enable/pending/active, level and edge inputs, priorities, targets, PMR and running priority, SGIs with source core, acknowledge and end, per-core CPU interface | verified (model) | `ps_periph::gic::tests::*`, integration `ps_periph::gic_timer::*` (PPI 29 through ICCIAR and ICCEOIR). Not modelled: security extensions, binary-point split, interrupt groups |
+| Private timer (PPI 29) and the firmware checks `firmware/conf_scutimer` 1-11 | verified (model) | `ps_periph::conf_scutimer::conf_scutimer_every_check_passes` (CHECK 1..11 PASS) |
+| Global timer (PPI 27): counter, equality comparator, auto-increment, IRQ | verified (model) | `ps_periph::conf_scutimer::conf_scutimer_every_check_passes` (CHECK 12..17 PASS). The model passes the three checks QEMU reports N/A (13-15, `docs/conformance/gpio-timer.md`), so it does not reproduce QEMU's deviations |
+| Watchdog (PPI 30) | implemented-untested | countdown and disable sequence are tested (`ps_periph::timers::tests::watchdog_mode_*`); no reset is performed; RESET_STATUS clear is `VERIFY:` |
+| SCU (control, config) | implemented-untested | the config value is `VERIFY:`; there is no SCU tag RAM or power model |
+| L2C-310 at 0xF8F02000 | stub | reads zero, writes ignored (`ps_periph::system::tests::the_stubs_and_the_gaps_behave_as_documented`) |
+| TTC0 and TTC1 (xttcps): counters, interval, overflow, decrement, match, prescaler, status and enable, interval interrupts on SPI 42-44 and 69-71 | verified (model) | `ps_periph::conf_ttc::conf_ttc_every_check_passes` (all 14 firmware checks PASS). `VERIFY:` interval period (the model's period is INTERVAL ticks, as the firmware's check 8 needs) and the match-register stride |
+| DDRC (0xF8006000) and DEVCFG (0xF8007000, XADC not included) | stub | named stubs, read zero (`ps_periph::system`) |
+| Not modelled, unmapped and logged: DMAC, SWDT, SMC, USB, I2C, SPI, CAN, GPIO, GEM, QSPI controller, SDIO, XADC | not-planned for P5 | `mem_sys::ZYNQ_MAP` / `IOP_BLOCKS` list them; a native access to them is an unmapped access |
+| Comparison of these models with QEMU or with a board (P5 exit: differential tests) | not-planned here | the QEMU-differential runs need the native CPU core (other engineer) |

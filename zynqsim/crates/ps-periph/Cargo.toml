@@ -1,0 +1,14 @@
+[package]
+name = "ps-periph"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Register-level models of the Zynq-7000 PS peripherals for the native PS engine"
+
+[dependencies]
+ps-bus = { path = "../ps-bus" }
+mem-sys = { path = "../mem-sys" }
+
+[lints]
+workspace = true
