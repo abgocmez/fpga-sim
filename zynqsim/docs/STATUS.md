@@ -51,6 +51,7 @@ control plane drive it). Caveats are listed under *Known limits of the P1 engine
 | Button -> GPIO event -> `IRQ_F2P[1]` -> ISR -> LED toggle | verified | `board::shell_leds_switches_and_buttons`. The handler can run twice for one press (level IRQ, PL falling edge arrives one quantum later); the test accepts 1 or 2 |
 | DMA image filters equal a Rust golden model pixel for pixel (3 filters, 3 patterns, 4096 px) | verified | `board::image_filters_match_the_golden_model_pixel_for_pixel`, `zynqsim::board_demo_image_filter_matches_golden_through_the_cli` (via `--dump-mem`) |
 | Guest memory read **and write** while paused, through the remote-port memory path (not the QEMU monitor) | verified | `backend-qemu::memory_is_readable_and_writable_while_the_machine_is_paused`, MCP `mem_read`/`mem_write`, CLI `--dump-mem`/`--dump-image` |
+| PS I2C, SPI and XADC conformance (`firmware/conf_*`): I2C and XADC partly modelled, SPI not modelled | verified (partly / not modelled) | `conformance_iic_spi_xadc::iic_spi_xadc_firmware_passes_with_the_listed_na_checks`; table in `docs/conformance/iic-spi-xadc.md` |
 | `Play`/`Pause` on a QEMU engine, queries stay responsive | verified | `sim-api::tests::qemu_play` |
 | Prototype DMA regression: 6 cases PASS, 2 cores, IRQ | verified | `zynqsim::dma_regression_passes_and_is_deterministic_across_processes` |
 | DMA results equal a Rust golden model (4,337 words) | verified | `backend-rtl-xsim::dma_golden`; mutation-checked (a deliberately wrong model fails) |

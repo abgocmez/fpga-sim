@@ -1,0 +1,26 @@
+# PS I2C conformance (firmware/conf_iicps): register reset values and read/write
+# behaviour of I2C0 and I2C1, and a master write and read to an address with no
+# device (NACK). Prints `CHECK n name: PASS|FAIL|N/A reason` lines and a final
+# `RESULT: ALL PASS` on UART1. The conformance table is docs/conformance/iic-spi-xadc.md.
+#
+#   zynqsim run --project examples/conf-iicps/project.toml --for 50ms
+#
+# Needs only the Xilinx QEMU (Vitis); no Vivado.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "demo"          # no PL
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_conf_iicps.elf"

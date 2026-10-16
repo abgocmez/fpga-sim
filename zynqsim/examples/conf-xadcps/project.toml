@@ -1,0 +1,27 @@
+# PS XADC interface conformance (firmware/conf_xadcps): reset values and read/write
+# of CFG, INT_STS, INT_MASK, MSTS and MCTL, and the on-chip temperature and VCCINT
+# read through the CMDFIFO/RDFIFO command path. Prints `CHECK n name: PASS|FAIL|N/A
+# reason` lines and a final `RESULT: ALL PASS` on UART1. The conformance table is
+# docs/conformance/iic-spi-xadc.md.
+#
+#   zynqsim run --project examples/conf-xadcps/project.toml --for 50ms
+#
+# Needs only the Xilinx QEMU (Vitis); no Vivado.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "demo"          # no PL
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_conf_xadcps.elf"

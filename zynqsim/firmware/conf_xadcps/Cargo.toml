@@ -1,0 +1,9 @@
+[package]
+name = "conf_xadcps"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Conformance of the PS XADC interface (xadcps) in Rust"
+
+[dependencies]
+rt = { path = "../rt" }
