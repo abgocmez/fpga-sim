@@ -590,7 +590,7 @@ impl XsimPl {
             Packet::Interrupt(i) if i.dev == DEV_BOARD_OUT => {
                 self.board_out.push(BoardOutput {
                     t_ns: i.timestamp,
-                    leds: i.val & 0xF,
+                    leds: i.val,
                 });
             }
             Packet::Interrupt(i) if i.flags & flags::RESPONSE == 0 => {
@@ -932,7 +932,7 @@ impl PlTarget for XsimPl {
                 timestamp: now_ns,
                 vector: 0,
                 line,
-                val: val & 0xF,
+                val,
             }));
         }
     }

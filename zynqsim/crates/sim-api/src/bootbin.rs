@@ -202,10 +202,7 @@ pub fn plan_project(bin: &Path) -> Result<BootInit, ApiError> {
     let image_name = "BOOT.BIN".to_string();
     let project = Project {
         schema_version: 1,
-        board: BoardSection {
-            name: "zybo-z7-20".to_string(),
-            ddr_mb: None,
-        },
+        board: BoardSection::named("zybo-z7-20"),
         backends: BackendsSection {
             ps: "qemu".to_string(),
             // The bitstream cannot be simulated: add [rtl] (or [native]) to give the PL a

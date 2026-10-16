@@ -3,10 +3,14 @@ use crate::types::{Command, Input};
 use serde::{Deserialize, Serialize};
 
 /// Everything needed to construct a simulator.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SimConfig {
-    /// Built-in board machine name.
+    /// Board machine name: a built-in board, or the name inside `board_def`.
     pub board: String,
+    /// The board description, when the board is not built in (`[board] file`). A recording
+    /// carries it so that it replays without the board file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub board_def: Option<Box<board_zybo::BoardDef>>,
     /// Initial PRNG seed.
     pub seed: u64,
     /// Lock-step quantum in picoseconds (non-zero).
@@ -17,6 +21,7 @@ impl Default for SimConfig {
     fn default() -> SimConfig {
         SimConfig {
             board: "zybo-z7-20".to_string(),
+            board_def: None,
             seed: 1,
             quantum_ps: 1_000_000, // 1 us, the default of prompt §4
         }

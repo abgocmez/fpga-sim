@@ -156,6 +156,20 @@ impl App {
         }
     }
 
+    /// The status-bar hint listing the board's keyboard shortcuts.
+    fn key_help(&self) -> String {
+        let keys = |it: Vec<Option<&str>>| {
+            let k: Vec<&str> = it.into_iter().flatten().collect();
+            k.join("/")
+        };
+        let def = &self.model.def;
+        format!(
+            "ready  |  keys: {} switches, {} buttons (hold)",
+            keys(def.switches.iter().map(|s| s.key.as_deref()).collect()),
+            keys(def.buttons.iter().map(|b| b.key.as_deref()).collect()),
+        )
+    }
+
     fn handle_keys(&mut self, ctx: &egui::Context) {
         if ctx.wants_keyboard_input() {
             return;
@@ -920,12 +934,7 @@ impl App {
                             );
                         }
                         None => {
-                            ui.label(
-                                RichText::new(
-                                    "ready  |  keys: 1-4 switches, Q/W/E/R buttons (hold)",
-                                )
-                                .color(Color32::GRAY),
-                            );
+                            ui.label(RichText::new(self.key_help()).color(Color32::GRAY));
                         }
                     }
                 });
@@ -1269,6 +1278,109 @@ mod tests {
         h.app
             .open_project_file(std::path::PathBuf::from("no/such/project.toml"));
         assert!(h.app.draft_msg.is_some());
+    }
+
+    /// Waits until the model has adopted a freshly built engine.
+    fn wait_for_engine(h: &mut Harness, from_generation: u32) {
+        let start = Instant::now();
+        while h.app.model.generation == from_generation {
+            h.frame(vec![]);
+            assert!(start.elapsed() < Duration::from_secs(20), "build finished");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            h.app.model.load_error.is_none(),
+            "{:?}",
+            h.app.model.load_error
+        );
+        h.frame(vec![]);
+    }
+
+    #[test]
+    fn picking_a_board_in_the_project_window_changes_the_controls_and_they_work() {
+        let mut h = Harness::new();
+        h.app.project_open = true;
+        h.frame(vec![]);
+        assert_eq!(h.app.model.def.name, "zybo-z7-20");
+        assert_eq!(h.app.model.state.buttons.len(), 4);
+        assert!(
+            h.app
+                .key_help()
+                .contains("1/2/3/4 switches, Q/W/E/R buttons")
+        );
+
+        // The picker writes `board_name` into the draft; Build swaps the engine.
+        h.app.draft.board_name = "zedboard".to_string();
+        let g = h.app.model.generation;
+        h.app.build_draft("zedboard");
+        wait_for_engine(&mut h, g);
+        assert_eq!(h.app.model.def.name, "zedboard");
+        assert_eq!(h.app.model.state.switches.len(), 8);
+        assert_eq!(h.app.model.state.buttons.len(), 7);
+        assert_eq!(h.app.model.state.leds.len(), 8);
+        assert_eq!(h.app.key_down.len(), 7, "one held-key flag per button");
+        assert!(h.app.key_help().contains("1/2/3/4/5/6/7/8 switches"));
+
+        // A button the Zybo does not have, pressed with the pointer.
+        let b = h.app.model.def.buttons[6].clone();
+        let p = h.at_layout(b.x, b.y);
+        h.frame(vec![Event::PointerMoved(p)]);
+        h.press(p);
+        h.frame(vec![]);
+        assert!(h.app.model.state.buttons[6], "button 6 is down");
+        h.release(p);
+        h.frame(vec![]);
+        assert!(!h.app.model.state.buttons[6], "and up again");
+
+        // A switch the Zybo does not have, by clicking and by its key.
+        let s = h.app.model.def.switches[7].clone();
+        h.click(h.at_layout(s.x, s.y));
+        h.frame(vec![]);
+        assert!(
+            h.app.model.state.switches[7],
+            "switch 7 is on after a click"
+        );
+        assert_eq!(h.app.model.state.leds[6], 0, "LED6 follows SW6, not SW7");
+        h.key(Key::Num7, true);
+        h.key(Key::Num7, false);
+        h.frame(vec![]);
+        assert!(h.app.model.state.switches[6], "key 7 toggles switch 6");
+        assert_eq!(
+            h.app.model.state.leds[6], 255,
+            "which the demo shows on LED6"
+        );
+        h.key(Key::U, true);
+        h.frame(vec![]);
+        assert!(h.app.model.state.buttons[6], "U holds the seventh button");
+        h.key(Key::U, false);
+        h.frame(vec![]);
+
+        // A custom board file, the way the picker's "custom file" entry sets it.
+        h.app.draft.board_file = "../../examples/custom-board/my-board.toml".to_string();
+        h.app.draft.dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let g = h.app.model.generation;
+        h.app.build_draft("custom");
+        wait_for_engine(&mut h, g);
+        assert_eq!(h.app.model.def.name, "lab-board");
+        assert_eq!(h.app.model.state.leds.len(), 6);
+        assert!(
+            h.app.model.def.svg_source.is_some(),
+            "the artwork came along"
+        );
+
+        // A bad board file is refused before anything starts.
+        h.app.draft.board_file = "no-such-board.toml".to_string();
+        let g = h.app.model.generation;
+        h.app.build_draft("bad");
+        assert_eq!(h.app.model.generation, g);
+        assert!(
+            h.app
+                .draft_msg
+                .as_deref()
+                .is_some_and(|m| m.contains("board.file") && m.contains("cannot read")),
+            "{:?}",
+            h.app.draft_msg
+        );
     }
 
     #[test]

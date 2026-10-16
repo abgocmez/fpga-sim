@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Artwork for my-board.toml. Only the subset in docs/adr/022-custom-boards.md is drawn:
+     rect, circle, ellipse, line, polyline, polygon and path (M L H V C Q Z), no transforms. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 360">
+  <!-- board outline and silkscreen frame -->
+  <rect x="6" y="6" width="588" height="348" rx="18" fill="#0b4a73"/>
+  <rect x="14" y="14" width="572" height="332" rx="12" fill="none" stroke="#e8e8d8" stroke-width="2"/>
+  <!-- mounting holes -->
+  <g fill="#c8c8c8" stroke="#555555" stroke-width="2">
+    <circle cx="30" cy="30" r="8"/>
+    <circle cx="570" cy="30" r="8"/>
+    <circle cx="30" cy="330" r="8"/>
+    <circle cx="570" cy="330" r="8"/>
+  </g>
+  <!-- silkscreen bars behind the LED row and the switch row -->
+  <path d="M 36 190 H 490 V 240 H 36 Z" fill="none" stroke="#e8e8d8" stroke-width="1.5"/>
+  <path d="M 60 252 L 250 252 L 250 330 L 60 330 Z" fill="none" stroke="#e8e8d8" stroke-width="1.5"/>
+  <polygon points="375,258 505,258 505,326 375,326" fill="none" stroke="#e8e8d8" stroke-width="1.5"/>
+  <!-- a trace -->
+  <polyline points="230,165 230,185 300,185" fill="none" stroke="#d4a017" stroke-width="3"/>
+  <ellipse cx="540" cy="110" rx="28" ry="16" fill="#d4a017" opacity="0.8"/>
+</svg>

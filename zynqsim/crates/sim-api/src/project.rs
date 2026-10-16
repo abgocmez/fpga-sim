@@ -9,11 +9,68 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BoardSection {
-    /// Built-in board machine name.
+    /// Built-in board machine name (`zybo-z7-20`, `zybo-z7-10`, `zedboard`, `pynq-z2`).
+    /// With `file`, optional; when given it must equal the file's `name`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
+    /// A board description file (TOML, optional SVG next to it), relative to the project:
+    /// a custom board (ADR-022). Instead of `name`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
     /// DDR size in MiB; informational until a PS backend consumes it.
     #[serde(default)]
     pub ddr_mb: Option<u32>,
+}
+
+impl BoardSection {
+    /// A section naming a built-in board.
+    pub fn named(name: &str) -> BoardSection {
+        BoardSection {
+            name: name.to_string(),
+            file: None,
+            ddr_mb: None,
+        }
+    }
+
+    /// The board this section selects. `base` is the directory `file` is relative to.
+    /// The error is the project field and a message.
+    pub fn resolve(&self, base: &Path) -> Result<BoardDef, (&'static str, String)> {
+        if let Some(f) = &self.file {
+            let path = resolve(base, f);
+            let def = BoardDef::load(&path).map_err(|e| ("board.file", e.to_string()))?;
+            if !self.name.is_empty() && self.name != def.name {
+                return Err((
+                    "board.name",
+                    format!(
+                        "`{}` does not match the name `{}` inside {}; drop `name` or fix it",
+                        self.name,
+                        def.name,
+                        path.display()
+                    ),
+                ));
+            }
+            return Ok(def);
+        }
+        if self.name.is_empty() {
+            return Err((
+                "board.name",
+                format!(
+                    "[board] needs `name` (built-in: {}) or `file = \"my-board.toml\"`",
+                    BoardDef::builtin_names().join(", ")
+                ),
+            ));
+        }
+        BoardDef::builtin(&self.name).ok_or_else(|| {
+            (
+                "board.name",
+                format!(
+                    "unknown board `{}`; built-in: {}; or use `file = \"my-board.toml\"`",
+                    self.name,
+                    BoardDef::builtin_names().join(", ")
+                ),
+            )
+        })
+    }
 }
 
 /// `[backends]` section.
@@ -595,8 +652,12 @@ impl Project {
             )));
         }
         match self.backends.ps.as_str() {
-            "demo" => Ok(Box::new(crate::Simulator::new(self.sim_config())?)),
+            "demo" => Ok(Box::new(crate::Simulator::with_def(
+                self.board_def(base)?,
+                self.sim_config(),
+            )?)),
             "qemu" => {
+                let board_def = self.board_def(base)?;
                 let qemu = std::env::var_os("ZYNQSIM_QEMU")
                     .map(PathBuf::from)
                     .or_else(|| crate::tools::locate_binary("qemu-system-aarch64"))
@@ -723,7 +784,8 @@ impl Project {
                     uart,
                     natives,
                     rtl,
-                    board: self.board.name.clone(),
+                    board: board_def.name.clone(),
+                    board_def: Some(board_def),
                     pl_name: if self.backends.pl == "xsim" {
                         if self.native.is_empty() {
                             "xsim"
@@ -774,10 +836,20 @@ impl Project {
         }
     }
 
-    /// The simulator configuration this project asks for.
+    /// The board this project runs on: a built-in board or the `[board] file`, which is
+    /// resolved against `base`.
+    pub fn board_def(&self, base: &Path) -> Result<BoardDef, ApiError> {
+        self.board
+            .resolve(base)
+            .map_err(|(field, msg)| ApiError::invalid_argument(format!("{field}: {msg}")))
+    }
+
+    /// The simulator configuration this project asks for. A board from `[board] file` is
+    /// attached by the engine (see [`Project::board_def`]).
     pub fn sim_config(&self) -> SimConfig {
         SimConfig {
             board: self.board.name.clone(),
+            board_def: None,
             seed: self.sim.seed,
             quantum_ps: self.sim.quantum_ns.saturating_mul(1000),
         }
@@ -793,13 +865,13 @@ impl Project {
                 format!("is {}, only 1 is supported", self.schema_version),
             ));
         }
-        let board = BoardDef::builtin(&self.board.name);
-        if board.is_none() {
-            d.push(err(
-                "board.name",
-                format!("unknown board `{}`; built-in: zybo-z7-20", self.board.name),
-            ));
-        }
+        let board = match self.board.resolve(base) {
+            Ok(b) => Some(b),
+            Err((field, msg)) => {
+                d.push(err(field, msg));
+                None
+            }
+        };
         if let (Some(b), Some(ddr)) = (&board, self.board.ddr_mb) {
             if ddr != b.ddr_mb {
                 d.push(warn(
@@ -1051,6 +1123,10 @@ impl Project {
                      the camera connector is cam",
                 )),
                 Some(port) => {
+                    if let Some(m) = port_missing(board.as_ref(), port) {
+                        d.push(err(&field, m));
+                        continue;
+                    }
                     if devices::KINDS.contains(&v.as_str()) && !devices::fits_port(v, port) {
                         d.push(err(
                             &field,
@@ -1080,12 +1156,16 @@ impl Project {
         }
         for (k, vals) in &self.device_values {
             let field = format!("device_values.{k}");
-            if pmod_port(k).is_none() {
+            let Some(port) = pmod_port(k) else {
                 d.push(err(
                     &field,
                     "unknown connector; Pmod ports are pmod_ja, pmod_jb, pmod_jc, pmod_jd, pmod_je, \
                      the camera connector is cam",
                 ));
+                continue;
+            };
+            if let Some(m) = port_missing(board.as_ref(), port) {
+                d.push(err(&field, m));
                 continue;
             }
             let Some(kind) = self.devices.get(k) else {
@@ -1341,6 +1421,30 @@ pub(crate) fn pmod_port(key: &str) -> Option<u8> {
         "pmod_jd" => Some(3),
         "pmod_je" => Some(4),
         _ => None,
+    }
+}
+
+/// Why the board has no connector for Pmod/camera port index `port` (0.. for the
+/// Pmods in the board file's order, 5 for the camera), or `None` when it has one or the
+/// board is unknown (reported elsewhere).
+fn port_missing(board: Option<&BoardDef>, port: u8) -> Option<String> {
+    let b = board?;
+    if port == 5 {
+        (!b.connectors.iter().any(|c| c.kind == "pcam"))
+            .then(|| format!("board `{}` has no camera connector", b.name))
+    } else if usize::from(port) >= b.pmods.len() {
+        Some(format!(
+            "board `{}` has {} Pmod port(s) ({}); pmod_ja is the first, pmod_jb the second...",
+            b.name,
+            b.pmods.len(),
+            b.pmods
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    } else {
+        None
     }
 }
 

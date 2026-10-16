@@ -28,6 +28,11 @@ pub struct ProjectDraft {
     pub dir: PathBuf,
     /// Where the project came from, if it was loaded from a file.
     pub file: Option<PathBuf>,
+    /// Built-in board chosen in the picker (`zybo-z7-20`, `zedboard`...); empty when
+    /// `board_file` is used.
+    pub board_name: String,
+    /// A custom board description file (relative to the project), or empty.
+    pub board_file: String,
     /// Use QEMU for the PS (else the built-in demo engine).
     pub use_qemu: bool,
     /// Core 0 ELF.
@@ -67,6 +72,12 @@ impl ProjectDraft {
         };
         let media = base.media.clone().unwrap_or_default();
         ProjectDraft {
+            board_name: if base.board.file.is_some() {
+                String::new()
+            } else {
+                base.board.name.clone()
+            },
+            board_file: base.board.file.clone().unwrap_or_default(),
             use_qemu: base.backends.ps == "qemu",
             cpu0: base
                 .cpu0
@@ -113,6 +124,16 @@ impl ProjectDraft {
             let t = s.trim();
             (!t.is_empty()).then(|| t.to_string())
         };
+        match non_empty(&self.board_file) {
+            Some(f) => {
+                p.board.file = Some(f);
+                p.board.name = String::new();
+            }
+            None => {
+                p.board.file = None;
+                p.board.name = self.board_name.trim().to_string();
+            }
+        }
         p.backends.ps = if self.use_qemu { "qemu" } else { "demo" }.to_string();
         p.backends.pl = match self.pl {
             PlKind::None => "demo",
@@ -262,7 +283,13 @@ mod tests {
 
     #[test]
     fn a_loaded_project_round_trips_through_the_draft() {
-        for name in ["board-demo", "audio-demo", "math-qemu", "dma-regression"] {
+        for name in [
+            "board-demo",
+            "audio-demo",
+            "math-qemu",
+            "dma-regression",
+            "custom-board",
+        ] {
             let d = ProjectDraft::load(&example(name)).unwrap();
             let p = d.to_project().unwrap();
             assert_eq!(p, d.base, "{name}: an untouched draft is the same project");
@@ -288,6 +315,56 @@ mod tests {
         assert_eq!(p.rtl.as_ref().unwrap().files, vec!["a.v", "b.sv"]);
         assert_eq!(p.rtl.as_ref().unwrap().top.as_deref(), Some("top"));
         assert_eq!(p.cpu0, before.cpu0, "PS untouched by a PL edit");
+    }
+
+    #[test]
+    fn the_board_picker_edits_only_the_board() {
+        let mut d = ProjectDraft::load(&example("board-demo")).unwrap();
+        assert_eq!(
+            (d.board_name.as_str(), d.board_file.as_str()),
+            ("zybo-z7-20", "")
+        );
+        let before = d.to_project().unwrap();
+
+        // A built-in board by name.
+        d.board_name = "pynq-z2".to_string();
+        let p = d.to_project().unwrap();
+        assert_eq!(
+            (p.board.name.as_str(), p.board.file.as_ref()),
+            ("pynq-z2", None)
+        );
+        assert_eq!(
+            (&p.cpu0, &p.rtl),
+            (&before.cpu0, &before.rtl),
+            "nothing else moved"
+        );
+        assert!(d.problems().is_empty(), "{:?}", d.problems());
+
+        // A custom file wins over the name and leaves no name behind.
+        d.board_file = " my-board.toml ".to_string();
+        let p = d.to_project().unwrap();
+        assert_eq!(p.board.file.as_deref(), Some("my-board.toml"));
+        assert_eq!(p.board.name, "");
+        assert!(p.to_toml().unwrap().contains("file = \"my-board.toml\""));
+
+        // A file that is not there is a draft problem naming the field.
+        let problems = d.problems();
+        assert!(
+            problems
+                .iter()
+                .any(|m| m.starts_with("board.file:") && m.contains("cannot read")),
+            "{problems:?}"
+        );
+        // An unknown built-in name lists the real ones.
+        d.board_file.clear();
+        d.board_name = "nexys".to_string();
+        let problems = d.problems();
+        assert!(
+            problems
+                .iter()
+                .any(|m| m.contains("unknown board `nexys`") && m.contains("zedboard")),
+            "{problems:?}"
+        );
     }
 
     #[test]

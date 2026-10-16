@@ -80,11 +80,12 @@ pub const DEV_WIRES_PL_TO_PS: u32 = 9;
 /// Remote-port device number of the PS-to-PL wires (resets).
 pub const DEV_WIRES_PS_TO_PL: u32 = 10;
 /// Device number the adapter uses to send board input pins (switches on
-/// line 0, push buttons on line 1; the 4 bits are in the packet's `val`) to
+/// line 0, push buttons on line 1; bit n = component n of the board file, up to 8 bits in
+/// the packet's `val`: ADR-022; the Zybo uses the low 4) to
 /// the RTL testbench. Not a QEMU device: it lives between host and DPI.
 pub const DEV_BOARD_IN: u32 = 12;
 /// Device number the testbench side uses to report board output pins (LEDs on
-/// line 0, 4 bits in `val`).
+/// line 0, bit n = LED n of the board file, up to 8 bits in `val`).
 pub const DEV_BOARD_OUT: u32 = 13;
 /// Device number the testbench side uses to report the levels of a *pin
 /// group* (a Pmod port or the RGB LEDs): interrupt packets, `line` = group,
@@ -167,7 +168,7 @@ pub trait PinSink: Send {
 pub struct BoardOutput {
     /// PS time of the change in nanoseconds.
     pub t_ns: u64,
-    /// The four user LEDs, bit *n* = LED *n*.
+    /// The user LEDs (at most eight), bit *n* = LED *n*.
     pub leds: u8,
 }
 
@@ -225,7 +226,8 @@ pub trait PlTarget {
         false
     }
 
-    /// Drives the board input pins: `switches` and `buttons` are 4-bit values.
+    /// Drives the board input pins: `switches` and `buttons` carry one bit per component
+    /// of the board (bit n = component n, at most 8).
     /// Applied at PS time `now_ns`.
     fn set_board_inputs(&mut self, _switches: u8, _buttons: u8, _now_ns: u64) {}
 
