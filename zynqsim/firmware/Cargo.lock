@@ -72,6 +72,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "dma_loopback"
+version = "0.1.0"
+dependencies = [
+ "rt",
+]
+
+[[package]]
 name = "embedded-hal"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -168,6 +175,20 @@ name = "hex-literal"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e712f64ec3850b98572bffac52e2c6f282b29fe6c5fa6d42334b30be438d95c1"
+
+[[package]]
+name = "iic_bram_demo"
+version = "0.1.0"
+dependencies = [
+ "rt",
+]
+
+[[package]]
+name = "intc_demo"
+version = "0.1.0"
+dependencies = [
+ "rt",
+]
 
 [[package]]
 name = "irq_demo"

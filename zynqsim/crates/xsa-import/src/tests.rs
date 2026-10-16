@@ -154,7 +154,7 @@ const SYNTH: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
         </PORT>
       </PORTS>
     </MODULE>
-    <MODULE INSTANCE="u_b" MODTYPE="clk_wiz" VLNV="xilinx.com:ip:clk_wiz:6.0" FULLNAME="/u_b">
+    <MODULE INSTANCE="u_b" MODTYPE="axi_vdma" VLNV="xilinx.com:ip:axi_vdma:6.3" FULLNAME="/u_b">
       <PORTS>
         <PORT DIR="O" LEFT="1" NAME="irq_vec" RIGHT="0" SIGIS="INTERRUPT">
           <CONNECTIONS><CONNECTION INSTANCE="cat" PORT="In1"/></CONNECTIONS>

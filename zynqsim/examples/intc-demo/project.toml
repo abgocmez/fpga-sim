@@ -1,0 +1,64 @@
+# AXI Interrupt Controller collecting the AXI GPIO's and the AXI Timer's interrupts and driving
+# IRQ_F2P[0]: all three are vendor-ip models (crates/vendor-ip, ADR-021) on the native PL. The
+# same design as a Vivado handoff is fixtures/xsa/zs_intc.xsa (fixtures/xsa/make_intc_xsa.tcl);
+# `zynqsim init --xsa` makes this file from it.
+#
+# Firmware: firmware/intc_demo (Rust, no_std). A software interrupt through ISR, then three
+# periodic timer interrupts served through IVR/IAR, then it reports every switch change as a
+# GPIO interrupt on input 0.
+#
+#   zynqsim run --project examples/intc-demo/project.toml --for 3ms
+#   expect on UART1: "timer ticks=3", "RESULT: ALL PASS"; then flip a switch and run on:
+#   "gpio interrupt #1: switches=0x2"
+#
+# Needs: the Xilinx QEMU (Vitis). No Vivado is needed to RUN this.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "native"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_intc_demo.elf"
+
+[native]
+axi_intc_0 = "axi_intc"
+axi_gpio_0 = "axi_gpio"
+axi_timer_0 = "axi_timer"
+
+[native_params.axi_intc_0]
+C_NUM_INTR_INPUTS = 2
+C_KIND_OF_INTR = "0xfffffffc"
+C_KIND_OF_EDGE = "0xFFFFFFFF"
+C_KIND_OF_LVL = "0xFFFFFFFF"
+ADDRESS_SIZE = "0x10000"
+
+[native_params.axi_gpio_0]
+C_GPIO_WIDTH = 4
+C_ALL_INPUTS = 1
+C_INTERRUPT_PRESENT = 1
+ADDRESS_SIZE = "0x10000"
+
+[native_params.axi_timer_0]
+C_COUNT_WIDTH = 32
+CLK_FREQ_HZ = 100000000
+ADDRESS_SIZE = "0x10000"
+
+[connect]
+"axi_intc_0.s_axi" = "M_AXI_GP0@0x41800000"
+"axi_intc_0.irq" = "IRQ_F2P[0]"
+"axi_gpio_0.S_AXI" = "M_AXI_GP0@0x41200000"
+"axi_gpio_0.GPIO" = "board.sw"
+"axi_gpio_0.ip2intc_irpt" = "axi_intc_0.intr[0]"
+"axi_timer_0.S_AXI" = "M_AXI_GP0@0x42800000"
+"axi_timer_0.interrupt" = "axi_intc_0.intr[1]"

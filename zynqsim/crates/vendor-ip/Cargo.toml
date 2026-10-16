@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Behavioural models of Xilinx IP (AXI GPIO, AXI Timer, AXI UART Lite) as native PL register blocks"
+description = "Behavioural models of Xilinx IP (AXI GPIO, Timer, UART Lite, DMA, IIC, BRAM controller, interrupt controller) as native PL register blocks"
 
 [lints]
 workspace = true
@@ -12,3 +12,6 @@ workspace = true
 [dependencies]
 pl-api = { version = "0.1.0", path = "../pl-api" }
 pl-native = { version = "0.1.0", path = "../pl-native" }
+
+[dev-dependencies]
+devices = { version = "0.1.0", path = "../devices" }

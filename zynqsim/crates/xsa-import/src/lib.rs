@@ -18,8 +18,8 @@ pub use catalog::{IpClass, classify};
 pub use filelist::{FileListEntry, parse_filelist};
 pub use hwh::parse_hwh;
 pub use model::{
-    AddrRange, BusInterface, ClockLink, Design, FclkInfo, IpInstance, IrqLink, MioPin, Port,
-    PortConnection, Ps7, PsPeripheral, ResetLink, SourceFile, SourceKind,
+    AddrRange, BusInterface, ClockLink, Design, FclkInfo, IntcLink, IpInstance, IrqLink, MioPin,
+    Port, PortConnection, Ps7, PsPeripheral, ResetLink, SourceFile, SourceKind,
 };
 
 use std::io::Read;

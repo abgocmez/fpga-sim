@@ -15,16 +15,17 @@ pub enum IpClass {
         /// module reference.
         packaged: bool,
     },
-    /// A Xilinx IP in the catalog. The `vendor-ip` library models only some of them (AXI GPIO,
-    /// AXI Timer, AXI UART Lite); the importer decides by name which ones run.
+    /// A Xilinx IP in the catalog. The `vendor-ip` library models only some of them
+    /// (`vendor_ip::MODELS`); the importer decides by name which ones run.
     VendorIp {
         /// Catalog name (`axi_gpio`).
         name: String,
         /// Human title (`AXI GPIO`).
         title: String,
     },
-    /// Wiring and housekeeping IP that has no software-visible behaviour of its own in this
-    /// flow (interconnects, reset generators, concatenations).
+    /// Passive IP: wiring and housekeeping (interconnects, reset generators, concatenations,
+    /// clock wizards, AXI4-Stream plumbing, block memory) that has no software-visible
+    /// behaviour of its own in this flow, unless it has an address window of its own.
     Infrastructure {
         /// Human title.
         title: String,
@@ -36,7 +37,8 @@ pub enum IpClass {
 }
 
 /// Catalog of Xilinx IP the `vendor-ip` library is meant to model (prompt section 9.5); which
-/// of them it does model is `vendor_ip::MODELS`.
+/// of them it does model is `vendor_ip::MODELS`. Everything else here is recognised but has no
+/// model, and the importer stops on it.
 const VENDOR: &[(&str, &str)] = &[
     ("axi_gpio", "AXI GPIO"),
     ("axi_timer", "AXI Timer"),
@@ -48,13 +50,8 @@ const VENDOR: &[(&str, &str)] = &[
     ("axi_iic", "AXI IIC"),
     ("axi_quad_spi", "AXI Quad SPI"),
     ("axi_bram_ctrl", "AXI BRAM Controller"),
-    ("blk_mem_gen", "Block Memory Generator"),
     ("axi_intc", "AXI Interrupt Controller"),
     ("axi_fifo_mm_s", "AXI4-Stream FIFO (memory mapped)"),
-    ("axis_data_fifo", "AXI4-Stream Data FIFO"),
-    ("axis_switch", "AXI4-Stream Switch"),
-    ("axis_dwidth_converter", "AXI4-Stream Data Width Converter"),
-    ("clk_wiz", "Clocking Wizard"),
     ("v_tc", "Video Timing Controller"),
     ("v_axi4s_vid_out", "AXI4-Stream to Video Out"),
     ("v_vid_in_axi4s", "Video In to AXI4-Stream"),
@@ -66,8 +63,23 @@ const VENDOR: &[(&str, &str)] = &[
     ("axi_perf_mon", "AXI Performance Monitor"),
 ];
 
-/// Xilinx IP that only connects things.
+/// Xilinx IP that only connects things, or whose registers (if it has any) the firmware does not
+/// reach in the designs ZynqSim targets. An instance of one of these that **does** have an
+/// address window in the PS memory map is not passive: the importer reports it as unmodelled
+/// (`sim_api::xsa`).
 const INFRA: &[(&str, &str)] = &[
+    ("clk_wiz", "Clocking Wizard"),
+    ("blk_mem_gen", "Block Memory Generator"),
+    ("axis_data_fifo", "AXI4-Stream Data FIFO"),
+    ("axis_switch", "AXI4-Stream Switch"),
+    ("axis_dwidth_converter", "AXI4-Stream Data Width Converter"),
+    ("axis_register_slice", "AXI4-Stream Register Slice"),
+    ("axis_clock_converter", "AXI4-Stream Clock Converter"),
+    ("axis_subset_converter", "AXI4-Stream Subset Converter"),
+    ("axis_broadcaster", "AXI4-Stream Broadcaster"),
+    ("axis_combiner", "AXI4-Stream Combiner"),
+    ("axis_interconnect", "AXI4-Stream Interconnect"),
+    ("util_ds_buf", "Utility Buffer"),
     ("axi_interconnect", "AXI Interconnect"),
     ("smartconnect", "AXI SmartConnect"),
     ("proc_sys_reset", "Processor System Reset"),

@@ -2,7 +2,11 @@
 //!
 //! * [`gpio::AxiGpio`]: AXI GPIO 2.0 (PG144);
 //! * [`timer::AxiTimer`]: AXI Timer 2.0 (PG079);
-//! * [`uartlite::AxiUartLite`]: AXI UART Lite 2.0 (PG142).
+//! * [`uartlite::AxiUartLite`]: AXI UART Lite 2.0 (PG142);
+//! * [`dma::AxiDma`]: AXI DMA 7.1 (PG021), direct register and scatter-gather mode;
+//! * [`iic::AxiIic`]: AXI IIC 2.1 (PG090), dynamic-mode master on a Pmod port;
+//! * [`bram::AxiBramCtrl`]: AXI BRAM Controller 4.1 (PG078) with its block memory;
+//! * [`intc::AxiIntc`]: AXI Interrupt Controller 4.1 (PG099).
 //!
 //! Each model is a [`pl_native::RegisterBlock`], so it plugs into [`pl_native::NativePl`] at a
 //! base address and drives one `IRQ_F2P` line through the lock-step `advance`. [`VendorPl`]
@@ -15,18 +19,27 @@
 //! guides as remembered; every register fact that was not checked against hardware or a Xilinx
 //! simulation is marked `VERIFY:` in the module documentation.
 
+pub mod bram;
+pub mod dma;
 pub mod gpio;
+pub mod iic;
+pub mod intc;
 mod params;
 pub mod timer;
 pub mod uartlite;
 
 pub use params::{Params, flag, number, parse_number, ranged};
 
+use bram::{AxiBramCtrl, BramConfig, BramHandle};
+use dma::{AxiDma, DmaConfig, DmaHandle};
 use gpio::{AxiGpio, GpioConfig, GpioHandle};
+use iic::{AxiIic, I2cBus, IicConfig, IicHandle};
+use intc::{AxiIntc, IntcConfig, IntcHandle};
 use pl_api::{
     BoardOutput, BusError, BusResult, MasterAccess, MediaEvent, PinEvent, PinSink, PlTarget,
     PsPort, UartByte,
 };
+pub use pl_native::IrqDest;
 use pl_native::{NativePl, RegisterBlock};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -34,7 +47,15 @@ use timer::{AxiTimer, TimerConfig, TimerHandle};
 use uartlite::{AxiUartLite, UartConfig, UartHandle};
 
 /// Model names [`VendorPl::add`] accepts, by IP catalog name.
-pub const MODELS: &[&str] = &["axi_gpio", "axi_timer", "axi_uartlite"];
+pub const MODELS: &[&str] = &[
+    "axi_gpio",
+    "axi_timer",
+    "axi_uartlite",
+    "axi_dma",
+    "axi_iic",
+    "axi_bram_ctrl",
+    "axi_intc",
+];
 
 /// True when `name` (`axi_gpio`) is a model of this library.
 pub fn is_model(name: &str) -> bool {
@@ -61,8 +82,64 @@ pub fn param_names(model: &str) -> &'static [&'static str] {
         ],
         "axi_timer" => &["C_COUNT_WIDTH", "C_ONE_TIMER_ONLY"],
         "axi_uartlite" => &["C_BAUDRATE", "C_DATA_BITS", "C_USE_PARITY"],
+        "axi_dma" => &[
+            "C_INCLUDE_SG",
+            "C_INCLUDE_MM2S",
+            "C_INCLUDE_S2MM",
+            "C_SG_LENGTH_WIDTH",
+            "C_M_AXI_MM2S_DATA_WIDTH",
+            "C_M_AXI_S2MM_DATA_WIDTH",
+            "C_ENABLE_MULTI_CHANNEL",
+            "C_MICRO_DMA",
+        ],
+        "axi_iic" => &["C_SCL_CLK_FREQ_KHZ"],
+        "axi_bram_ctrl" => &["C_ECC", "C_S_AXI_DATA_WIDTH"],
+        "axi_intc" => &[
+            "C_NUM_INTR_INPUTS",
+            "C_KIND_OF_INTR",
+            "C_KIND_OF_EDGE",
+            "C_KIND_OF_LVL",
+            "C_IRQ_IS_LEVEL",
+            "C_HAS_FAST",
+            "C_IVAR_RESET_VALUE",
+            "C_HAS_CASC",
+        ],
         _ => &[],
     }
+}
+
+/// The interrupt output index of port `port` of `model` (the AXI DMA has two outputs, the
+/// other models one).
+pub fn irq_output_index(model: &str, port: &str) -> usize {
+    match (model, port) {
+        ("axi_dma", "s2mm_introut") => 1,
+        _ => 0,
+    }
+}
+
+/// Parses an interrupt destination of a `[connect]` entry: `IRQ_F2P[n]` or `<intc>.intr[k]`.
+pub fn parse_irq_dest(text: &str) -> Option<IrqDest> {
+    let t = text.trim();
+    if let Some(n) = t.strip_prefix("IRQ_F2P[").and_then(|r| r.strip_suffix(']')) {
+        return n.trim().parse().ok().map(IrqDest::F2p);
+    }
+    let (block, rest) = t.split_once('.')?;
+    let k = rest.strip_prefix("intr[")?.strip_suffix(']')?;
+    Some(IrqDest::Block {
+        block: block.to_string(),
+        input: k.trim().parse().ok()?,
+    })
+}
+
+/// The pins of a Pmod port an I2C master uses (`PMOD_SCL_BIT`, `PMOD_SDA_BIT`), defaults 2 and 3
+/// like the Digilent TMP2 module.
+fn pmod_i2c_pins(p: &Params) -> Result<(u8, u8), String> {
+    let scl = ranged(p, "PMOD_SCL_BIT", 2, 0, 7)? as u8;
+    let sda = ranged(p, "PMOD_SDA_BIT", 3, 0, 7)? as u8;
+    if scl == sda {
+        return Err("PMOD_SCL_BIT and PMOD_SDA_BIT are the same pin".to_string());
+    }
+    Ok((scl, sda))
 }
 
 /// A board signal a GPIO channel can be bound to.
@@ -123,9 +200,16 @@ pub struct VendorInstance {
     pub size: Option<u64>,
     /// `IRQ_F2P` bit the interrupt output drives.
     pub irq: Option<u32>,
-    /// IP parameters by Vivado name (`C_GPIO_WIDTH`), plus `CLK_FREQ_HZ`.
+    /// Interrupt outputs by port name with their destination text (`IRQ_F2P[3]` or
+    /// `axi_intc_0.intr[1]`, see [`parse_irq_dest`]). When not empty it replaces `irq`; it is
+    /// how the AXI DMA's two outputs and the routing into an interrupt controller are given.
+    pub irqs: Vec<(String, String)>,
+    /// IP parameters by Vivado name (`C_GPIO_WIDTH`), plus `CLK_FREQ_HZ`; for the AXI DMA
+    /// `PS_PORT` (`S_AXI_HP0`) and `STREAM_LOOPBACK`, for the AXI IIC `PMOD_SCL_BIT` and
+    /// `PMOD_SDA_BIT`.
     pub params: Params,
-    /// Board bindings of GPIO channels: key `GPIO` (channel 1) or `GPIO2`, value `board.leds`...
+    /// Board bindings: GPIO channels (`GPIO` for channel 1, `GPIO2`) to `board.leds`..., and
+    /// the AXI IIC's `IIC` to a Pmod port (`board.pmod_ja`).
     pub bindings: BTreeMap<String, String>,
 }
 
@@ -142,6 +226,45 @@ struct UartBind {
     handle: UartHandle,
 }
 
+struct IicBind {
+    name: String,
+    handle: IicHandle,
+    group: u8,
+    scl_bit: u8,
+    sda_bit: u8,
+}
+
+/// An AXI IIC master on two pins of a Pmod port: what it drives goes to the board's devices
+/// through the pin sink, and their answer on SDA comes back in the same call.
+struct PmodBus {
+    sink: SharedSink,
+    group: u8,
+    scl_bit: u8,
+    sda_bit: u8,
+    events: Arc<Mutex<Vec<PinEvent>>>,
+    last: Option<u8>,
+}
+
+impl I2cBus for PmodBus {
+    fn drive(&mut self, t_ns: u64, scl: bool, sda: bool) -> bool {
+        let mut levels = 0xFFu8 & !(1 << self.scl_bit) & !(1 << self.sda_bit);
+        levels |= u8::from(scl) << self.scl_bit | u8::from(sda) << self.sda_bit;
+        if self.last != Some(levels) {
+            self.last = Some(levels);
+            self.events
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(PinEvent {
+                    t_ns,
+                    group: self.group,
+                    levels,
+                });
+        }
+        let back = self.sink.pin_change(self.group, t_ns, levels);
+        sda && back >> self.sda_bit & 1 != 0
+    }
+}
+
 /// A PL made of vendor IP models and, optionally, an RTL design.
 pub struct VendorPl {
     native: NativePl,
@@ -149,6 +272,13 @@ pub struct VendorPl {
     gpios: Vec<GpioBind>,
     timers: Vec<(String, TimerHandle)>,
     uarts: Vec<UartBind>,
+    dmas: Vec<(String, DmaHandle)>,
+    iics: Vec<IicBind>,
+    brams: Vec<(String, BramHandle)>,
+    intcs: Vec<(String, IntcHandle)>,
+    /// Pin changes of the I2C masters, stamped with their (possibly future) bus times; they
+    /// are handed out once PL time has reached them.
+    iic_events: Arc<Mutex<Vec<PinEvent>>>,
     board_out: Vec<BoardOutput>,
     pin_events: Vec<PinEvent>,
     sink: Option<SharedSink>,
@@ -184,6 +314,11 @@ impl VendorPl {
             gpios: Vec::new(),
             timers: Vec::new(),
             uarts: Vec::new(),
+            dmas: Vec::new(),
+            iics: Vec::new(),
+            brams: Vec::new(),
+            intcs: Vec::new(),
+            iic_events: Arc::new(Mutex::new(Vec::new())),
             board_out: Vec::new(),
             pin_events: Vec::new(),
             sink: None,
@@ -276,6 +411,53 @@ impl VendorPl {
                 });
                 Box::new(u)
             }
+            "axi_dma" => {
+                let cfg = DmaConfig::from_params(&inst.params, size).map_err(ctx)?;
+                let (d, handle) = AxiDma::new(&inst.name, cfg);
+                self.dmas.push((inst.name.clone(), handle));
+                Box::new(d)
+            }
+            "axi_iic" => {
+                let cfg = IicConfig::from_params(&inst.params, size).map_err(ctx)?;
+                let (i, handle) = AxiIic::new(&inst.name, cfg);
+                for k in inst.bindings.keys() {
+                    if k != "IIC" {
+                        return Err(ctx(format!("binding `{k}` is not an IIC interface (IIC)")));
+                    }
+                }
+                if let Some(v) = inst.bindings.get("IIC") {
+                    let group = match BoardSignal::parse(v).map_err(ctx)? {
+                        BoardSignal::Pmod(g) => g,
+                        _ => {
+                            return Err(ctx(format!(
+                                "IIC is bound to `{v}`: an I2C master needs a Pmod port \
+                                 (board.pmod_ja .. board.pmod_je)"
+                            )));
+                        }
+                    };
+                    let (scl_bit, sda_bit) = pmod_i2c_pins(&inst.params).map_err(ctx)?;
+                    self.iics.push(IicBind {
+                        name: inst.name.clone(),
+                        handle,
+                        group,
+                        scl_bit,
+                        sda_bit,
+                    });
+                }
+                Box::new(i)
+            }
+            "axi_bram_ctrl" => {
+                let cfg = BramConfig::from_params(&inst.params, size).map_err(ctx)?;
+                let (b, handle) = AxiBramCtrl::new(&inst.name, &cfg);
+                self.brams.push((inst.name.clone(), handle));
+                Box::new(b)
+            }
+            "axi_intc" => {
+                let cfg = IntcConfig::from_params(&inst.params, size).map_err(ctx)?;
+                let (c, handle) = AxiIntc::new(&inst.name, cfg);
+                self.intcs.push((inst.name.clone(), handle));
+                Box::new(c)
+            }
             other => {
                 return Err(format!(
                     "instance `{}`: `{other}` is not a vendor-ip model; available: {}",
@@ -284,8 +466,90 @@ impl VendorPl {
                 ));
             }
         };
-        self.native.map_irq(inst.gp, inst.base, block, inst.irq);
+        if inst.irqs.is_empty() {
+            self.native.map_irq(inst.gp, inst.base, block, inst.irq);
+        } else {
+            self.native.map(inst.gp, inst.base, block);
+            for (port, dest) in &inst.irqs {
+                let d = parse_irq_dest(dest).ok_or_else(|| {
+                    format!(
+                        "instance `{}`: interrupt destination `{dest}` of `{port}` is neither \
+                         IRQ_F2P[n] nor <controller>.intr[k]",
+                        inst.name
+                    )
+                })?;
+                if let IrqDest::F2p(b) = &d {
+                    if *b > 15 {
+                        return Err(format!(
+                            "instance `{}`: IRQ_F2P[{b}] does not exist (0..=15)",
+                            inst.name
+                        ));
+                    }
+                }
+                self.native
+                    .route_irq(&inst.name, irq_output_index(&inst.model, port), d);
+            }
+        }
         Ok(())
+    }
+
+    /// Checks that every interrupt routed to a controller names an `axi_intc` instance and an
+    /// input it has. Call after all instances were added.
+    pub fn check_routes(&self, instances: &[VendorInstance]) -> Result<(), String> {
+        for i in instances {
+            for (port, dest) in &i.irqs {
+                if let Some(IrqDest::Block { block, input }) = parse_irq_dest(dest) {
+                    let Some((_, h)) = self.intcs.iter().find(|(n, _)| *n == block) else {
+                        return Err(format!(
+                            "instance `{}`: `{port}` is routed to `{block}`, which is not an \
+                             axi_intc instance",
+                            i.name
+                        ));
+                    };
+                    let n = h.config().inputs;
+                    if input >= n {
+                        return Err(format!(
+                            "instance `{}`: `{port}` is routed to `{block}.intr[{input}]` but \
+                             the controller has {n} input(s)",
+                            i.name
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The DMA handle of instance `name`.
+    pub fn dma(&self, name: &str) -> Option<DmaHandle> {
+        self.dmas
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, h)| h.clone())
+    }
+
+    /// The BRAM handle of instance `name`.
+    pub fn bram(&self, name: &str) -> Option<BramHandle> {
+        self.brams
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, h)| h.clone())
+    }
+
+    /// The interrupt controller handle of instance `name`.
+    pub fn intc(&self, name: &str) -> Option<IntcHandle> {
+        self.intcs
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, h)| h.clone())
+    }
+
+    /// The IIC handle of instance `name` (only instances bound to a Pmod port).
+    pub fn iic(&self, name: &str) -> Option<IicHandle> {
+        self.iics
+            .iter()
+            .find(|i| i.name == name)
+            .map(|i| i.handle.clone())
     }
 
     /// The timer handles, by instance name.
@@ -404,10 +668,12 @@ impl PlTarget for VendorPl {
     }
 
     fn drain_master_log(&mut self) -> Vec<MasterAccess> {
-        self.rtl
-            .as_mut()
-            .map(|r| r.drain_master_log())
-            .unwrap_or_default()
+        let mut v: Vec<MasterAccess> = self.dmas.iter().flat_map(|(_, d)| d.take_log()).collect();
+        if let Some(r) = self.rtl.as_mut() {
+            v.extend(r.drain_master_log());
+        }
+        v.sort_by_key(|a| a.t_ns);
+        v
     }
 
     fn has_board_pins(&self) -> bool {
@@ -450,6 +716,7 @@ impl PlTarget for VendorPl {
 
     fn has_pin_groups(&self) -> bool {
         self.rtl.as_ref().is_some_and(|r| r.has_pin_groups())
+            || !self.iics.is_empty()
             || self.gpios.iter().any(|g| {
                 g.sig
                     .iter()
@@ -460,6 +727,18 @@ impl PlTarget for VendorPl {
 
     fn drain_pin_events(&mut self) -> Vec<PinEvent> {
         let mut v = std::mem::take(&mut self.pin_events);
+        {
+            // I2C bus times run ahead of PS time; hand out what has happened.
+            let mut ev = self
+                .iic_events
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let now = self.now_ns;
+            let (due, later): (Vec<PinEvent>, Vec<PinEvent>) =
+                ev.drain(..).partition(|e| e.t_ns <= now);
+            *ev = later;
+            v.extend(due);
+        }
         if let Some(rtl) = &mut self.rtl {
             v.extend(rtl.drain_pin_events());
             v.sort_by_key(|e| e.t_ns);
@@ -484,6 +763,16 @@ impl PlTarget for VendorPl {
         let shared = SharedSink(Arc::new(Mutex::new(sink)));
         if let Some(rtl) = &mut self.rtl {
             rtl.set_pin_sink(Box::new(shared.clone()));
+        }
+        for i in &self.iics {
+            i.handle.set_bus(Box::new(PmodBus {
+                sink: shared.clone(),
+                group: i.group,
+                scl_bit: i.scl_bit,
+                sda_bit: i.sda_bit,
+                events: Arc::clone(&self.iic_events),
+                last: None,
+            }));
         }
         self.sink = Some(shared);
     }
@@ -582,6 +871,7 @@ mod tests {
             base,
             size: None,
             irq,
+            irqs: Vec::new(),
             params: params(p),
             bindings: BTreeMap::new(),
         }
@@ -735,7 +1025,7 @@ mod tests {
             .unwrap_err();
         assert!(e.contains("overlaps"), "{e}");
         let e = pl
-            .add(&inst("c", "axi_dma", 0x4300_0000, None, &[]))
+            .add(&inst("c", "axi_vdma", 0x4300_0000, None, &[]))
             .unwrap_err();
         assert!(e.contains("not a vendor-ip model"), "{e}");
         let e = pl

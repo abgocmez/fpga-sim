@@ -163,6 +163,147 @@ impl XsaImport {
     }
 }
 
+/// Where an AXI DMA's stream interfaces lead.
+enum Streams {
+    /// `M_AXIS_MM2S` reaches `S_AXIS_S2MM` of the same DMA, directly or through the listed
+    /// AXI4-Stream plumbing instances.
+    Loopback(Vec<String>),
+    /// The stream interfaces are not connected to another instance.
+    Open,
+    /// Connected to this instance, which is neither the DMA nor transparent plumbing.
+    Peer(String),
+}
+
+/// True for the AXI4-Stream plumbing IP the loopback trace sees through.
+fn stream_plumbing(ip: &IpInstance) -> bool {
+    matches!(ip.class, IpClass::Infrastructure { .. }) && ip.modtype.starts_with("axis_")
+}
+
+fn is_master_kind(kind: &str) -> bool {
+    matches!(kind, "MASTER" | "INITIATOR")
+}
+
+/// Follows the DMA's `M_AXIS_MM2S` (and checks the `S_AXIS_S2MM` source) through the bus
+/// interfaces of the handoff.
+fn dma_streams(design: &Design, dma: &IpInstance) -> Streams {
+    let bus_of = |ip: &IpInstance, name: &str| {
+        ip.interfaces
+            .iter()
+            .find(|i| i.name == name)
+            .and_then(|i| i.bus_name.clone())
+    };
+    let mut via: Vec<String> = Vec::new();
+    let mut bus = bus_of(dma, "M_AXIS_MM2S");
+    for _ in 0..8 {
+        let Some(b) = bus.take() else { break };
+        // The other end(s) of this bus: slave-side interfaces on any instance.
+        let ends: Vec<(&IpInstance, &BusInterface)> = design
+            .ips
+            .iter()
+            .flat_map(|ip| ip.interfaces.iter().map(move |i| (ip, i)))
+            .filter(|(ip, i)| {
+                i.bus_name.as_deref() == Some(b.as_str())
+                    && !is_master_kind(&i.kind)
+                    && !(ip.instance == dma.instance && i.name == "M_AXIS_MM2S")
+            })
+            .collect();
+        let Some((ip, iface)) = ends.first() else {
+            break;
+        };
+        if ends.len() > 1 {
+            return Streams::Peer(
+                ends.iter()
+                    .map(|(ip, _)| ip.instance.clone())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+        }
+        if ip.instance == dma.instance && iface.name == "S_AXIS_S2MM" {
+            return Streams::Loopback(via);
+        }
+        if stream_plumbing(ip) {
+            via.push(ip.instance.clone());
+            let masters: Vec<&BusInterface> = ip
+                .interfaces
+                .iter()
+                .filter(|i| {
+                    is_master_kind(&i.kind)
+                        && i.vlnv.as_deref().is_some_and(|v| v.contains(":axis:"))
+                })
+                .collect();
+            if masters.len() == 1 {
+                bus = masters[0].bus_name.clone();
+                continue;
+            }
+        }
+        return Streams::Peer(ip.instance.clone());
+    }
+    // Nothing downstream of MM2S: is something upstream of S2MM?
+    if let Some(b) = bus_of(dma, "S_AXIS_S2MM") {
+        let src = design.ips.iter().find(|ip| {
+            ip.instance != dma.instance
+                && ip
+                    .interfaces
+                    .iter()
+                    .any(|i| i.bus_name.as_deref() == Some(b.as_str()) && is_master_kind(&i.kind))
+        });
+        if let Some(ip) = src {
+            return Streams::Peer(ip.instance.clone());
+        }
+    }
+    Streams::Open
+}
+
+/// The instance that uses the second port of the block memory behind an AXI BRAM controller,
+/// if any (the model keeps the memory inside the controller).
+fn bram_port_b_user(design: &Design, ctrl: &IpInstance) -> Option<String> {
+    let bus = ctrl
+        .interfaces
+        .iter()
+        .find(|i| i.name == "BRAM_PORTA")
+        .and_then(|i| i.bus_name.clone())?;
+    let mem = design.ips.iter().find(|ip| {
+        ip.instance != ctrl.instance
+            && ip
+                .interfaces
+                .iter()
+                .any(|i| i.bus_name.as_deref() == Some(bus.as_str()))
+    })?;
+    let portb = mem
+        .interfaces
+        .iter()
+        .find(|i| i.name == "BRAM_PORTB")
+        .and_then(|i| i.bus_name.clone())?;
+    design
+        .ips
+        .iter()
+        .find(|ip| {
+            ip.instance != mem.instance
+                && ip
+                    .interfaces
+                    .iter()
+                    .any(|i| i.bus_name.as_deref() == Some(portb.as_str()))
+        })
+        .map(|ip| ip.instance.clone())
+}
+
+/// The Pmod letter (`a`..`e`) a lower-case external port name says: `pmod_ja`, `jb_iic`.
+fn pmod_letter(name: &str) -> Option<char> {
+    let n = name.to_ascii_lowercase();
+    if let Some(i) = n.find("pmod_j") {
+        let c = n.as_bytes().get(i + 6).copied()?;
+        if (b'a'..=b'e').contains(&c) {
+            return Some(char::from(c));
+        }
+    }
+    for tok in n.split(|c: char| !c.is_ascii_alphanumeric()) {
+        if let [b'j', c @ b'a'..=b'e'] = tok.as_bytes() {
+            return Some(char::from(*c));
+        }
+    }
+    None
+}
+
 fn hex(v: u64) -> String {
     format!("{v:#010X}")
 }
@@ -262,6 +403,8 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
     let mut native_params: BTreeMap<String, BTreeMap<String, NativeParam>> = BTreeMap::new();
     let mut native_bindings: BTreeMap<String, String> = BTreeMap::new();
     let mut claimed_signals: Vec<&'static str> = Vec::new();
+    // Passive IP: recognised, carries no registers the firmware can reach, mapped to nothing.
+    let mut passive: Vec<(String, String)> = Vec::new();
 
     for ip in &design.ips {
         let base = ip.address.first();
@@ -279,7 +422,24 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
             reason,
         };
         match &ip.class {
-            IpClass::Ps7 | IpClass::Infrastructure { .. } => {}
+            IpClass::Ps7 => {}
+            IpClass::Infrastructure { title }
+                if base.is_some_and(|a| {
+                    matches!(a.master_interface.as_str(), "M_AXI_GP0" | "M_AXI_GP1")
+                }) =>
+            {
+                // A passive-class IP with an address window of its own has registers the
+                // firmware can reach (a Clocking Wizard with its AXI4-Lite interface, an
+                // AXI4-Stream Switch with its control interface): not passive.
+                unmodelled.push(mk(
+                    format!(
+                        "{title} with an AXI4-Lite register interface the firmware can reach; \
+                         its registers are not modelled (its clocks come from the handoff)"
+                    ),
+                    Some(title.clone()),
+                ));
+            }
+            IpClass::Infrastructure { title } => passive.push((ip.instance.clone(), title.clone())),
             IpClass::VendorIp { name, .. }
                 if vendor_ip::is_model(name)
                     && base.is_some_and(|a| {
@@ -398,6 +558,170 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
                         }
                     }
                 }
+                match name.as_str() {
+                    "axi_dma" => {
+                        // The memory path: the HP port the block design connects the masters to.
+                        let port = ip
+                            .master_windows
+                            .iter()
+                            .find(|w| {
+                                w.instance == ps.instance && w.interface.starts_with("S_AXI_")
+                            })
+                            .map(|w| w.interface.clone());
+                        match port {
+                            Some(p) => {
+                                let other = ip.master_windows.iter().any(|w| {
+                                    w.instance == ps.instance
+                                        && w.interface.starts_with("S_AXI_")
+                                        && w.interface != p
+                                });
+                                if other {
+                                    module_notes.push(format!(
+                                        "`{}`: its memory masters reach the PS through different \
+                                         ports; the model uses {p} for both",
+                                        ip.instance
+                                    ));
+                                }
+                                params.insert("PS_PORT".to_string(), NativeParam::Text(p));
+                            }
+                            None => module_notes.push(format!(
+                                "`{}`: no memory window to the PS was found for its masters; \
+                                 S_AXI_HP0 is assumed",
+                                ip.instance
+                            )),
+                        }
+                        match dma_streams(design, ip) {
+                            Streams::Loopback(via) => {
+                                params.insert("STREAM_LOOPBACK".to_string(), NativeParam::Int(1));
+                                module_notes.push(format!(
+                                    "`{}`: M_AXIS_MM2S feeds S_AXIS_S2MM{}: every MM2S packet \
+                                     arrives at S2MM (STREAM_LOOPBACK)",
+                                    ip.instance,
+                                    if via.is_empty() {
+                                        " directly".to_string()
+                                    } else {
+                                        format!(" through {}", via.join(", "))
+                                    }
+                                ));
+                            }
+                            Streams::Open => {
+                                params.insert("STREAM_LOOPBACK".to_string(), NativeParam::Int(0));
+                                module_notes.push(format!(
+                                    "`{}`: its AXI4-Stream interfaces are not connected to \
+                                     another IP: MM2S packets are only available to the host \
+                                     and S2MM receives nothing",
+                                    ip.instance
+                                ));
+                            }
+                            Streams::Peer(peer) => {
+                                unmodelled.push(mk(
+                                    format!(
+                                        "its AXI4-Stream side is connected to `{peer}`; the model \
+                                         supports the stream side only as an MM2S to S2MM \
+                                         loopback (a stream connection to user RTL in XSim or \
+                                         to other IP does not exist)"
+                                    ),
+                                    Some("AXI DMA".to_string()),
+                                ));
+                                continue;
+                            }
+                        }
+                    }
+                    "axi_iic" => {
+                        // The external IIC pins say which Pmod port the master sits on.
+                        let hint = ip.ports.iter().find_map(|p| {
+                            if !(p.name.starts_with("scl_") || p.name.starts_with("sda_")) {
+                                return None;
+                            }
+                            p.connections.iter().find_map(|c| {
+                                let internal =
+                                    c.instance == ps.instance || design.ip(&c.instance).is_some();
+                                (!internal).then(|| c.port.to_ascii_lowercase())
+                            })
+                        });
+                        let group = hint.as_deref().and_then(pmod_letter);
+                        match (group, hint) {
+                            (Some(g), Some(h)) => {
+                                let sig = format!("board.pmod_j{g}");
+                                if claimed_signals.contains(&sig.as_str()) {
+                                    module_notes.push(format!(
+                                        "`{}.IIC` (external `{h}`) would map to {sig}, which \
+                                         another channel already uses: left unbound",
+                                        ip.instance
+                                    ));
+                                } else {
+                                    native_bindings
+                                        .insert(format!("{}.IIC", ip.instance), sig.clone());
+                                    module_notes.push(format!(
+                                        "`{}.IIC` (external `{h}`) is bound to {sig} by the port's \
+                                         name (SCL on pin 3, SDA on pin 4 like the TMP2 module; \
+                                         PMOD_SCL_BIT/PMOD_SDA_BIT in [native_params] change that)",
+                                        ip.instance
+                                    ));
+                                }
+                            }
+                            (_, h) => module_notes.push(format!(
+                                "`{}.IIC`{} is not bound to a board connector: nothing answers on \
+                                 the bus (every address is NACKed). Add \
+                                 `\"{}.IIC\" = \"board.pmod_ja\"` (or jb..je) to `[connect]` and a \
+                                 module such as `pmod_ja = \"tmp2\"` to `[devices]`",
+                                ip.instance,
+                                h.map_or(String::new(), |h| format!(" (external `{h}`)")),
+                                ip.instance
+                            )),
+                        }
+                    }
+                    "axi_bram_ctrl" => {
+                        if let Some(other) = bram_port_b_user(design, ip) {
+                            unmodelled.push(mk(
+                                format!(
+                                    "the block memory behind it is also used through its other \
+                                     port by `{other}`; the model keeps the memory in the \
+                                     controller only, so that sharing does not exist"
+                                ),
+                                Some("AXI BRAM Controller".to_string()),
+                            ));
+                            continue;
+                        }
+                    }
+                    "axi_intc" => {
+                        if let Some(src) = design.intc_inputs.iter().find_map(|l| {
+                            (l.intc == ip.instance
+                                && design
+                                    .ip(&l.link.instance)
+                                    .is_some_and(|s| matches!(s.class, IpClass::UserRtl { .. })))
+                            .then(|| l.link.instance.clone())
+                        }) {
+                            unmodelled.push(mk(
+                                format!(
+                                    "its input is driven by the user RTL `{src}`, which runs in \
+                                     XSim: interrupts of RTL cannot be delivered to a native \
+                                     controller (connect the RTL interrupt to the PS instead)"
+                                ),
+                                Some("AXI Interrupt Controller".to_string()),
+                            ));
+                            continue;
+                        }
+                        let wide = design
+                            .intc_inputs
+                            .iter()
+                            .filter(|l| l.intc == ip.instance && l.link.width > 1)
+                            .map(|l| format!("{}.{}", l.link.instance, l.link.port))
+                            .collect::<Vec<_>>();
+                        if !wide.is_empty() {
+                            unmodelled.push(mk(
+                                format!(
+                                    "multi-bit interrupt output(s) {} feed the controller; only \
+                                     one-bit outputs are routed",
+                                    wide.join(", ")
+                                ),
+                                Some("AXI Interrupt Controller".to_string()),
+                            ));
+                            continue;
+                        }
+                    }
+                    _ => {}
+                }
                 native.insert(ip.instance.clone(), name.clone());
                 native_params.insert(ip.instance.clone(), params);
             }
@@ -407,9 +731,10 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
                      M_AXI_GP0/M_AXI_GP1 in the address map"
                         .to_string()
                 } else {
-                    "needs a `vendor-ip` model that does not exist yet (the library has AXI GPIO, \
-                     AXI Timer and AXI UART Lite)"
-                        .to_string()
+                    format!(
+                        "needs a `vendor-ip` model that does not exist yet (the library has {})",
+                        vendor_ip::MODELS.join(", ")
+                    )
                 },
                 Some(title.clone()),
             )),
@@ -582,6 +907,14 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
                 }
             }
         }
+        for l in design.intc_inputs_of(&ip.instance) {
+            if l.link.width == 1 {
+                connect.insert(
+                    format!("{}.{}", ip.instance, l.link.port),
+                    format!("{}.intr[{}]", l.intc, l.link.bit),
+                );
+            }
+        }
         for c in design.clocks_of(&ip.instance) {
             if let Some(n) = c.fclk {
                 connect.insert(
@@ -700,6 +1033,7 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
         &mapped_user,
         &srcs.iter().map(|s| s.label.clone()).collect::<Vec<_>>(),
         &warnings,
+        &passive,
     );
     files.push((
         "project.toml".to_string(),
@@ -729,6 +1063,7 @@ fn render_report(
     mapped_user: &[String],
     rtl_sources: &[String],
     warnings: &[String],
+    passive: &[(String, String)],
 ) -> String {
     let d = &handoff.design;
     let ps = d.ps7.as_ref();
@@ -761,6 +1096,20 @@ fn render_report(
              generated, but `zynqsim run` and `zynqsim inspect --project` stop with one \
              diagnostic per instance listed under *Not supported*. Nothing here was run.\n",
             unmodelled.len()
+        );
+    }
+
+    if !passive.is_empty() {
+        let _ = writeln!(
+            r,
+            "Passive IP: {} instance(s) ({}) are recognised and carry no registers the firmware \
+             can reach, so they are mapped to nothing and are **not** errors.\n",
+            passive.len(),
+            passive
+                .iter()
+                .map(|(i, t)| format!("`{i}` {t}"))
+                .collect::<Vec<_>>()
+                .join(", ")
         );
     }
 
@@ -858,7 +1207,7 @@ fn render_report(
             IpClass::UserRtl { packaged: false } => "user RTL (module reference)".to_string(),
             IpClass::UserRtl { packaged: true } => "user RTL (packaged IP)".to_string(),
             IpClass::VendorIp { title, .. } => format!("vendor IP: {title}"),
-            IpClass::Infrastructure { title } => format!("wiring: {title}"),
+            IpClass::Infrastructure { title } => format!("passive IP: {title}"),
             IpClass::UnknownVendorIp => "Xilinx IP, not in catalog".to_string(),
             IpClass::ThirdParty => "third-party IP".to_string(),
         };
@@ -904,8 +1253,7 @@ fn render_report(
                 tb_module.unwrap_or(&ip.modtype)
             )
         } else if matches!(ip.class, IpClass::Infrastructure { .. }) {
-            "wiring only: not simulated (the windows and clocks it routes are listed on the endpoints)"
-                .to_string()
+            passive_disposition(&ip.modtype).to_string()
         } else {
             "-".to_string()
         };
@@ -1095,6 +1443,26 @@ fn render_report(
         let _ = writeln!(r);
     }
     r
+}
+
+/// What the report says about a passive IP instance.
+fn passive_disposition(modtype: &str) -> &'static str {
+    match modtype {
+        "clk_wiz" => {
+            "passive: clock source; its registers are not modelled and the clocks it makes come \
+             from the handoff"
+        }
+        "blk_mem_gen" => {
+            "passive: the memory contents live in the `axi_bram_ctrl` model in front of it"
+        }
+        t if t.starts_with("axis_") => {
+            "passive: AXI4-Stream plumbing, transparent (an AXI DMA loopback through it is followed)"
+        }
+        _ => {
+            "passive: wiring only, not simulated (the windows and clocks it routes are listed on \
+             the endpoints)"
+        }
+    }
 }
 
 fn yn(b: bool) -> &'static str {
