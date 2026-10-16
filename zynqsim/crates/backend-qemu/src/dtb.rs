@@ -260,23 +260,39 @@ pub const PS_BLOCK_EDITS: &[PropEdit] = &[
         prop: "status",
         value: "okay",
     },
-    PropEdit {
-        node: "devcfg@f8007000",
-        prop: "compatible",
-        value: "xlnx,ps7-dev-cfg",
-    },
 ];
 
 /// Applies [`PS_BLOCK_EDITS`]. Returns the new blob and the number of edits that
 /// found their node and property (the tree is unchanged when that is zero).
 pub fn patch_ps_blocks(dtb: &[u8]) -> Result<(Vec<u8>, usize), DtbError> {
-    let mut applied = vec![false; PS_BLOCK_EDITS.len()];
+    apply_prop_edits(dtb, PS_BLOCK_EDITS)
+}
+
+/// Edits that every run gets, whatever the project says: the Xilinx CAN
+/// controller at `0xE0008000`, which this build maps under `xlnx,ps7-can-1.00.a`
+/// (ADR-029). Applied by [`patch_default_blocks`].
+pub const DEFAULT_EDITS: &[PropEdit] = &[PropEdit {
+    node: "can@e0008000",
+    prop: "compatible",
+    value: "xlnx,ps7-can-1.00.a",
+}];
+
+/// Applies [`DEFAULT_EDITS`]. Returns the new blob and the number of edits
+/// that found their node and property.
+pub fn patch_default_blocks(dtb: &[u8]) -> Result<(Vec<u8>, usize), DtbError> {
+    apply_prop_edits(dtb, DEFAULT_EDITS)
+}
+
+/// Replaces the properties `edits` name (see [`PropEdit`]). Returns the blob
+/// and how many edits found their node and changed a value.
+fn apply_prop_edits(dtb: &[u8], edits: &[PropEdit]) -> Result<(Vec<u8>, usize), DtbError> {
+    let mut applied = vec![false; edits.len()];
     let out = edit_structure(dtb, |stack, pname, value| {
         let node = stack.last()?;
-        let i = PS_BLOCK_EDITS
+        let i = edits
             .iter()
             .position(|e| e.node == node.as_str() && e.prop.as_bytes() == pname)?;
-        let mut v = PS_BLOCK_EDITS[i].value.as_bytes().to_vec();
+        let mut v = edits[i].value.as_bytes().to_vec();
         v.push(0);
         if v == value {
             return None;
@@ -376,6 +392,133 @@ fn edit_structure(
     res[12..16].copy_from_slice(&shift(off_strings).to_be_bytes());
     res[36..40].copy_from_slice(&(out.len() as u32).to_be_bytes());
     res.truncate(new_total as usize);
+    Ok(res)
+}
+
+/// Unit name of the Cortex-A9 global timer in the co-sim tree (`0xF8F00200`).
+pub const GLOBAL_TIMER_NODE: &str = "timer@f8f00200";
+
+/// Sets the `u32` property `name` of the node whose unit name is `node` to
+/// `value`, adding it when the node does not have it. The name is appended to
+/// the strings block when the tree does not have it yet, which needs the
+/// strings block to be the last section of the blob (true for `dtc` output).
+///
+/// Used for `clock-frequency` on the A9 global timer (see `[ps] cpu_clock`,
+/// ADR-029): QEMU's global timer takes its rate from that property, and not
+/// from its `clocks` phandle, which this build ignores.
+pub fn set_u32_property(
+    dtb: &[u8],
+    node: &str,
+    name: &str,
+    value: u32,
+) -> Result<Vec<u8>, DtbError> {
+    if dtb.len() < HEADER_LEN || be32(dtb, 0)? != MAGIC {
+        return Err(DtbError::Malformed("bad magic"));
+    }
+    let total = be32(dtb, 4)? as usize;
+    let off_struct = be32(dtb, 8)? as usize;
+    let off_strings = be32(dtb, 12)? as usize;
+    let size_strings = be32(dtb, 32)? as usize;
+    let size_struct = be32(dtb, 36)? as usize;
+    let old_end = off_struct + size_struct;
+    if total > dtb.len() || old_end > off_strings || off_strings + size_strings > total {
+        return Err(DtbError::Malformed("section outside the blob"));
+    }
+    let st = &dtb[off_struct..old_end];
+    let strings = &dtb[off_strings..off_strings + size_strings];
+
+    // The property name: an existing string, or one appended to the block.
+    let needle = [name.as_bytes(), &[0u8]].concat();
+    let found = (0..strings.len())
+        .find(|&i| strings[i..].starts_with(&needle) && (i == 0 || strings[i - 1] == 0));
+    let (name_off, strings_out) = match found {
+        Some(i) => (i, strings.to_vec()),
+        None => {
+            if off_strings + size_strings != total {
+                return Err(DtbError::Malformed("strings block is not the last section"));
+            }
+            let mut s = strings.to_vec();
+            s.extend_from_slice(&needle);
+            (size_strings, s)
+        }
+    };
+    let exists = property(dtb, &[node], name)?.is_some();
+
+    let mut out: Vec<u8> = Vec::with_capacity(st.len() + 32);
+    let mut stack: Vec<String> = Vec::new();
+    let mut pos = 0usize;
+    let mut done = false;
+    loop {
+        match be32(st, pos)? {
+            BEGIN_NODE => {
+                let rest = st
+                    .get(pos + 4..)
+                    .ok_or(DtbError::Malformed("truncated node"))?;
+                let nul = rest
+                    .iter()
+                    .position(|&b| b == 0)
+                    .ok_or(DtbError::Malformed("unterminated node name"))?;
+                let n = 4 + pad4(nul + 1);
+                out.extend_from_slice(&st[pos..pos + n]);
+                let unit = String::from_utf8_lossy(&rest[..nul]).into_owned();
+                if !exists && !done && unit == node {
+                    push_prop(&mut out, name_off, &value.to_be_bytes());
+                    done = true;
+                }
+                stack.push(unit);
+                pos += n;
+            }
+            END_NODE => {
+                stack.pop();
+                out.extend_from_slice(&st[pos..pos + 4]);
+                pos += 4;
+            }
+            PROP => {
+                let len = be32(st, pos + 4)? as usize;
+                let old_off = be32(st, pos + 8)? as usize;
+                let n = 12 + pad4(len);
+                if stack.last().is_some_and(|s| s == node) {
+                    let pname = strings
+                        .get(old_off..)
+                        .and_then(|s| s.iter().position(|&b| b == 0).map(|e| &s[..e]))
+                        .ok_or(DtbError::Malformed("property name outside strings"))?;
+                    if pname == name.as_bytes() {
+                        push_prop(&mut out, name_off, &value.to_be_bytes());
+                        done = true;
+                        pos += n;
+                        continue;
+                    }
+                }
+                out.extend_from_slice(&st[pos..pos + n]);
+                pos += n;
+            }
+            NOP => {
+                out.extend_from_slice(&st[pos..pos + 4]);
+                pos += 4;
+            }
+            END => {
+                out.extend_from_slice(&st[pos..pos + 4]);
+                break;
+            }
+            _ => return Err(DtbError::Malformed("unknown structure token")),
+        }
+    }
+    if !done {
+        return Err(DtbError::Missing(format!("`{node}` node")));
+    }
+
+    let mut res = Vec::with_capacity(total + out.len() + strings_out.len());
+    res.extend_from_slice(&dtb[..off_struct]);
+    res.extend_from_slice(&out);
+    res.extend_from_slice(&dtb[old_end..off_strings]);
+    res.extend_from_slice(&strings_out);
+    res.extend_from_slice(&dtb[off_strings + size_strings..total]);
+    let new_off_strings = off_strings + out.len() - size_struct;
+    let new_total = res.len() as u32;
+    res[4..8].copy_from_slice(&new_total.to_be_bytes());
+    res[12..16].copy_from_slice(&(new_off_strings as u32).to_be_bytes());
+    res[32..36].copy_from_slice(&(strings_out.len() as u32).to_be_bytes());
+    res[36..40].copy_from_slice(&(out.len() as u32).to_be_bytes());
     Ok(res)
 }
 
@@ -622,6 +765,71 @@ mod tests {
     }
 
     /// The PS block edits land on the real tree, and nothing else moves.
+    #[test]
+    fn a_u32_property_is_set_on_the_real_global_timer_and_nothing_else_moves() {
+        let path = r"C:\Xilinx\Vitis\2022.1\data\emulation\dtbs\zynq\zynq-arm-cosim.dtb";
+        if !std::path::Path::new(path).is_file() {
+            eprintln!("SKIPPED: the Xilinx co-simulation device tree is not installed");
+            return;
+        }
+        let src = std::fs::read(path).unwrap();
+        let rate = 333_333_333u32;
+        let out = set_u32_property(&src, GLOBAL_TIMER_NODE, "clock-frequency", rate).unwrap();
+        let get = |d: &[u8], unit: &str, prop: &str| property(d, &["amba", unit], prop).unwrap();
+        // The new property has the value; the existing `clocks` is kept.
+        assert_eq!(
+            get(&out, GLOBAL_TIMER_NODE, "clock-frequency"),
+            Some(rate.to_be_bytes().to_vec())
+        );
+        assert_eq!(
+            get(&out, GLOBAL_TIMER_NODE, "clocks"),
+            get(&src, GLOBAL_TIMER_NODE, "clocks")
+        );
+        // Other nodes keep their values, and the header is consistent.
+        assert_eq!(
+            get(&out, "spi@e0006000", "compatible"),
+            get(&src, "spi@e0006000", "compatible")
+        );
+        assert_eq!(be32(&out, 4).unwrap() as usize, out.len());
+        // Setting the same value again changes nothing (and needs no new name).
+        let again = set_u32_property(&out, GLOBAL_TIMER_NODE, "clock-frequency", rate).unwrap();
+        assert_eq!(again, out);
+        // A different value replaces the property in place.
+        let other = set_u32_property(&out, GLOBAL_TIMER_NODE, "clock-frequency", 1000).unwrap();
+        assert_eq!(
+            get(&other, GLOBAL_TIMER_NODE, "clock-frequency"),
+            Some(1000u32.to_be_bytes().to_vec())
+        );
+        assert_eq!(other.len(), out.len());
+        // A node that is not in the tree is reported.
+        assert!(set_u32_property(&src, "timer@deadbeef", "clock-frequency", 1).is_err());
+    }
+
+    #[test]
+    fn the_default_can_edit_is_applied_to_the_real_cosim_tree() {
+        let path = r"C:\Xilinx\Vitis\2022.1\data\emulation\dtbs\zynq\zynq-arm-cosim.dtb";
+        if !std::path::Path::new(path).is_file() {
+            eprintln!("SKIPPED: the Xilinx co-simulation device tree is not installed");
+            return;
+        }
+        let src = std::fs::read(path).unwrap();
+        let (out, n) = patch_default_blocks(&src).unwrap();
+        assert_eq!(n, DEFAULT_EDITS.len(), "the CAN0 node is in the tree");
+        assert_eq!(
+            property(&out, &["amba", "can@e0008000"], "compatible")
+                .unwrap()
+                .unwrap(),
+            b"xlnx,ps7-can-1.00.a\0"
+        );
+        // The CAN1 node and the other nodes are as shipped.
+        assert_eq!(
+            property(&out, &["amba", "can@e0009000"], "compatible").unwrap(),
+            property(&src, &["amba", "can@e0009000"], "compatible").unwrap()
+        );
+        let (again, _) = patch_default_blocks(&out).unwrap();
+        assert_eq!(again, out);
+    }
+
     #[test]
     fn the_ps_block_edits_are_applied_to_the_real_cosim_tree() {
         let path = r"C:\Xilinx\Vitis\2022.1\data\emulation\dtbs\zynq\zynq-arm-cosim.dtb";

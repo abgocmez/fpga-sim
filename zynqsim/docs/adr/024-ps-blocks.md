@@ -69,3 +69,13 @@ unchanged (they pass unmodified).
 * `[ps] extra_blocks = true` is the only way to get these models; the default stays as measured in ADR-023.
 * A future QEMU build may register the compatible strings directly; then `PS_BLOCK_EDITS` should be
   reduced to what is still needed, and the pinned statuses re-measured.
+
+## Appendix (2026-10-17): superseded in part by ADR-029
+
+* The A9 timer rate is **not** set by the SLCR (the statement under "What is not done" above is wrong): the
+  global timer takes a `clock-frequency` on its own node, now set by `[ps] cpu_clock` (default on). The
+  private timer is still at 100 MHz.
+* The `devcfg@f8007000` -> `xlnx,ps7-dev-cfg` edit had no effect (the unmapped devcfg stays unmapped) and
+  was removed from `PS_BLOCK_EDITS`.
+* CAN0 is mapped by default through `dtb::DEFAULT_EDITS` (`xlnx,ps7-can-1.00.a`).
+* The SCU watchdog remains without a model.

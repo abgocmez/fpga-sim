@@ -198,6 +198,8 @@ pub struct QemuSpec {
     pub storage: StorageSpec,
     /// Map the PS GPIO, SPI and devcfg blocks (`[ps] extra_blocks`).
     pub ps_extra_blocks: bool,
+    /// CPU clock in Hz for the A9 timers (`[ps] cpu_clock`), see ADR-029.
+    pub cpu_clock_hz: Option<u32>,
 }
 
 struct BusEvent {
@@ -860,6 +862,7 @@ impl QemuEngine {
         cfg.debug = spec.debug;
         cfg.net = spec.net.clone();
         cfg.ps_extra_blocks = spec.ps_extra_blocks;
+        cfg.cpu_clock_hz = spec.cpu_clock_hz;
         let storage = Self::attach_storage(spec, &mut cfg)?;
         let mut machine = QemuMachine::spawn(&cfg).map_err(map_err)?;
         let mut pl = TracedPl {

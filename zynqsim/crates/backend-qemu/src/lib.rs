@@ -147,9 +147,14 @@ pub struct QemuConfig {
     pub net: Option<net::NetConfig>,
     /// SD card and QSPI flash images.
     pub storage: StorageConfig,
-    /// Map the PS GPIO, SPI and devcfg blocks by editing the tree
+    /// Map the PS GPIO and SPI0/1 blocks by editing the tree
     /// (`dtb::patch_ps_blocks`, ADR-024). Off: the tree is used as shipped.
     pub ps_extra_blocks: bool,
+    /// CPU clock in Hz the firmware is meant to run at (`[ps] cpu_clock`).
+    /// The A9 global timer ticks at half of it (CPU_3x2x), as the BSP assumes
+    /// (`COUNTS_PER_SECOND = CPU_CLK_FREQ_HZ / 2`). QEMU's reset value is
+    /// 100 MHz. `None`: the tree is used as shipped (ADR-029).
+    pub cpu_clock_hz: Option<u32>,
 }
 
 impl QemuConfig {
@@ -169,6 +174,7 @@ impl QemuConfig {
             net: None,
             storage: StorageConfig::default(),
             ps_extra_blocks: false,
+            cpu_clock_hz: None,
         }
     }
 
@@ -394,26 +400,31 @@ impl QemuMachine {
         // flash part), see `dtb`. The patched copy lives in the run directory.
         // The PS blocks the tree names but this build does not map can be
         // renamed first (`dtb::patch_ps_blocks`, ADR-024; opt-in).
-        let dtb_path = if cfg.storage.qspi_image.is_some() || cfg.ps_extra_blocks {
-            let src = std::fs::read(&cfg.dtb).map_err(QemuError::Io)?;
-            let to_io = |e: dtb::DtbError| QemuError::Io(std::io::Error::other(e.to_string()));
-            let ps = if cfg.ps_extra_blocks {
-                dtb::patch_ps_blocks(&src).map_err(to_io)?.0
-            } else {
-                src.clone()
-            };
-            let out = match &cfg.storage.qspi_image {
-                Some(_) => {
-                    let compat = cfg.storage.qspi_model.as_deref().map(flash_compatible);
-                    dtb::patch_qspi(&ps, compat.as_deref()).map_err(to_io)?.dtb
-                }
-                None => ps,
-            };
-            let p = cfg.work_dir.join("zynq-cosim-patched.dtb");
-            std::fs::write(&p, &out).map_err(QemuError::Io)?;
-            p
-        } else {
+        // Every run gets the default edits (the CAN controller, ADR-029); the
+        // others are per project. Without any change the tree is used as is.
+        let to_io = |e: dtb::DtbError| QemuError::Io(std::io::Error::other(e.to_string()));
+        let src = std::fs::read(&cfg.dtb).map_err(QemuError::Io)?;
+        let mut tree = dtb::patch_default_blocks(&src).map_err(to_io)?.0;
+        if cfg.ps_extra_blocks {
+            tree = dtb::patch_ps_blocks(&tree).map_err(to_io)?.0;
+        }
+        // The global timer's rate: CPU_3x2x = half the CPU clock (ADR-029).
+        if let Some(hz) = cfg.cpu_clock_hz {
+            tree = dtb::set_u32_property(&tree, dtb::GLOBAL_TIMER_NODE, "clock-frequency", hz / 2)
+                .map_err(to_io)?;
+        }
+        if cfg.storage.qspi_image.is_some() {
+            let compat = cfg.storage.qspi_model.as_deref().map(flash_compatible);
+            tree = dtb::patch_qspi(&tree, compat.as_deref())
+                .map_err(to_io)?
+                .dtb;
+        }
+        let dtb_path = if tree == src {
             cfg.dtb.clone()
+        } else {
+            let p = cfg.work_dir.join("zynq-cosim-patched.dtb");
+            std::fs::write(&p, &tree).map_err(QemuError::Io)?;
+            p
         };
 
         // Same shape as the prototype's run_cosim_win.ps1. Windows QEMU has no

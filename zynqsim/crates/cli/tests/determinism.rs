@@ -72,6 +72,7 @@ const CASES: &[Case] = &[
     },
     case("conf-gpiops", "20ms"),
     case("conf-scutimer", "200ms"),
+    case("timer-rate", "8ms"),
     case("intc-demo", "20ms"),
     case("iic-bram-demo", "20ms"),
     case("net-demo", "20ms"),
