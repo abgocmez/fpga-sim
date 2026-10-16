@@ -723,6 +723,115 @@ pub fn detect_axi_master(m: &ModuleInfo) -> Result<Option<AxiMaster>, String> {
     Ok(Some(AxiMaster { prefix, signals }))
 }
 
+/// File name of the protocol checker module, written next to the generated testbench.
+pub const PROTOCOL_CHECKER_FILE: &str = "zs_axi_checker.sv";
+
+/// The source of the AXI protocol checker (`zs_axi_checker`, ADR-025). `init --ip` writes it
+/// next to the testbench and lists it in `project.toml`.
+pub fn protocol_checker_source() -> &'static str {
+    include_str!("../../../fixtures/rtl/common/zs_axi_checker.sv")
+}
+
+/// Width of port `name` of `m` in bits, if it has such a port.
+fn port_width(m: &ModuleInfo, name: &str) -> Option<u32> {
+    m.ports.iter().find(|p| p.name == name).map(|p| p.width)
+}
+
+/// The protocol checkers of the testbench: one on the AXI4-Lite slave the testbench drives,
+/// one on the AXI4 master the IP drives (when it has one). They observe only. They are
+/// compiled out with the define `ZS_NO_PROTOCOL_CHECKERS` (`[rtl] protocol_checkers = false`).
+fn protocol_checkers(m: &ModuleInfo, axi: &AxiLite, master: Option<&AxiMaster>) -> String {
+    let g = |r: &str| axi.signals.get(r).cloned().unwrap_or_default();
+    let dw = axi
+        .signals
+        .get("wdata")
+        .and_then(|n| port_width(m, n))
+        .unwrap_or(32);
+    let mut s = format!(
+        "`ifndef ZS_NO_PROTOCOL_CHECKERS
+    // AXI protocol checkers (ADR-025): they observe the bus and drive nothing.
+    zs_axi_checker #(.ID(0), .FULL(0), .AW({aw}), .DW({dw})) zs_chk_lite (
+        .aclk(aclk), .aresetn(aresetn),
+        .awvalid({awvalid}), .awready({awready}), .awaddr({awaddr}),
+        .awlen(8'd0), .awsize(3'd2), .awburst(2'd1),
+        .wvalid({wvalid}), .wready({wready}), .wdata({wdata}), .wstrb({wstrb}), .wlast(1'b1),
+        .bvalid({bvalid}), .bready({bready}), .bresp({bresp}),
+        .arvalid({arvalid}), .arready({arready}), .araddr({araddr}),
+        .arlen(8'd0), .arsize(3'd2), .arburst(2'd1),
+        .rvalid({rvalid}), .rready({rready}), .rdata({rdata}), .rresp({rresp}), .rlast(1'b1)
+    );
+",
+        aw = axi.addr_width,
+        awvalid = g("awvalid"),
+        awready = g("awready"),
+        awaddr = g("awaddr"),
+        wvalid = g("wvalid"),
+        wready = g("wready"),
+        wdata = g("wdata"),
+        wstrb = g("wstrb"),
+        bvalid = g("bvalid"),
+        bready = g("bready"),
+        bresp = g("bresp"),
+        arvalid = g("arvalid"),
+        arready = g("arready"),
+        araddr = g("araddr"),
+        rvalid = g("rvalid"),
+        rready = g("rready"),
+        rdata = g("rdata"),
+        rresp = g("rresp"),
+    );
+    if let Some(mst) = master {
+        let n = |r: &str| mst.signals[r].clone();
+        let maw = port_width(m, &n("awaddr")).unwrap_or(32);
+        let mdw = port_width(m, &n("wdata")).unwrap_or(32);
+        let _ = write!(
+            s,
+            "
+    zs_axi_checker #(.ID(1), .FULL(1), .AW({maw}), .DW({mdw})) zs_chk_mst (
+        .aclk(aclk), .aresetn(aresetn),
+        .awvalid({awvalid}), .awready({awready}), .awaddr({awaddr}),
+        .awlen({awlen}), .awsize({awsize}), .awburst({awburst}),
+        .wvalid({wvalid}), .wready({wready}), .wdata({wdata}), .wstrb({wstrb}), .wlast({wlast}),
+        .bvalid({bvalid}), .bready({bready}), .bresp({bresp}),
+        .arvalid({arvalid}), .arready({arready}), .araddr({araddr}),
+        .arlen({arlen}), .arsize({arsize}), .arburst({arburst}),
+        .rvalid({rvalid}), .rready({rready}), .rdata({rdata}), .rresp({rresp}), .rlast({rlast})
+    );
+",
+            awvalid = n("awvalid"),
+            awready = n("awready"),
+            awaddr = n("awaddr"),
+            awlen = n("awlen"),
+            awsize = n("awsize"),
+            awburst = n("awburst"),
+            wvalid = n("wvalid"),
+            wready = n("wready"),
+            wdata = n("wdata"),
+            wstrb = n("wstrb"),
+            wlast = n("wlast"),
+            bvalid = n("bvalid"),
+            bready = n("bready"),
+            bresp = n("bresp"),
+            arvalid = n("arvalid"),
+            arready = n("arready"),
+            araddr = n("araddr"),
+            arlen = n("arlen"),
+            arsize = n("arsize"),
+            arburst = n("arburst"),
+            rvalid = n("rvalid"),
+            rready = n("rready"),
+            rdata = n("rdata"),
+            rresp = n("rresp"),
+            rlast = n("rlast"),
+        );
+    }
+    s.push_str(
+        "`endif
+",
+    );
+    s
+}
+
 /// The memory bridge: AXI4 bursts of the IP's master become remote-port
 /// accesses to the PS (S_AXI_HP0), with a modelled DDR latency.
 fn master_bridge(mst: &AxiMaster) -> String {
@@ -1121,6 +1230,7 @@ pub fn generate_testbench_with_irqs(
     endtask
 
 {master}
+{checkers}
     integer a_i, wd_i, ws_i, iw_i, st;
     longint tgt, rts;
 
@@ -1169,6 +1279,7 @@ pub fn generate_testbench_with_irqs(
 endmodule
 ",
         master = master.as_ref().map(master_bridge).unwrap_or_default(),
+        checkers = protocol_checkers(m, axi, master.as_ref()),
         irq_blocks = irq_blocks,
         pin_blocks = pin_blocks,
         xchg_init = xchg_init,
@@ -1300,6 +1411,7 @@ pub fn generate_project(
          files = [\n{}\n]\n\
          top = \"cosim_top\"\n\
          # waves = true   # keep the XSim waveform (run directory under %TEMP%\\zynqsim)\n\
+         # protocol_checkers = \"strict\"   # AXI checkers (ADR-025): true (warn), false, \"strict\"\n\
          \n\
          # Uncomment to stop the CPU at breakpoints and read its registers:\n\
          # [debug]\n\
@@ -1625,5 +1737,55 @@ mod tests {
         assert_eq!(eval("32'd16", &v), Ok(16));
         assert_eq!(eval("8'hFF", &v), Ok(255));
         assert!(eval("X+1", &v).unwrap_err().contains("unknown parameter"));
+    }
+
+    #[test]
+    fn protocol_checkers_are_instantiated_for_both_bridges_and_can_be_compiled_out() {
+        // The DMA fixture has an AXI4-Lite slave and an AXI4 master.
+        let src = fixture("dma/dma_xform.v");
+        let m = parse_module(&src, None).unwrap();
+        let axi = detect_axi_lite(&m).unwrap();
+        let tb = generate_testbench(&m, &axi);
+        assert!(tb.contains("`ifndef ZS_NO_PROTOCOL_CHECKERS"), "{tb}");
+        assert!(tb.contains("zs_axi_checker #(.ID(0), .FULL(0)"), "{tb}");
+        assert!(tb.contains("zs_axi_checker #(.ID(1), .FULL(1)"), "{tb}");
+        assert!(tb.contains(".awaddr(m_awaddr)"), "{tb}");
+        assert!(tb.contains(".rlast(m_rlast)"), "{tb}");
+        assert!(tb.contains(".awlen(m_awlen)"), "{tb}");
+        assert_eq!(tb.matches("`endif").count(), 1, "{tb}");
+
+        // A lite-only IP gets the lite checker alone.
+        let math = parse_module(&fixture("math/my_math_ip.v"), None).unwrap();
+        let axi = detect_axi_lite(&math).unwrap();
+        let tb = generate_testbench(&math, &axi);
+        assert!(tb.contains("zs_chk_lite"), "{tb}");
+        assert!(!tb.contains("zs_chk_mst"), "{tb}");
+        assert!(
+            tb.contains(".awaddr(S_AXI_AWADDR)") || tb.contains("S_AXI_AWADDR"),
+            "{tb}"
+        );
+    }
+
+    #[test]
+    fn the_checker_source_names_every_rule_the_host_knows() {
+        let sv = protocol_checker_source();
+        assert!(
+            sv.starts_with("`timescale"),
+            "the checker needs a timescale"
+        );
+        assert!(sv.contains("module zs_axi_checker"));
+        assert!(
+            sv.contains("zs_protocol_check"),
+            "the DPI function is imported"
+        );
+        for name in &pl_api::protocol::RULES[1..] {
+            assert!(
+                sv.contains(name),
+                "rule {name} is not documented in the checker"
+            );
+        }
+        for name in pl_api::protocol::CHANNELS {
+            assert!(sv.contains(name), "channel {name} is not documented");
+        }
     }
 }

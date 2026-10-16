@@ -11,7 +11,9 @@
 use std::fmt;
 
 pub mod media;
+pub mod protocol;
 pub use media::{AudioSource, MediaEvent, VideoSource};
+pub use protocol::ProtocolFinding;
 
 /// Why a bus access failed. Maps onto remote-port response codes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -233,6 +235,12 @@ pub trait PlTarget {
 
     /// Removes and returns the board output changes seen since the last call.
     fn drain_board_outputs(&mut self) -> Vec<BoardOutput> {
+        Vec::new()
+    }
+
+    /// Removes and returns the AXI protocol-checker findings reported since the last call
+    /// (ADR-025). Only an RTL target with checkers in its testbench reports any.
+    fn drain_protocol_findings(&mut self) -> Vec<ProtocolFinding> {
         Vec::new()
     }
 

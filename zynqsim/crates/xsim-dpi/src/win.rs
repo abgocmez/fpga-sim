@@ -479,6 +479,28 @@ pub extern "C" fn zs_codec_reg(reg: i32, value: i32, now_ns: i64) {
     dpi().codec_register(reg as u32, value as u32, now_ns.max(0) as u64);
 }
 
+/// An AXI protocol-checker finding (`fixtures/rtl/common/zs_axi_checker.sv`, ADR-025):
+/// `port` (0 AXI4-Lite slave, 1 AXI4 master), `channel` (0 AW, 1 W, 2 B, 3 AR, 4 R),
+/// `rule` (see `pl_api::protocol::RULES`), `info` (1 = informational), `detail`.
+#[no_mangle]
+pub extern "C" fn zs_protocol_check(
+    port: i32,
+    channel: i32,
+    rule: i32,
+    info: i32,
+    detail: i64,
+    now_ns: i64,
+) {
+    dpi().protocol_check(
+        now_ns.max(0) as u64,
+        port as u32,
+        channel as u32,
+        rule as u32,
+        info != 0,
+        detail as u64,
+    );
+}
+
 /// The levels of pin group `group` (a Pmod port or the RGB LEDs) changed.
 #[no_mangle]
 pub extern "C" fn zs_pin_out(group: i32, levels: i32, now_ns: i64) {

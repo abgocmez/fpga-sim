@@ -89,6 +89,9 @@ pub struct RtlSpec {
     pub waves: bool,
     /// A Vivado simulation export compiled before `sources` (`[rtl] export_dir`/`filelist`).
     pub export: Option<xsim_export::ExportDesign>,
+    /// `[rtl] protocol_checkers = "strict"`: a protocol violation is an `error` record
+    /// (and fails `zynqsim run`) instead of a `warning`.
+    pub protocol_strict: bool,
 }
 
 /// Where the contents of the SD card or the QSPI flash come from.
@@ -329,6 +332,10 @@ impl PlTarget for TracedPl {
 
     fn drain_board_outputs(&mut self) -> Vec<pl_api::BoardOutput> {
         self.inner.drain_board_outputs()
+    }
+
+    fn drain_protocol_findings(&mut self) -> Vec<pl_api::ProtocolFinding> {
+        self.inner.drain_protocol_findings()
     }
 
     fn finished(&self) -> bool {
@@ -581,6 +588,8 @@ pub struct QemuEngine {
     board: BoardState,
     machine: QemuMachine,
     pl: TracedPl,
+    /// Protocol-checker violations are errors (`[rtl] protocol_checkers = "strict"`).
+    protocol_strict: bool,
     trace: TraceLog,
     uart1: ByteLog,
     /// Bytes the PL's UARTs (AXI UART Lite) transmitted, by channel; `uart_read` port 2 + n.
@@ -957,6 +966,7 @@ impl QemuEngine {
             failure: None,
             work_dir: spec.work_dir.clone(),
             pl_finish_noted: false,
+            protocol_strict: spec.rtl.as_ref().is_some_and(|r| r.protocol_strict),
             spec: spec.clone(),
             keep_dir: std::env::var_os("ZYNQSIM_KEEP_RUN").is_some()
                 || spec.rtl.as_ref().is_some_and(|r| r.waves),
@@ -1204,6 +1214,15 @@ impl QemuEngine {
             );
         }
         let mut rgb_event = false;
+        // AXI protocol-checker findings of the testbench (ADR-025), as trace markers.
+        for f in self.pl.drain_protocol_findings() {
+            self.trace.push(
+                Ps(f.t_ns.saturating_mul(1000)),
+                TraceEvent::Marker {
+                    text: f.marker(self.protocol_strict),
+                },
+            );
+        }
         for ev in self.pl.drain_pin_events() {
             let t = Ps(ev.t_ns.saturating_mul(1000));
             if ev.group == pl_api::PIN_GROUP_RGB {

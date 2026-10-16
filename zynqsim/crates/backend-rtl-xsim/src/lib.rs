@@ -34,10 +34,11 @@ use interop::{
     BusAccess, BusCmd, Interrupt, Packet, Session, SessionError, Sync, cap, flags, resp,
 };
 use pl_api::media::{DEV_AUDIO_IN, DEV_AUDIO_OUT, DEV_CODEC_REG, DEV_VIDEO_IN, DEV_VIDEO_OUT};
+use pl_api::protocol::DEV_PROTOCOL_CHECK;
 use pl_api::{
     AudioSource, BoardOutput, BusError, BusResult, DEV_BOARD_IN, DEV_BOARD_OUT, DEV_M_AXI_GP0,
     DEV_PIN_IN, DEV_PIN_OUT, DEV_WIRES_PS_TO_PL, MasterAccess, MediaEvent, PinEvent, PinSink,
-    PlTarget, PsMasterPort, PsPort, VideoSource,
+    PlTarget, ProtocolFinding, PsMasterPort, PsPort, VideoSource,
 };
 use std::fmt;
 use std::fs;
@@ -173,6 +174,8 @@ pub struct XsimPl {
     stats: XsimStats,
     master_log: Vec<MasterAccess>,
     board_out: Vec<BoardOutput>,
+    /// AXI protocol-checker findings of the testbench (ADR-025).
+    protocol: Vec<ProtocolFinding>,
     media: Vec<MediaEvent>,
     video_src: VideoSource,
     audio_src: AudioSource,
@@ -544,6 +547,7 @@ impl XsimPl {
             stats: XsimStats::default(),
             master_log: Vec::new(),
             board_out: Vec::new(),
+            protocol: Vec::new(),
             media: Vec::new(),
             video_src: VideoSource::color_bars(320, 240),
             audio_src: AudioSource::Silence,
@@ -597,6 +601,14 @@ impl XsimPl {
                     reg: i.line as u8,
                     value: (i.vector & 0x1FF) as u16,
                 });
+            }
+            Packet::Interrupt(i) if i.dev == DEV_PROTOCOL_CHECK => {
+                self.protocol.push(ProtocolFinding::from_packet(
+                    i.timestamp,
+                    i.line,
+                    i.val,
+                    i.vector,
+                ));
             }
             Packet::Interrupt(i) if i.dev == DEV_PIN_OUT => {
                 self.pin_events.push(PinEvent {
@@ -919,6 +931,10 @@ impl PlTarget for XsimPl {
 
     fn drain_pin_events(&mut self) -> Vec<PinEvent> {
         std::mem::take(&mut self.pin_events)
+    }
+
+    fn drain_protocol_findings(&mut self) -> Vec<ProtocolFinding> {
+        std::mem::take(&mut self.protocol)
     }
 
     fn set_pin_sink(&mut self, sink: Box<dyn PinSink>) {

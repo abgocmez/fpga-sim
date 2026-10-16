@@ -18,6 +18,7 @@ pub mod exportinit;
 pub mod exportsim;
 mod netlog;
 mod project;
+pub mod protocol;
 mod qemu_engine;
 mod recording;
 mod server;
@@ -35,9 +36,10 @@ pub use engine::Engine;
 pub use error::{ApiError, ErrorCode};
 pub use project::{
     BackendsSection, BoardSection, BootSection, CpuSection, DebugSection, Diagnostic, MediaSection,
-    NetworkSection, Project, RtlSection, Severity, SimSection, StorageSection, parse_audio_spec,
-    parse_video_spec, starter_project_toml,
+    NetworkSection, Project, ProtocolCheckers, RtlSection, Severity, SimSection, StorageSection,
+    parse_audio_spec, parse_video_spec, starter_project_toml,
 };
+pub use protocol::{ProtocolSummary, protocol_summary};
 pub use qemu_engine::{
     ImageSource, NATIVE_MODELS, NativeInstance, QemuEngine, QemuSpec, RtlSpec, StorageSpec,
 };
@@ -47,9 +49,9 @@ pub use recording::{
 pub use server::SimClient;
 pub use sim::Simulator;
 pub use tbgen::{
-    AxiLite, AxiMaster, Dir, ModuleInfo, PinGroup, Port, detect_axi_lite, detect_axi_master,
-    detect_irqs, detect_pin_groups, generate_project, generate_testbench, parse_module,
-    relative_path,
+    AxiLite, AxiMaster, Dir, ModuleInfo, PROTOCOL_CHECKER_FILE, PinGroup, Port, detect_axi_lite,
+    detect_axi_master, detect_irqs, detect_pin_groups, generate_project, generate_testbench,
+    parse_module, protocol_checker_source, relative_path,
 };
 pub use tools::{
     BackendInfo, BackendKind, BackendRole, detect_backends, find_dpi_lib, find_on_path,
