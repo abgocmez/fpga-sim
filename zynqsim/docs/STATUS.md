@@ -494,6 +494,20 @@ timing (SDF) simulation; UVM is only probed with the library, not a full UVM tes
 | `verilator`, `icarus` (PL) | stub, P4 |
 | `native` PS / RTL engine | stub, P5 / P6 (optional) |
 
+## Robustness fuzzing (spec §14.8, §14.10)
+
+Seeded, deterministic tests run in `cargo test` on stable Rust (no nightly, no new dependency).
+They show that inputs do not panic or hang. They do not show that the answers are right.
+
+| Feature | Status | Evidence / note |
+|---|---|---|
+| Project parser and validator: 2000 seeded mutations per example (27) and handwritten project (5): byte flips, truncation, garbage tokens, duplicated and deleted lines, huge numbers, unicode, NUL; every answer is `Ok` or an `invalid_argument` error with a message; a sample also goes through `Project::load` | verified | `sim-api::fuzz_project::mutated_projects_never_panic_and_are_answered_structurally` |
+| MCP: every tool from `tools/list` (47) gets 200 random argument objects (wrong types, missing and extra keys, huge strings, negative and nested values, nulls), without a project and with `examples/demo` open. Each answer is a JSON-RPC result with boolean `isError` and a known error code, or a JSON-RPC error; 5 s per call (60 s for rendering tools: `board_screenshot` at scale 4 takes about 8 s in the debug build) | verified | `mcp::fuzz_requests::every_tool_survives_random_arguments_without_a_project`, `..._with_the_demo_open` |
+| MCP raw transport: invalid JSON, non-object lines, batch arrays, wrong `method`, huge and odd ids, mutated request lines; every output line is JSON-RPC, and invalid JSON gets `-32700` | verified | `mcp::fuzz_requests::raw_json_rpc_lines_are_always_answered_or_ignored` |
+| Remote-port decoder: 20000 cases, half random bytes and half mutations of valid hello, read/write (ext and old layout), read response, interrupt, sync and nop packets, with hot offset and length words; no panic, and decoded data never longer than its input | verified | `interop::fuzz_packets::random_and_mutated_packets_never_panic_or_over_allocate` |
+| Session length cap: a declared payload above 16 MiB (and `0x7fffffff`, `u32::MAX`) is refused before the payload is allocated; a short payload then a closed peer is `Closed` | verified | `interop::fuzz_packets::a_declared_length_above_the_cap_is_refused_before_allocating`, `..._closed_peer` |
+| `cargo-fuzz` targets `project_parse`, `mcp_request`, `interop_packet` in `fuzz/` (outside the workspace) | implemented-untested | type-checked against a stub `libfuzzer-sys`; never run under libFuzzer (needs Linux and nightly). Run instructions in `fuzz/README.md` |
+
 ## Build, tooling and process
 
 | Item | Status | Note |
@@ -521,8 +535,8 @@ timing (SDF) simulation; UVM is only probed with the library, not a full UVM tes
 * The workspace sets `panic = "abort"` for `dev` and `release` because the freestanding DPI
   library cannot unwind. Tests still unwind (cargo ignores the setting for them).
 * Dockable GUI panels (egui_dock) are not used; the layout is fixed.
-* `cargo fuzz` targets do not exist; a seeded property test covers the MCP surface and the codec
-  decoder is fuzzed with random bytes.
+* `cargo fuzz` targets are in `fuzz/` and were only type-checked (no nightly or libFuzzer here). The
+  seeded fuzz tests in the normal suite are the verified part (see *Robustness fuzzing*).
 * The workspace lives in `zynqsim/` inside the prototype directory; the prototype files are
   untouched (prompt §16 migration is partly done: remote-port client, runner and driver logic now
   exist in Rust; the web UI and PowerShell scripts are not yet retired).

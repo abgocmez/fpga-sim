@@ -1,0 +1,43 @@
+# cargo-fuzz targets for the three untrusted-input entry points. Not a workspace
+# member (the root Cargo.toml excludes `fuzz`), so `cargo build --workspace` never
+# touches libFuzzer. See fuzz/README.md. Status: implemented-untested.
+
+[package]
+name = "zynqsim-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+interop = { path = "../crates/interop" }
+serde_json = "1.0.154"
+sim-api = { path = "../crates/sim-api" }
+zynqsim-mcp = { path = "../crates/mcp" }
+
+# Stops cargo from treating this manifest as part of the parent workspace.
+[workspace]
+
+[[bin]]
+name = "project_parse"
+path = "fuzz_targets/project_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mcp_request"
+path = "fuzz_targets/mcp_request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "interop_packet"
+path = "fuzz_targets/interop_packet.rs"
+test = false
+doc = false
+bench = false
