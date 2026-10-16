@@ -348,6 +348,9 @@ the model does what this repository's tests say it does, not that real hardware 
 | Other Xilinx IP (DMA, VDMA, IIC, Quad SPI, BRAM controller, interrupt controller, Clocking Wizard, UART 16550, ...) | stub | still `[xsa.unmodelled]` and stop the run; `sim-api::xsa_import::an_ip_without_a_model_is_recorded_and_stops_the_run` with a hand-written AXI DMA handoff |
 | Cycle-accurate AXI timing of the models | not-planned | register level only; no AXI protocol checking for them |
 
+Gate on this branch: `cargo xtask ci` exited 0 on 2026-10-16 with 457 tests (421 + 36 new), none
+failed or ignored, no `SKIPPED:` line (QEMU, XSim and the DPI library present).
+
 The export-simulation file-list flow and `BOOT.BIN` boot of milestone P3 are other work and are
 not covered here.
 
