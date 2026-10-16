@@ -99,9 +99,23 @@ fn the_handoff_project_is_created_with_the_bootbin_through_mcp() {
     let toml = std::fs::read_to_string(workspace().join(&out).join("project.toml")).unwrap();
     assert!(toml.contains("mode = \"boot_bin\""), "{toml}");
     assert!(!toml.contains("[cpu0]"), "{toml}");
-    let out = create(&mut s, "create-export", true);
-    let toml = std::fs::read_to_string(workspace().join(&out).join("project.toml")).unwrap();
-    assert!(toml.contains("export_dir ="), "{toml}");
+    // The export's lists name `$XILINX_VIVADO/.../glbl.v`: without a Vivado
+    // install (CI) the variable is undefined and the export is refused.
+    if std::env::var_os("XILINX_VIVADO").is_some()
+        || [
+            r"C:\Xilinx\Vivado",
+            "/opt/Xilinx/Vivado",
+            "/tools/Xilinx/Vivado",
+        ]
+        .iter()
+        .any(|p| std::path::Path::new(p).is_dir())
+    {
+        let out = create(&mut s, "create-export", true);
+        let toml = std::fs::read_to_string(workspace().join(&out).join("project.toml")).unwrap();
+        assert!(toml.contains("export_dir ="), "{toml}");
+    } else {
+        eprintln!("SKIPPED: the export names $XILINX_VIVADO (no Vivado here)");
+    }
     // A damaged image creates nothing.
     let rel = out_dir("bad");
     let dir = workspace().join(&rel);
