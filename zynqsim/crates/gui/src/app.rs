@@ -3,12 +3,14 @@
 mod dialogs;
 mod media;
 mod project;
+mod shell;
 mod view3d;
 mod wave_view;
 
 use crate::loader::ProjectDraft;
 use crate::model::{Model, SPEEDS, TailFollow, TraceFilter, TraceKind, trace_kind, visible_lines};
 use crate::waves::elide_long_symbols;
+use crate::prefs::Prefs;
 use eframe::egui::{
     self, Align2, Color32, ColorImage, FontId, Key, Rect, RichText, Sense, TextureHandle,
     TextureOptions, pos2, vec2,
@@ -40,6 +42,12 @@ pub struct Opts {
     /// Where relative paths of the project that was opened resolve, and the
     /// project file itself, for the project window.
     pub project: Option<std::path::PathBuf>,
+    /// Settings to start with (window size, UI scale, theme, recent projects).
+    pub prefs: Prefs,
+    /// Where the settings are saved as they change; `None` keeps them in memory.
+    pub prefs_path: Option<std::path::PathBuf>,
+    /// Open the keyboard shortcuts window.
+    pub show_shortcuts: bool,
 }
 
 /// How the memory viewer shows its data.
@@ -103,12 +111,22 @@ pub struct App {
     trace_follow: TailFollow,
     /// Text size of the trace strip and the console, in points (10..=18).
     font_pt: f32,
+    // menu bar, status bar, settings
+    shell: shell::Shell,
 }
 
 impl App {
     /// Builds the app around a loaded model.
     pub fn new(model: Model, opts: Opts) -> App {
         let opts_mem = opts.mem;
+        let mut shell = shell::Shell::new(
+            opts.prefs.clone(),
+            opts.prefs_path.clone(),
+            opts.show_shortcuts,
+        );
+        if let Some(f) = &opts.project {
+            shell.note_recent(f);
+        }
         let cpu_reason = [
             model.cpu_unavailable_reason(0),
             model.cpu_unavailable_reason(1),
@@ -178,6 +196,7 @@ impl App {
             },
             trace_follow: TailFollow::default(),
             font_pt: 12.0,
+            shell,
         }
     }
 
@@ -207,9 +226,11 @@ impl App {
             .iter()
             .map(|s| s.key.as_deref().and_then(key_from_label))
             .collect();
+        // Ctrl/Cmd combinations belong to the shell (Ctrl+O, Ctrl+= ...), so
+        // a board key pressed with one of them does nothing.
         for (i, k) in switch_keys.iter().enumerate() {
             if let Some(k) = k {
-                if ctx.input(|inp| inp.key_pressed(*k)) {
+                if ctx.input(|inp| inp.key_pressed(*k) && !inp.modifiers.command) {
                     self.model.toggle_switch(i);
                 }
             }
@@ -223,7 +244,7 @@ impl App {
             .collect();
         for (i, k) in button_keys.iter().enumerate() {
             if let Some(k) = k {
-                let down = ctx.input(|inp| inp.key_down(*k));
+                let down = ctx.input(|inp| inp.key_down(*k) && !inp.modifiers.command);
                 if down != self.key_down[i] {
                     self.key_down[i] = down;
                     self.model.set_button(i, down);
@@ -1033,42 +1054,35 @@ impl App {
             self.engine_changed();
         }
         self.pump_audio();
+        self.shell_frame(ctx);
+        self.shell_keys(ctx);
         self.handle_keys(ctx);
 
+        let picked = egui::TopBottomPanel::top("menu")
+            .show(ctx, |ui| self.menu_bar(ui))
+            .inner;
+        for a in picked {
+            self.run_action(ctx, a);
+        }
         egui::TopBottomPanel::top("controls").show(ctx, |ui| {
             ui.add_space(4.0);
             self.control_bar(ui);
             ui.add_space(4.0);
         });
         egui::TopBottomPanel::bottom("status")
-            .exact_height(22.0)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    match self
-                        .model
-                        .load_error
-                        .as_ref()
-                        .or(self.model.last_error.as_ref())
-                    {
-                        Some(e) => {
-                            ui.colored_label(
-                                Color32::from_rgb(240, 100, 90),
-                                e.lines().next().unwrap_or(""),
-                            );
-                        }
-                        None => {
-                            ui.label(RichText::new(self.key_help()).color(Color32::GRAY));
-                        }
-                    }
-                });
-            });
-        egui::TopBottomPanel::bottom("console")
-            .resizable(true)
-            .default_height(170.0)
-            .show(ctx, |ui| self.console(ui));
-        egui::SidePanel::right("info")
-            .default_width(300.0)
-            .show(ctx, |ui| self.side_panel(ui));
+            .exact_height(24.0)
+            .show(ctx, |ui| self.status_bar(ui));
+        if self.shell.show_console {
+            egui::TopBottomPanel::bottom("console")
+                .resizable(true)
+                .default_height(170.0)
+                .show(ctx, |ui| self.console(ui));
+        }
+        if self.shell.show_side {
+            egui::SidePanel::right("info")
+                .default_width(300.0)
+                .show(ctx, |ui| self.side_panel(ui));
+        }
         egui::CentralPanel::default().show(ctx, |ui| {
             self.view_tabs(ui);
             ui.add_space(2.0);
@@ -1084,6 +1098,8 @@ impl App {
             }
         });
         self.project_window(ctx);
+        self.shortcuts_window(ctx);
+        self.about_window(ctx);
         self.loading_overlay(ctx);
 
         self.lifecycle(ctx);
@@ -1143,7 +1159,7 @@ fn describe(r: &TraceRecord) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     #[test]
@@ -1174,14 +1190,14 @@ mod tests {
     use sim_api::SimClient;
     use sim_api::SimConfig;
 
-    struct Harness {
-        ctx: egui::Context,
-        app: App,
+    pub(super) struct Harness {
+        pub(super) ctx: egui::Context,
+        pub(super) app: App,
         time: f64,
     }
 
     impl Harness {
-        fn new() -> Harness {
+        pub(super) fn new() -> Harness {
             let model = Model::new(SimClient::spawn(SimConfig::default()).unwrap()).unwrap();
             let mut h = Harness {
                 ctx: egui::Context::default(),
@@ -1194,12 +1210,19 @@ mod tests {
             h
         }
 
-        fn frame(&mut self, events: Vec<Event>) {
+        pub(super) fn frame(&mut self, events: Vec<Event>) {
+            self.frame_with(events, egui::Modifiers::NONE);
+        }
+
+        /// A frame with the given keyboard modifiers held (Ctrl is
+        /// `Modifiers::COMMAND` on Windows).
+        pub(super) fn frame_with(&mut self, events: Vec<Event>, modifiers: egui::Modifiers) {
             self.time += 0.05;
             let input = egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1280.0, 820.0))),
                 events,
                 time: Some(self.time),
+                modifiers,
                 ..Default::default()
             };
             let app = &mut self.app;

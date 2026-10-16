@@ -4,11 +4,13 @@ mod app;
 mod audio_out;
 mod loader;
 mod model;
+mod prefs;
 mod source_view;
 mod waves;
 
 use app::{App, Opts};
 use model::Model;
+use prefs::Prefs;
 use sim_api::{Project, Ps, Severity, SimClient, SimConfig};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -18,6 +20,10 @@ zynqsim-gui [--project FILE] [--play]
 
   --project FILE   open this project.toml
   --play           start running in real time
+  --defaults       ignore the remembered window, scale, theme and recent
+                   projects, and do not save new ones
+  --theme dark|light   start in this theme (does not save anything)
+  --shortcuts      open the keyboard shortcuts window
 
 Options for automated checks:
   --toggle N,N     toggle these switches at start-up
@@ -45,6 +51,8 @@ fn main() -> eframe::Result {
     let mut run_ms = 0u64;
     let mut uart_lines: Vec<String> = Vec::new();
     let mut opts = Opts::default();
+    let mut defaults = false;
+    let mut theme: Option<bool> = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -55,6 +63,15 @@ fn main() -> eframe::Result {
         match a.as_str() {
             "--project" => project = Some(PathBuf::from(value("--project"))),
             "--play" => play = true,
+            "--defaults" => defaults = true,
+            "--shortcuts" => opts.show_shortcuts = true,
+            "--theme" => {
+                theme = Some(match value("--theme").as_str() {
+                    "dark" => true,
+                    "light" => false,
+                    _ => die("--theme expects dark or light"),
+                })
+            }
             "--toggle" => {
                 for s in value("--toggle").split(',') {
                     toggles.push(
@@ -99,6 +116,21 @@ fn main() -> eframe::Result {
         }
     }
 
+    // Settings are kept only for an ordinary run: automated checks and
+    // explicit overrides must not change the user's saved preferences.
+    let automated = opts.screenshot.is_some() || opts.exit_after.is_some();
+    let persist = !(defaults || automated || theme.is_some());
+    let mut prefs = match (defaults, Prefs::default_path()) {
+        (false, Some(path)) => Prefs::load(&path),
+        _ => Prefs::default(),
+    };
+    if let Some(dark) = theme {
+        prefs.dark = dark;
+    }
+    opts.prefs_path = if persist { Prefs::default_path() } else { None };
+    let window = prefs.window.unwrap_or(prefs::DEFAULT_WINDOW);
+    opts.prefs = prefs;
+
     opts.project = project.clone();
     let client = match &project {
         Some(file) => open_project(file),
@@ -127,7 +159,7 @@ fn main() -> eframe::Result {
     let native = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("ZynqSim - Zybo Z7-20")
-            .with_inner_size([1280.0, 820.0])
+            .with_inner_size(window)
             .with_min_inner_size([900.0, 600.0]),
         ..Default::default()
     };
