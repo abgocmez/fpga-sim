@@ -163,7 +163,8 @@ impl McpServer {
                 "prompts": { "listChanged": false }
             },
             "serverInfo": { "name": "zynqsim-mcp", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": "ZynqSim simulates a Zynq-7000 / Zybo Z7-20 board. Call status_get first \
+            "instructions": "ZynqSim simulates a Zynq-7000 board (the Zybo Z7-20 unless the project selects \
+                another; status_get lists its switches, buttons and LEDs). Call status_get first \
                 and read `fidelity` and `capabilities`: in this build the backend is the built-in \
                 `demo` model, which has no CPU or RTL, so cpu_*, mem_* and pl_* tools report \
                 `unsupported` instead of guessing."
@@ -617,6 +618,17 @@ impl McpServer {
                 let st = self.client.status()?;
                 let project = self.project.as_ref().map(|p| p.path.display().to_string());
                 let mut out = json!({ "status": st, "project": project });
+                if let Ok(def) = self.client.board_def() {
+                    out["board_info"] = json!({
+                        "name": def.name,
+                        "display_name": def.display_name,
+                        "switches": def.switches.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+                        "buttons": def.buttons.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+                        "leds": def.leds.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+                        "rgb_leds": def.rgb_leds.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+                        "pmods": def.pmods.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+                    });
+                }
                 if st.capabilities.contains(&sim_api::Capability::Network) {
                     if let Response::NetStats(n) = self.client.query(Query::NetStats)? {
                         out["network"] = json!(n);

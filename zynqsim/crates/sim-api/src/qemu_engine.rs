@@ -169,6 +169,8 @@ pub struct QemuSpec {
     pub rtl: Option<RtlSpec>,
     /// Board machine name.
     pub board: String,
+    /// The board description when it is not looked up by `board` (a custom board file).
+    pub board_def: Option<BoardDef>,
     /// Name to report as the PL backend.
     pub pl_name: String,
     /// Attach QEMU's gdb stub (see `[debug]` in `project.toml`).
@@ -743,8 +745,11 @@ struct Snapshot {
 impl QemuEngine {
     /// Starts QEMU with `spec` and places the native models.
     pub fn new(spec: &QemuSpec) -> Result<QemuEngine, ApiError> {
-        let def = BoardDef::builtin(&spec.board)
-            .ok_or_else(|| ApiError::not_found(format!("unknown board `{}`", spec.board)))?;
+        let def = match &spec.board_def {
+            Some(d) => d.clone(),
+            None => BoardDef::builtin(&spec.board)
+                .ok_or_else(|| ApiError::not_found(format!("unknown board `{}`", spec.board)))?,
+        };
         let rtl_pl: Option<Box<dyn PlTarget + Send>> = match &spec.rtl {
             Some(rtl) => {
                 let cfg = backend_rtl_xsim::XsimConfig {
@@ -1243,7 +1248,7 @@ impl QemuEngine {
             }
         }
         for o in self.pl.drain_board_outputs() {
-            for i in 0..self.board.leds.len().min(4) {
+            for i in 0..self.board.leds.len().min(board_zybo::MAX_BITS) {
                 let duty = if o.leds & (1 << i) != 0 { 255 } else { 0 };
                 if self.board.leds[i] != duty {
                     self.board.leds[i] = duty;
@@ -1501,7 +1506,9 @@ impl QemuEngine {
 
     fn push_board_inputs(&mut self) {
         let bits = |v: &[bool]| {
+            // Bit n = component n of the board; a board file has at most 8 (ADR-022).
             v.iter()
+                .take(board_zybo::MAX_BITS)
                 .enumerate()
                 .fold(0u8, |a, (i, &b)| a | (u8::from(b) << i))
         };
@@ -2027,6 +2034,8 @@ impl QemuEngine {
                     version: 1,
                     config: crate::SimConfig {
                         board: self.def.name.clone(),
+                        board_def: (BoardDef::builtin(&self.def.name).as_ref() != Some(&self.def))
+                            .then(|| Box::new(self.def.clone())),
                         seed: 0,
                         quantum_ps: self.quantum_ns * 1000,
                     },

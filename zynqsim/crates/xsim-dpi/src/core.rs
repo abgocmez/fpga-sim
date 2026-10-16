@@ -367,8 +367,8 @@ impl<T: Transport> Dpi<T> {
                 }
             }
             Packet::Interrupt(i) if i.dev == DEV_BOARD_IN => match i.line {
-                0 => self.switches = i.val & 0xF,
-                1 => self.buttons = i.val & 0xF,
+                0 => self.switches = i.val,
+                1 => self.buttons = i.val,
                 _ => {}
             },
             Packet::Interrupt(i) => {
@@ -805,7 +805,7 @@ impl<T: Transport> Dpi<T> {
             timestamp: t,
             vector: 0,
             line: 0,
-            val: (v & 0xF) as u8,
+            val: (v & 0xFF) as u8,
         }));
     }
 
@@ -1287,6 +1287,39 @@ mod tests {
             .recv_timeout(Duration::from_millis(50))
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn board_pins_are_eight_bits_wide() {
+        // The ZedBoard has 8 switches, 7 buttons and 8 LEDs: bit n = component n, no
+        // masking to the Zybo's four (ADR-022).
+        let (mut dpi, mut host) = pair();
+        for (line, val) in [(0u32, 0b1000_0001u8), (1, 0b0100_0010)] {
+            host.send(&Packet::Interrupt(Interrupt {
+                id: 0,
+                flags: flags::POSTED,
+                dev: DEV_BOARD_IN,
+                timestamp: 10,
+                vector: 0,
+                line,
+                val,
+            }))
+            .unwrap();
+        }
+        let mut got = (0, 0);
+        for _ in 0..200 {
+            got = dpi.board_inputs();
+            if got == (0b1000_0001, 0b0100_0010) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(got, (0b1000_0001, 0b0100_0010));
+        dpi.telemetry_event(br#"{"t":99,"k":"led","v":165}"#, 0);
+        match host.recv().unwrap() {
+            Packet::Interrupt(i) => assert_eq!((i.dev, i.val), (DEV_BOARD_OUT, 0xA5)),
+            p => panic!("{p:?}"),
+        }
     }
 
     #[test]

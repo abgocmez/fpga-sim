@@ -68,11 +68,11 @@ pub fn param_names(model: &str) -> &'static [&'static str] {
 /// A board signal a GPIO channel can be bound to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BoardSignal {
-    /// The four user LEDs (output only).
+    /// The user LEDs (output only; up to eight, bit n = LED n).
     Leds,
-    /// The four slide switches (input only).
+    /// The slide switches (input only; up to eight, bit n = switch n).
     Switches,
-    /// The four push buttons (input only).
+    /// The push buttons (input only; up to eight, bit n = button n).
     Buttons,
     /// A Pmod port, 0..=4 for JA..JE (eight pins, both directions).
     Pmod(u8),
@@ -318,7 +318,7 @@ impl VendorPl {
                 match sig {
                     BoardSignal::Leds => self.board_out.push(BoardOutput {
                         t_ns: now_ns,
-                        leds: (out & 0xF) as u8,
+                        leds: (out & 0xFF) as u8,
                     }),
                     BoardSignal::Pmod(group) => {
                         let levels = (out & 0xFF) as u8;
@@ -427,9 +427,9 @@ impl PlTarget for VendorPl {
             for ch in 0..2 {
                 match g.sig[ch] {
                     Some(BoardSignal::Switches) => {
-                        g.handle.set_input(ch, u32::from(switches & 0xF));
+                        g.handle.set_input(ch, u32::from(switches));
                     }
-                    Some(BoardSignal::Buttons) => g.handle.set_input(ch, u32::from(buttons & 0xF)),
+                    Some(BoardSignal::Buttons) => g.handle.set_input(ch, u32::from(buttons)),
                     _ => {}
                 }
             }
@@ -672,6 +672,41 @@ mod tests {
             pl.read(0, 0x4300_0000, &mut b, 0, &mut ps),
             Err(BusError::Decode)
         );
+    }
+
+    #[test]
+    fn eight_bit_boards_reach_the_gpio_in_full() {
+        // The ZedBoard's 8 LEDs and 8 switches: nothing is cut to four bits (ADR-022).
+        let mut pl = VendorPl::new(None);
+        let mut leds = inst(
+            "gpio_led",
+            "axi_gpio",
+            0x4120_0000,
+            None,
+            &[("C_GPIO_WIDTH", "8"), ("C_ALL_OUTPUTS", "1")],
+        );
+        leds.bindings.insert("GPIO".into(), "board.leds".into());
+        let mut sw = inst(
+            "gpio_sw",
+            "axi_gpio",
+            0x4121_0000,
+            None,
+            &[("C_GPIO_WIDTH", "8"), ("C_ALL_INPUTS", "1")],
+        );
+        sw.bindings.insert("GPIO".into(), "board.sw".into());
+        pl.add(&leds).unwrap();
+        pl.add(&sw).unwrap();
+        let mut ps = Ps::default();
+        wr(&mut pl, &mut ps, 0x4120_0000, 0xA5, 100);
+        assert_eq!(
+            pl.drain_board_outputs(),
+            vec![BoardOutput {
+                t_ns: 100,
+                leds: 0xA5
+            }]
+        );
+        pl.set_board_inputs(0b1001_0000, 0, 300);
+        assert_eq!(rd(&mut pl, &mut ps, 0x4121_0000, 400), 0x90);
     }
 
     #[test]

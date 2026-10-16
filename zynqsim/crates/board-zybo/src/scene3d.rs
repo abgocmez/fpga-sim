@@ -621,6 +621,41 @@ mod tests {
     }
 
     #[test]
+    fn every_board_extrudes_without_panicking_and_its_controls_are_pickable() {
+        // Any board file gets a 3D view: the PCB and every part extruded from the layout.
+        let f = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/custom-board/my-board.toml");
+        let mut boards: Vec<BoardDef> = BoardDef::builtin_names()
+            .into_iter()
+            .filter_map(BoardDef::builtin)
+            .collect();
+        boards.push(BoardDef::load(&f).unwrap());
+        let top = Camera {
+            yaw: 0.0,
+            pitch: 0.0,
+            zoom: 1.0,
+        };
+        for def in boards {
+            let st = BoardState::new(&def);
+            for cam in [Camera::default(), top] {
+                let sc = render_3d(&def, &st, &cam, 800, 520);
+                assert_eq!(sc.image.rgba.len(), 800 * 520 * 4, "{}", def.name);
+            }
+            // Top-down, the last switch and the last button are where the layout puts them.
+            let sc = render_3d(&def, &st, &top, 1000, 700);
+            for hit in [
+                Hit::Switch(def.switches.len() - 1),
+                Hit::Button(def.buttons.len() - 1),
+            ] {
+                let (x, y) = sc
+                    .centre_of(hit)
+                    .unwrap_or_else(|| panic!("{}: {hit:?} not drawn", def.name));
+                assert_eq!(sc.pick(x, y), Some(hit), "{}", def.name);
+            }
+        }
+    }
+
+    #[test]
     fn front_boxes_hide_those_behind_them() {
         // Top-down, a switch lever (drawn on top of its body) is what a click
         // on the switch's centre reaches; both belong to the same switch.

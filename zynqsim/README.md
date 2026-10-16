@@ -243,6 +243,56 @@ compilation directory recorded in the ELF, the project directory and `[debug] so
 `firmware/debug_demo` is built with `debug = 1` for this (`cargo xtask firmware`); the other
 firmware ELFs carry no debug info. Only lines and function names are read: no variables, no stepping.
 
+### Custom boards
+
+Pick another board in `project.toml` (the demo engine, QEMU and XSim all follow it, and the
+switch/button/LED counts reach the GUI, `zynqsim run --json` and the MCP tools):
+
+```toml
+[board]
+name = "zedboard"            # built in: zybo-z7-20, zybo-z7-10, zedboard, pynq-z2
+# or a board file of your own, relative to the project:
+file = "my-board.toml"       # `name` is then optional (if given it must match the file's)
+```
+
+`zynqsim inspect --board zedboard|my-board.toml` summarises a board and checks a file;
+`zynqsim run --board ...` runs the demo engine on one; the GUI's project window has a board picker.
+`examples/custom-board` is a complete small board (TOML plus SVG artwork) with a project that runs
+on the demo engine; `examples/zedboard-demo` drives the ZedBoard's 8 LEDs from Rust firmware
+through an 8-bit RTL testbench (QEMU + XSim).
+
+**The three built-in boards besides the Zybo Z7-20 were written from memory** of the vendors'
+documents. Every pin, count, clock and peripheral in them is marked `VERIFY:` and **unchecked**
+(`pin_status = "unverified"`); only how they load, draw and wire up is tested.
+
+Board file format (TOML, `schema_version = 1`; coordinates are in a `layout` drawing space, origin
+top-left, y down, every x/y is the **centre** of the item; ids are `[A-Za-z][A-Za-z0-9_]*`):
+
+| Key | Meaning |
+|---|---|
+| `schema_version`, `name` (lower-case, digits, `-` `_`), `display_name`, `part`, `ddr_mb`, `pl_clock_hz`, `ps_clock_hz` | required |
+| `pin_status` | `"unverified"` (default) or `"verified"` once checked against a schematic |
+| `svg` | optional artwork path, relative to the board file (subset below) |
+| `[layout]` `width`, `height` | drawing size; the picture is this size at scale 1 |
+| `[resources]` | optional, informational: `luts`, `flip_flops`, `bram_36k`, `dsp_slices` |
+| `[[switches]]`, `[[buttons]]` | `id`, `x`, `y`, optional `pin` (package pin) and `key` (one letter or digit: the GUI shortcut; switches toggle, buttons hold). At most **8** of each |
+| `[[leds]]` | `id`, `x`, `y`, optional `pin`, `color` = `green` (default) `red` `yellow` `blue`. At most **8** |
+| `[[rgb_leds]]` | `id`, `x`, `y`, optional `pin_r`, `pin_g`, `pin_b`; channels are named `<id>_r/g/b`. At most 2 |
+| `[[pmods]]` | `id`, `x`, `y`, `domain` = `pl` or `ps`; pins are `<id>1..4` and `<id>7..10`. At most 6 |
+| `[[connectors]]` | `id`, `kind`, `label`, `x`, `y`, `w`, `h`: drawn parts. Kinds: `soc ddr qspi ethernet usb_otg usb_host usb_uart hdmi_rx hdmi_tx vga microsd sd audio power pcam oled header fmc xadc jtag clock` |
+
+Bit *n* of the testbench's `tel_ctrl` switches/buttons and of the `tel_event` LED mask is the
+*n*-th `[[switches]]` / `[[buttons]]` / `[[leds]]` entry, which is why the limit is 8 (ADR-022).
+Everything is validated when the board loads and **every** problem is listed: unknown tables,
+fields, colours or connector kinds, items outside or overhanging the layout, duplicate ids, pins
+or keys, names that collide with a Pmod or RGB pin name, too many components.
+
+SVG artwork (optional): `rect circle ellipse line polyline polygon path` (commands `M L H V C Q Z`),
+`g`, with `fill`, `stroke`, `stroke-width` and `opacity` (attributes or `style`); the view box is
+stretched over the layout. Text, gradients, images and filters are skipped; transforms, `url()`
+paints, percentage lengths and other path commands are rejected with a message. The 3D view
+ignores the artwork. Details: `docs/adr/022-custom-boards.md`.
+
 ### MCP
 
 ```json
@@ -263,7 +313,7 @@ what the board receives.
 | `crates/` | `sim-core`, `trace`, `board-zybo`, `devices`, `sim-api`, `mcp`, `cli`, `gui`, `xtask`, `interop`, `pl-api`, `pl-native`, `backend-qemu`, `backend-rtl-xsim`, `xsim-dpi` |
 | `boards/` | board descriptions (TOML) |
 | `docs/` | `DESIGN.md`, `STATUS.md`, `TESTPLAN.md`, `adr/` |
-| `examples/` | `demo`, `math-qemu`, `math-debug`, `dma-regression`, `board-demo`, `audio-demo`, `hdmi-demo`, `irq-demo`, `oled-demo`, `rgb-demo`, `rust-hello`, `rust-debug`, `net-demo`, `sd-demo`, `qspi-demo` projects |
+| `examples/` | `demo`, `custom-board`, `zedboard-demo`, `math-qemu`, `math-debug`, `dma-regression`, `board-demo`, `audio-demo`, `hdmi-demo`, `irq-demo`, `oled-demo`, `rgb-demo`, `rust-hello`, `rust-debug`, `net-demo`, `sd-demo`, `qspi-demo` projects |
 | `firmware/` | Rust `no_std` Cortex-A9 firmware (`hello`, `audio_demo`, `hdmi_demo`, `irq_demo`, `oled_demo`, `rgb_demo`, `net_demo`, `sd_demo`, `qspi_demo`); its own workspace, built by `cargo xtask firmware` |
 | `fixtures/` | prototype firmware ELFs, the prebuilt Rust ELFs (`rust_*.elf`) and the RTL used by the examples and tests |
 

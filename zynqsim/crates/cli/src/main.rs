@@ -44,6 +44,10 @@ enum Cmd {
         /// Override the PRNG seed.
         #[arg(long)]
         seed: Option<u64>,
+        /// Board for the built-in demo engine (no --project): a built-in name or a board
+        /// `.toml` file. A project selects its own board with `[board]`.
+        #[arg(long)]
+        board: Option<String>,
         /// Scripted input `TIME=ACTION`, repeatable. Actions: `sw0:on`, `btn1:down|up|tap`,
         /// `uart1:text` (supports \r \n), `reset[:SEED]`. Example: `--at 10ms=sw0:on`.
         #[arg(long = "at")]
@@ -160,6 +164,10 @@ enum Cmd {
         /// Validate this project.toml and list every finding.
         #[arg(long)]
         project: Option<PathBuf>,
+        /// Show this board instead (a built-in name such as `zedboard`, or a board `.toml`
+        /// file; checked and summarised). Default: the project's board, else the Zybo Z7-20.
+        #[arg(long)]
+        board: Option<String>,
     },
     /// Replay a recording and export its trace.
     Trace {
@@ -274,6 +282,7 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
             project,
             duration,
             seed,
+            board,
             at,
             record,
             vcd,
@@ -295,6 +304,7 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
                 project,
                 duration,
                 seed,
+                board,
                 at,
                 record,
                 vcd,
@@ -357,7 +367,7 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
                 None => cmd_init(json, &out.unwrap_or(dir), xsa, rtl, filelist, ip),
             }
         }
-        Cmd::Inspect { project } => cmd_inspect(json, project.as_deref()),
+        Cmd::Inspect { project, board } => cmd_inspect(json, project.as_deref(), board.as_deref()),
         Cmd::Trace {
             recording,
             vcd,
@@ -468,6 +478,7 @@ struct RunArgs {
     project: Option<PathBuf>,
     duration: String,
     seed: Option<u64>,
+    board: Option<String>,
     at: Vec<String>,
     record: Option<PathBuf>,
     vcd: Option<PathBuf>,
@@ -578,6 +589,7 @@ fn build_engine(
     project: &Option<PathBuf>,
     seed: Option<u64>,
     breakpoints: &[String],
+    board: Option<&str>,
 ) -> Result<Box<dyn sim_api::Engine>, Failure> {
     let Some(file) = project else {
         if !breakpoints.is_empty() {
@@ -590,7 +602,10 @@ fn build_engine(
         if let Some(s) = seed {
             cfg.seed = s;
         }
-        return Ok(Box::new(Simulator::new(cfg)?));
+        return Ok(match board {
+            Some(spec) => Box::new(Simulator::with_def(board_from_arg(spec)?, cfg)?),
+            None => Box::new(Simulator::new(cfg)?),
+        });
     };
     let mut p = Project::load(file)?;
     if let Some(s) = seed {
@@ -628,7 +643,7 @@ fn build_engine(
 
 fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
     let total = Ps(sim_api::parse_duration(&a.duration)?);
-    let mut engine = build_engine(&a.project, a.seed, &a.breakpoints)?;
+    let mut engine = build_engine(&a.project, a.seed, &a.breakpoints, a.board.as_deref())?;
     let script = script::parse(&a.at, engine.def())?;
 
     if a.video_in.is_some() || a.audio_in.is_some() {
@@ -871,6 +886,20 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
         .zip(&engine.board().leds)
         .map(|(l, d)| json!({ "id": l.id, "duty": d }))
         .collect();
+    let switches: Vec<Value> = engine
+        .def()
+        .switches
+        .iter()
+        .zip(&engine.board().switches)
+        .map(|(l, on)| json!({ "id": l.id, "on": on }))
+        .collect();
+    let buttons: Vec<Value> = engine
+        .def()
+        .buttons
+        .iter()
+        .zip(&engine.board().buttons)
+        .map(|(l, pressed)| json!({ "id": l.id, "pressed": pressed }))
+        .collect();
     let bus_accesses = engine
         .trace()
         .records()
@@ -898,6 +927,17 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
                 "storage": st.storage,
                 "debug": debug,
                 "leds": leds,
+                "switches": switches,
+                "buttons": buttons,
+                "board_info": {
+                    "name": engine.def().name,
+                    "display_name": engine.def().display_name,
+                    "switches": engine.def().switches.len(),
+                    "buttons": engine.def().buttons.len(),
+                    "leds": engine.def().leds.len(),
+                    "rgb_leds": engine.def().rgb_leds.len(),
+                    "pmods": engine.def().pmods.len(),
+                },
                 "uart": {
                     "0": u0,
                     "1": u1,
@@ -1479,18 +1519,44 @@ fn cmd_init(
     Ok(0)
 }
 
-fn cmd_inspect(json: bool, project: Option<&Path>) -> Result<u8, Failure> {
-    let def = sim_api::board::BoardDef::zybo_z7_20();
+/// A board named on the command line: a built-in name, or a board file.
+fn board_from_arg(spec: &str) -> Result<sim_api::board::BoardDef, Failure> {
+    use sim_api::board::BoardDef;
+    if let Some(def) = BoardDef::builtin(spec) {
+        return Ok(def);
+    }
+    let path = Path::new(spec);
+    if path.is_file() {
+        return BoardDef::load(path).map_err(|e| fail(1, format!("{}: {e}", path.display())));
+    }
+    Err(fail(
+        2,
+        format!(
+            "`{spec}` is neither a built-in board ({}) nor a board file",
+            BoardDef::builtin_names().join(", ")
+        ),
+    ))
+}
+
+fn cmd_inspect(json: bool, project: Option<&Path>, board: Option<&str>) -> Result<u8, Failure> {
+    let mut def = sim_api::board::BoardDef::zybo_z7_20();
     let backends = detect_backends();
     let mut diagnostics = Vec::new();
     let mut errors = 0;
     if let Some(file) = project {
         let p = Project::load(file)?;
-        diagnostics = p.validate(file.parent().unwrap_or(Path::new(".")));
+        let dir = file.parent().unwrap_or(Path::new("."));
+        diagnostics = p.validate(dir);
         errors = diagnostics
             .iter()
             .filter(|d| d.severity == Severity::Error)
             .count();
+        if let Ok(d) = p.board_def(dir) {
+            def = d;
+        }
+    }
+    if let Some(spec) = board {
+        def = board_from_arg(spec)?;
     }
 
     if json {
@@ -1500,10 +1566,14 @@ fn cmd_inspect(json: bool, project: Option<&Path>) -> Result<u8, Failure> {
                 "board": {
                     "name": def.name, "part": def.part, "ddr_mb": def.ddr_mb,
                     "pin_status": def.pin_status,
+                    "display_name": def.display_name,
                     "switches": def.switches.len(), "buttons": def.buttons.len(),
                     "leds": def.leds.len(), "rgb_leds": def.rgb_leds.len(),
                     "pmods": def.pmods.len(),
+                    "resources": def.resources,
+                    "svg": def.svg,
                 },
+                "builtin_boards": sim_api::board::BoardDef::builtin_names(),
                 "fidelity_of_implemented_backends": Fidelity::Demo,
                 "backends": backends,
                 "diagnostics": diagnostics,
@@ -1521,6 +1591,20 @@ fn cmd_inspect(json: bool, project: Option<&Path>) -> Result<u8, Failure> {
             def.leds.len(),
             def.rgb_leds.len(),
             def.pmods.len()
+        );
+        if let Some(r) = &def.resources {
+            let n = |v: Option<u32>| v.map_or_else(|| "?".to_string(), |v| v.to_string());
+            println!(
+                "device  : {} LUTs, {} flip-flops, {} BRAM36, {} DSP",
+                n(r.luts),
+                n(r.flip_flops),
+                n(r.bram_36k),
+                n(r.dsp_slices)
+            );
+        }
+        println!(
+            "built-in: {}",
+            sim_api::board::BoardDef::builtin_names().join(", ")
         );
         println!("backends:");
         for b in &backends {

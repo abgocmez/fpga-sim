@@ -140,6 +140,9 @@ fn connector_colour(kind: &str) -> (Color, Color) {
         "ddr" | "qspi" => (rgb(30, 44, 70), rgb(80, 100, 140)),
         "hdmi_rx" | "hdmi_tx" => (rgb(60, 60, 70), rgb(160, 160, 175)),
         "power" => (rgb(70, 40, 40), rgb(170, 110, 110)),
+        "oled" => (rgb(12, 14, 30), rgb(90, 110, 200)),
+        "header" | "fmc" => (rgb(24, 24, 26), rgb(110, 110, 120)),
+        "vga" => (rgb(30, 60, 120), rgb(120, 160, 230)),
         _ => (rgb(150, 154, 160), rgb(220, 224, 230)),
     }
 }
@@ -177,6 +180,15 @@ pub fn render(def: &BoardDef, state: &BoardState, scale: f32) -> BoardImage {
         18.0,
         rgb(10, 66, 40),
     );
+
+    // Optional artwork from the board's SVG file, behind the controls.
+    if let Some(art) = def
+        .svg_source
+        .as_deref()
+        .and_then(|t| crate::svg::parse(t).ok())
+    {
+        art.draw(&mut cv.pm, cv.tf, lw, lh);
+    }
 
     // Connectors and major parts.
     for c in &def.connectors {
@@ -415,6 +427,96 @@ mod tests {
             PinLevel::Z,
         ];
         assert_golden("zybo_active.png", &def, &s);
+    }
+
+    /// A busy state for any board: every second switch on, the last button held, LEDs at
+    /// a few different duties, both RGB LEDs coloured, a pattern on the first Pmod.
+    fn busy_state(def: &BoardDef) -> BoardState {
+        let mut s = BoardState::new(def);
+        for (i, on) in s.switches.iter_mut().enumerate() {
+            *on = i % 2 == 1;
+        }
+        if let Some(b) = s.buttons.last_mut() {
+            *b = true;
+        }
+        for (i, d) in s.leds.iter_mut().enumerate() {
+            *d = [255, 0, 90, 255][i % 4];
+        }
+        for (i, c) in s.rgb.iter_mut().enumerate() {
+            *c = if i == 0 { [255, 0, 128] } else { [0, 200, 255] };
+        }
+        if let Some(p) = s.pmod_pins.first_mut() {
+            *p = [
+                PinLevel::High,
+                PinLevel::Low,
+                PinLevel::Z,
+                PinLevel::High,
+                PinLevel::Low,
+                PinLevel::Low,
+                PinLevel::High,
+                PinLevel::Z,
+            ];
+        }
+        s
+    }
+
+    #[test]
+    fn each_builtin_board_matches_its_golden_pictures() {
+        // Zybo Z7-20 has its own (older) goldens above.
+        for name in ["zybo-z7-10", "zedboard", "pynq-z2"] {
+            let def = BoardDef::builtin(name).unwrap();
+            let file = name.replace('-', "_");
+            assert_golden(&format!("{file}_default.png"), &def, &BoardState::new(&def));
+            assert_golden(&format!("{file}_active.png"), &def, &busy_state(&def));
+        }
+    }
+
+    fn lab_board() -> BoardDef {
+        let f = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/custom-board/my-board.toml");
+        BoardDef::load(&f).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    #[test]
+    fn a_custom_board_with_svg_art_matches_its_golden_and_the_art_shows() {
+        let def = lab_board();
+        assert_eq!((def.layout.width, def.layout.height), (600.0, 360.0));
+        assert_golden("lab_board_active.png", &def, &busy_state(&def));
+        // The SVG is what makes the difference to the plain board.
+        let mut plain = def.clone();
+        plain.svg_source = None;
+        let s = busy_state(&def);
+        assert_ne!(render(&def, &s, 1.0), render(&plain, &s, 1.0));
+        // A mounting hole of the art, at (30, 30), is light grey on the board.
+        let img = render(&def, &s, 1.0);
+        let o = (30 * 600 + 30) * 4;
+        assert_eq!(&img.rgba[o..o + 3], &[0xc8, 0xc8, 0xc8]);
+    }
+
+    #[test]
+    fn every_control_of_every_board_hit_tests_to_itself() {
+        let mut boards: Vec<BoardDef> = BoardDef::builtin_names()
+            .into_iter()
+            .filter_map(BoardDef::builtin)
+            .collect();
+        boards.push(lab_board());
+        for def in boards {
+            for (i, s) in def.switches.iter().enumerate() {
+                assert_eq!(hit_test(&def, s.x, s.y), Some(Hit::Switch(i)), "{}", s.id);
+            }
+            for (i, b) in def.buttons.iter().enumerate() {
+                assert_eq!(hit_test(&def, b.x, b.y), Some(Hit::Button(i)), "{}", b.id);
+            }
+            for (i, l) in def.leds.iter().enumerate() {
+                assert_eq!(hit_test(&def, l.x, l.y), Some(Hit::Led(i)), "{}", l.id);
+            }
+            for (i, l) in def.rgb_leds.iter().enumerate() {
+                assert_eq!(hit_test(&def, l.x, l.y), Some(Hit::Rgb(i)), "{}", l.id);
+            }
+            for (i, p) in def.pmods.iter().enumerate() {
+                assert_eq!(hit_test(&def, p.x, p.y), Some(Hit::Pmod(i)), "{}", p.id);
+            }
+        }
     }
 
     #[test]

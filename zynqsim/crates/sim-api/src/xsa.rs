@@ -639,10 +639,7 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
 
     let project = Project {
         schema_version: 1,
-        board: BoardSection {
-            name: "zybo-z7-20".to_string(),
-            ddr_mb: None,
-        },
+        board: BoardSection::named("zybo-z7-20"),
         backends: BackendsSection {
             ps: "qemu".to_string(),
             pl: if tb.is_some() {

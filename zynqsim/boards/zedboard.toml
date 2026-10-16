@@ -1,0 +1,385 @@
+# ZedBoard (Avnet / Digilent, XC7Z020-1CLG484C) board description.
+#
+# Layout coordinates are in a 1000 x 640 drawing space, origin top-left, y down.
+# Every entry's x,y is its CENTRE. The drawing is schematic and NOT to scale; it
+# is not a photograph of the physical board layout.
+#
+# EVERYTHING in this file is from memory of the ZedBoard Hardware User Guide and
+# the Digilent/Avnet ZedBoard master XDC; none of it has been checked against the
+# documents. Marked individually where it matters:
+#
+# VERIFY: part and package (xc7z020clg484-1, "CLG484" rather than the Zybo's CLG400).
+# VERIFY: 512 MB DDR3 (ddr_mb = 512), 100 MHz PL oscillator (GCLK, pin Y9),
+#         33.33 MHz PS clock.
+# VERIFY: 8 slide switches (SW0..SW7), 8 PL user LEDs (LD0..LD7), 5 PL push buttons
+#         (BTNC, BTND, BTNL, BTNR, BTNU) and every package pin below.
+# VERIFY: the "7 push buttons" count: the two extra buttons are modelled as the PS MIO
+#         buttons (pin names MIO50 and MIO51). On the real board they are wired to
+#         the PS, not to the PL; the simulator forwards all seven to the PL testbench
+#         (`tel_ctrl` button bits 5 and 6) because the interface does not know the
+#         difference. A PS-side (MIO GPIO) model does not exist.
+# VERIFY: the ninth, PS-only LED (LD9 on MIO7) is not modelled.
+# VERIFY: Pmod ports JA..JD on the PL; a fifth, PS-side Pmod (JE) is not modelled.
+# VERIFY: the OLED (UG-2832HSWEG04, 128 x 32, SSD1306, SPI) is wired to PL pins on
+#         this board, not to PS MIO/EMIO. It is drawn only: no model drives it yet.
+# VERIFY: HDMI TX only (ADV7511), VGA (12 bit), audio codec ADAU1761 (line in, line
+#         out, headphone, mic), Gigabit Ethernet, USB OTG, USB-UART, SD slot, FMC LPC.
+#
+# `pin_status` is surfaced by `zynqsim inspect` and the MCP `status_get` tool.
+
+schema_version = 1
+name = "zedboard"
+display_name = "ZedBoard"
+part = "xc7z020clg484-1"
+ddr_mb = 512               # VERIFY
+pl_clock_hz = 100000000    # VERIFY: 100 MHz PL oscillator
+ps_clock_hz = 33333333     # VERIFY: 33.33 MHz PS clock
+pin_status = "unverified"
+
+[layout]
+width = 1000
+height = 640
+
+# VERIFY: XC7Z020 resources (Zynq-7000 datasheet DS190), from memory.
+[resources]
+luts = 53200
+flip_flops = 106400
+bram_36k = 140
+dsp_slices = 220
+
+# --- slide switches (PL), VERIFY all pins ------------------------------------
+[[switches]]
+id = "sw0"
+pin = "F22"
+key = "1"
+x = 60
+y = 585
+
+[[switches]]
+id = "sw1"
+pin = "G22"
+key = "2"
+x = 122
+y = 585
+
+[[switches]]
+id = "sw2"
+pin = "H22"
+key = "3"
+x = 184
+y = 585
+
+[[switches]]
+id = "sw3"
+pin = "F21"
+key = "4"
+x = 246
+y = 585
+
+[[switches]]
+id = "sw4"
+pin = "H19"
+key = "5"
+x = 308
+y = 585
+
+[[switches]]
+id = "sw5"
+pin = "H18"
+key = "6"
+x = 370
+y = 585
+
+[[switches]]
+id = "sw6"
+pin = "H17"
+key = "7"
+x = 432
+y = 585
+
+[[switches]]
+id = "sw7"
+pin = "M15"
+key = "8"
+x = 494
+y = 585
+
+# --- push buttons: BTNC BTND BTNL BTNR BTNU (PL), then two on PS MIO ----------
+[[buttons]]
+id = "btn0"
+pin = "P16"
+key = "Q"
+x = 580
+y = 585
+
+[[buttons]]
+id = "btn1"
+pin = "R16"
+key = "W"
+x = 640
+y = 585
+
+[[buttons]]
+id = "btn2"
+pin = "N15"
+key = "E"
+x = 700
+y = 585
+
+[[buttons]]
+id = "btn3"
+pin = "R18"
+key = "R"
+x = 760
+y = 585
+
+[[buttons]]
+id = "btn4"
+pin = "T18"
+key = "T"
+x = 820
+y = 585
+
+# VERIFY: MIO50 / MIO51 push buttons.
+[[buttons]]
+id = "btn5"
+pin = "MIO50"
+key = "Y"
+x = 880
+y = 585
+
+[[buttons]]
+id = "btn6"
+pin = "MIO51"
+key = "U"
+x = 940
+y = 585
+
+# --- user LEDs LD0..LD7 (PL), VERIFY all pins --------------------------------
+[[leds]]
+id = "led0"
+pin = "T22"
+color = "green"
+x = 60
+y = 515
+
+[[leds]]
+id = "led1"
+pin = "T21"
+color = "green"
+x = 122
+y = 515
+
+[[leds]]
+id = "led2"
+pin = "U22"
+color = "green"
+x = 184
+y = 515
+
+[[leds]]
+id = "led3"
+pin = "U21"
+color = "green"
+x = 246
+y = 515
+
+[[leds]]
+id = "led4"
+pin = "V22"
+color = "green"
+x = 308
+y = 515
+
+[[leds]]
+id = "led5"
+pin = "W22"
+color = "green"
+x = 370
+y = 515
+
+[[leds]]
+id = "led6"
+pin = "U19"
+color = "green"
+x = 432
+y = 515
+
+[[leds]]
+id = "led7"
+pin = "U14"
+color = "green"
+x = 494
+y = 515
+
+# --- Pmod ports (PL) ------------------------------------------------------------
+# VERIFY: port count and that all four are PL. Signal pins are named <id>1..4 and
+# <id>7..10 as on a standard 12-pin Pmod; their package pins are not listed.
+[[pmods]]
+id = "JA"
+domain = "pl"
+x = 100
+y = 46
+
+[[pmods]]
+id = "JB"
+domain = "pl"
+x = 260
+y = 46
+
+[[pmods]]
+id = "JC"
+domain = "pl"
+x = 420
+y = 46
+
+[[pmods]]
+id = "JD"
+domain = "pl"
+x = 580
+y = 46
+
+# --- connectors and major parts (drawn, not functional) ----------------------
+[[connectors]]
+id = "oled"
+kind = "oled"
+label = "OLED 128x32"
+x = 810
+y = 46
+w = 128
+h = 44
+
+[[connectors]]
+id = "soc"
+kind = "soc"
+label = "XC7Z020"
+x = 500
+y = 300
+w = 240
+h = 200
+
+[[connectors]]
+id = "ddr"
+kind = "ddr"
+label = "DDR3"
+x = 260
+y = 300
+w = 120
+h = 150
+
+[[connectors]]
+id = "qspi"
+kind = "qspi"
+label = "QSPI"
+x = 740
+y = 300
+w = 90
+h = 50
+
+[[connectors]]
+id = "ethernet"
+kind = "ethernet"
+label = "GbE"
+x = 55
+y = 170
+w = 90
+h = 100
+
+[[connectors]]
+id = "usb_otg"
+kind = "usb_otg"
+label = "USB OTG"
+x = 55
+y = 285
+w = 90
+h = 70
+
+[[connectors]]
+id = "hdmi_tx"
+kind = "hdmi_tx"
+label = "HDMI TX"
+x = 55
+y = 370
+w = 90
+h = 60
+
+[[connectors]]
+id = "vga"
+kind = "vga"
+label = "VGA"
+x = 55
+y = 445
+w = 90
+h = 60
+
+[[connectors]]
+id = "fmc"
+kind = "fmc"
+label = "FMC LPC"
+x = 500
+y = 445
+w = 200
+h = 36
+
+[[connectors]]
+id = "microsd"
+kind = "microsd"
+label = "SD"
+x = 945
+y = 150
+w = 90
+h = 70
+
+[[connectors]]
+id = "usb_uart"
+kind = "usb_uart"
+label = "UART"
+x = 945
+y = 230
+w = 90
+h = 60
+
+[[connectors]]
+id = "audio_line_in"
+kind = "audio"
+label = "LINE IN"
+x = 945
+y = 300
+w = 90
+h = 36
+
+[[connectors]]
+id = "audio_line_out"
+kind = "audio"
+label = "LINE OUT"
+x = 945
+y = 342
+w = 90
+h = 36
+
+[[connectors]]
+id = "audio_hp_out"
+kind = "audio"
+label = "HP OUT"
+x = 945
+y = 384
+w = 90
+h = 36
+
+[[connectors]]
+id = "audio_mic"
+kind = "audio"
+label = "MIC"
+x = 945
+y = 426
+w = 90
+h = 36
+
+[[connectors]]
+id = "power"
+kind = "power"
+label = "PWR"
+x = 945
+y = 490
+w = 90
+h = 56

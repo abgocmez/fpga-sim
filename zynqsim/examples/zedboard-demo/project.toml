@@ -1,0 +1,38 @@
+# The ZedBoard definition (8 slide switches, 7 push buttons, 8 LEDs) with a Cortex-A9 firmware
+# and an RTL GPIO block in XSim. The testbench is the "virtual Zybo" one of fixtures/rtl/board
+# widened to 8 bits (fixtures/rtl/board8): `tel_ctrl` carries the switches and buttons as one
+# word each and `tel_event` the LED mask, bit n = component n of the board file (ADR-022).
+#
+# Firmware: firmware/board8_demo (Rust, no_std). It writes 0xA5 to the LEDs, waits for a switch
+# and mirrors it onto the LEDs, waits for a button and mirrors that.
+#
+#   zynqsim run --project examples/zedboard-demo/project.toml --for 12ms \
+#       --at 3ms=sw4:on --at 3ms=sw7:on --at 7ms=btn6:down --json
+#   expect on UART1: LED=0xa5, SW=0x90, BTN=0x40, RESULT: ALL PASS; LEDs end as 0x40 (led6).
+#
+# Needs: Xilinx QEMU (Vitis), Vivado XSim, and the DPI library (`cargo xtask dpi`).
+schema_version = 1
+
+[board]
+name = "zedboard"
+
+[backends]
+ps = "qemu"
+pl = "xsim"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_board8.elf"
+
+[rtl]
+files = [
+    "../../fixtures/rtl/board8/gpio_ctrl.v",
+    "../../fixtures/rtl/board8/cosim_top.sv",
+]
+top = "cosim_top"

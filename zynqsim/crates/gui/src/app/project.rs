@@ -103,6 +103,66 @@ impl App {
                 );
 
                 ui.separator();
+                ui.heading("Board");
+                ui.horizontal(|ui| {
+                    let current = if self.draft.board_file.trim().is_empty() {
+                        self.draft.board_name.clone()
+                    } else {
+                        "custom file".to_string()
+                    };
+                    egui::ComboBox::from_id_salt("board_picker")
+                        .selected_text(current)
+                        .show_ui(ui, |ui| {
+                            for name in sim_api::board::BoardDef::builtin_names() {
+                                if ui
+                                    .selectable_label(
+                                        self.draft.board_file.trim().is_empty()
+                                            && self.draft.board_name == name,
+                                        name,
+                                    )
+                                    .clicked()
+                                {
+                                    self.draft.board_name = name.to_string();
+                                    self.draft.board_file.clear();
+                                }
+                            }
+                            if ui
+                                .selectable_label(
+                                    !self.draft.board_file.trim().is_empty(),
+                                    "custom file…",
+                                )
+                                .clicked()
+                                && self.draft.board_file.trim().is_empty()
+                            {
+                                self.draft.board_file = "my-board.toml".to_string();
+                            }
+                        });
+                    if !self.draft.board_file.trim().is_empty() {
+                        ui.add_sized(
+                            [240.0, 20.0],
+                            egui::TextEdit::singleline(&mut self.draft.board_file),
+                        );
+                        if ui.button("Browse…").clicked() {
+                            Self::browse_into(
+                                &dir,
+                                "Board description (TOML)",
+                                &[("board", &["toml"]), ("all files", &["*"])],
+                                &mut self.draft.board_file,
+                                false,
+                            );
+                        }
+                    }
+                });
+                ui.label(
+                    RichText::new(
+                        "A board changes the switches, buttons and LEDs the window shows. \
+                         Build to apply it.",
+                    )
+                    .small()
+                    .color(Color32::GRAY),
+                );
+
+                ui.separator();
                 ui.heading("PS (Cortex-A9 firmware)");
                 ui.checkbox(
                     &mut self.draft.use_qemu,

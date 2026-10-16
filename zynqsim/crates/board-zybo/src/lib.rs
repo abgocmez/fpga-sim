@@ -1,5 +1,6 @@
 //! Board definition, live board state, software renderer and hit-testing for
-//! the Digilent Zybo Z7-20 (and any board described by the same TOML schema).
+//! the Digilent Zybo Z7-20 and any other board described by the same TOML schema (built in:
+//! Zybo Z7-10, ZedBoard, PYNQ-Z2; or a file at run time, see ADR-022).
 //!
 //! The renderer is a plain software rasteriser so that the GUI view, the MCP
 //! `board_screenshot` tool and the golden-image tests all show the same pixels.
@@ -8,10 +9,12 @@ mod def;
 mod render;
 mod scene3d;
 mod state;
+mod svg;
 
 pub use def::{
-    BoardDef, BoardError, Button, Connector, Layout, Led, LedColor, Pmod, PmodDomain, RgbLed,
-    Switch, ZYBO_Z7_20_TOML,
+    BUILTIN_BOARDS, BoardDef, BoardError, Button, CONNECTOR_KINDS, Connector, Layout, Led,
+    LedColor, MAX_BITS, MAX_PMODS, MAX_RGB_LEDS, PYNQ_Z2_TOML, Pmod, PmodDomain, Resources, RgbLed,
+    Switch, ZEDBOARD_TOML, ZYBO_Z7_10_TOML, ZYBO_Z7_20_TOML,
 };
 pub use render::{BoardImage, Hit, decode_png_rgb, encode_rgba_png, hit_test, render, render_png};
 pub use scene3d::{Camera, Scene, render_3d};

@@ -623,7 +623,9 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 vec![(
                     "name",
                     string(
-                        "sw0..sw3, btn0..btn3, led0..led3, led5_r/g/b, JA1..JF10.",
+                        "The ids of the board in use (zynqsim://board lists them), for example \
+                         sw0, btn0, led0, led5_r/g/b (RGB channel) or JA1 (Pmod pin). The Zybo \
+                         has sw0..sw3, btn0..btn3, led0..led3, led5_r/g/b, JA1..JF10.",
                         &["led0", "JA1"],
                     ),
                 )],

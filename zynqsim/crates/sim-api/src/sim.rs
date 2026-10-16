@@ -6,11 +6,12 @@
 //! [`Fidelity::Demo`] everywhere: it is not a CPU or RTL simulation.
 //!
 //! Demo behaviour (all deterministic):
-//! * LED0..LED2 follow SW0..SW2.
-//! * LED3 is a heartbeat whose half-period is drawn from the seeded PRNG
-//!   (400..600 ms), so the seed is observable in the trace.
-//! * RGB LED5 green duty is the number of switches on, in quarters; RGB LED6
-//!   blue is on while any button is held.
+//! * Every LED but the last follows the switch of the same index (LED0..LED2 follow
+//!   SW0..SW2 on the Zybo; an LED without a switch stays dark).
+//! * The last LED (LED3 on the Zybo) is a heartbeat whose half-period is drawn from the
+//!   seeded PRNG (400..600 ms), so the seed is observable in the trace.
+//! * The first RGB LED's green duty is the number of switches on, as a fraction of the
+//!   board's switches; the second RGB LED's blue is on while any button is held.
 //! * Pressing BTN*n* sends `BTNn pressed\r\n` on UART1 at 115200 8N1 timing.
 //! * Bytes written to a UART are echoed back with one character time of delay.
 
@@ -66,15 +67,25 @@ pub struct Simulator {
 impl Simulator {
     /// Builds a simulator for a built-in board and powers it on at time zero.
     pub fn new(config: SimConfig) -> Result<Simulator, ApiError> {
-        let def = BoardDef::builtin(&config.board).ok_or_else(|| {
-            ApiError::not_found(format!("unknown board `{}`", config.board))
-                .with_hint("built-in boards: zybo-z7-20")
-        })?;
+        let def = match &config.board_def {
+            Some(d) => (**d).clone(),
+            None => BoardDef::builtin(&config.board).ok_or_else(|| {
+                ApiError::not_found(format!("unknown board `{}`", config.board)).with_hint(format!(
+                    "built-in boards: {}",
+                    BoardDef::builtin_names().join(", ")
+                ))
+            })?,
+        };
         Simulator::with_def(def, config)
     }
 
     /// Builds a simulator for an explicit board description.
-    pub fn with_def(def: BoardDef, config: SimConfig) -> Result<Simulator, ApiError> {
+    pub fn with_def(def: BoardDef, mut config: SimConfig) -> Result<Simulator, ApiError> {
+        // A board that is not built in travels with the recording.
+        config.board = def.name.clone();
+        if BoardDef::builtin(&def.name).as_ref() != Some(&def) {
+            config.board_def = Some(Box::new(def.clone()));
+        }
         if config.quantum_ps == 0 {
             return Err(ApiError::invalid_argument("quantum_ps must be non-zero"));
         }
@@ -379,7 +390,7 @@ impl Simulator {
                 })
                 .ok_or_else(|| {
                     ApiError::not_found(format!("no pin or control named `{name}`"))
-                        .with_hint("try sw0..sw3, btn0..btn3, led0..led3, led5_r/g/b, JA1..JF10")
+                        .with_hint(format!("try {}", self.def.pin_help()))
                 }),
             Query::UartRead { port, from, max } => {
                 let log = self
@@ -478,6 +489,7 @@ impl Simulator {
             version: 1,
             config: SimConfig {
                 board: self.st.config.board.clone(),
+                board_def: self.st.config.board_def.clone(),
                 seed: self.st.config.seed,
                 quantum_ps: self.st.config.quantum_ps,
             },
@@ -613,10 +625,10 @@ impl Simulator {
     fn update_outputs(&mut self) {
         let on = |b: bool| if b { 255u8 } else { 0 };
         for i in 0..self.def.leds.len() {
-            let duty = match i {
-                0..=2 => on(self.st.board.switches.get(i).copied().unwrap_or(false)),
-                3 => on(self.st.heartbeat_on),
-                _ => 0,
+            let duty = if i + 1 == self.def.leds.len() {
+                on(self.st.heartbeat_on)
+            } else {
+                on(self.st.board.switches.get(i).copied().unwrap_or(false))
             };
             if self.st.board.leds[i] != duty {
                 self.st.board.leds[i] = duty;
@@ -625,10 +637,11 @@ impl Simulator {
             }
         }
         let n_on = self.st.board.switches.iter().filter(|&&s| s).count();
+        let n_sw = self.st.board.switches.len().max(1);
         let any_btn = self.st.board.buttons.iter().any(|&b| b);
         for i in 0..self.def.rgb_leds.len() {
             let rgb = match i {
-                0 => [0, (n_on * 255 / 4) as u8, 0],
+                0 => [0, (n_on * 255 / n_sw) as u8, 0],
                 1 => [0, 0, on(any_btn)],
                 _ => [0, 0, 0],
             };

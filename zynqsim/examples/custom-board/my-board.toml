@@ -1,0 +1,127 @@
+# A custom board: a small made-up lab board with 3 switches, 2 buttons, 6 LEDs, one RGB LED
+# and one Pmod, drawn over `my-board.svg`. Select it from a project with
+#
+#   [board]
+#   file = "my-board.toml"
+#
+# The format is documented in the README ("Custom boards") and docs/adr/022-custom-boards.md.
+# Pin numbers here are invented; this board does not exist.
+schema_version = 1
+name = "lab-board"
+display_name = "Lab board (example)"
+part = "xc7z020clg400-1"
+ddr_mb = 512
+pl_clock_hz = 100000000
+ps_clock_hz = 33333333
+pin_status = "unverified"
+svg = "my-board.svg"          # optional artwork behind the controls, relative to this file
+
+[layout]
+width = 600
+height = 360
+
+[resources]
+luts = 53200
+flip_flops = 106400
+bram_36k = 140
+dsp_slices = 220
+
+[[switches]]
+id = "sw0"
+pin = "A1"
+key = "1"
+x = 90
+y = 290
+
+[[switches]]
+id = "sw1"
+pin = "A2"
+key = "2"
+x = 150
+y = 290
+
+[[switches]]
+id = "sw2"
+pin = "A3"
+key = "3"
+x = 210
+y = 290
+
+[[buttons]]
+id = "btn0"
+pin = "B1"
+key = "Q"
+x = 400
+y = 290
+
+[[buttons]]
+id = "btn1"
+pin = "B2"
+key = "W"
+x = 470
+y = 290
+
+[[leds]]
+id = "led0"
+pin = "C1"
+color = "green"
+x = 60
+y = 215
+
+[[leds]]
+id = "led1"
+pin = "C2"
+color = "green"
+x = 120
+y = 215
+
+[[leds]]
+id = "led2"
+pin = "C3"
+color = "yellow"
+x = 180
+y = 215
+
+[[leds]]
+id = "led3"
+pin = "C4"
+color = "yellow"
+x = 240
+y = 215
+
+[[leds]]
+id = "led4"
+pin = "C5"
+color = "red"
+x = 300
+y = 215
+
+[[leds]]
+id = "led5"
+pin = "C6"
+color = "blue"
+x = 360
+y = 215
+
+[[rgb_leds]]
+id = "rgb0"
+pin_r = "D1"
+pin_g = "D2"
+pin_b = "D3"
+x = 460
+y = 215
+
+[[pmods]]
+id = "PA"
+domain = "pl"
+x = 110
+y = 50
+
+[[connectors]]
+id = "soc"
+kind = "soc"
+label = "XC7Z020"
+x = 330
+y = 110
+w = 200
+h = 110

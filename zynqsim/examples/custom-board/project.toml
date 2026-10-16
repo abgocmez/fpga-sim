@@ -1,0 +1,19 @@
+# A project on a custom board (ADR-022): the board comes from my-board.toml (+ my-board.svg)
+# next to this file instead of a built-in name. It runs on the built-in demo engine, so it
+# needs no external tool.
+#
+#   zynqsim inspect --project examples/custom-board/project.toml
+#   zynqsim run --project examples/custom-board/project.toml --for 10ms --at 2ms=sw2:on --json
+#   zynqsim-gui --project examples/custom-board/project.toml
+schema_version = 1
+
+[board]
+file = "my-board.toml"
+
+[backends]
+ps = "demo"
+pl = "demo"
+
+[sim]
+quantum_ns = 1000
+seed = 1
