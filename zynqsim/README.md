@@ -21,6 +21,9 @@ Needs a Rust toolchain (stable). No external simulator is required to build or t
 links `cpal` (speaker; ALSA development files on Linux) and `rfd` (file dialogs); build with
 `--no-default-features` to leave both out.
 
+Installing from a release archive (no Rust needed), or building the archive yourself with
+`cargo xtask dist`, and the Xilinx tools (optional): see [docs/INSTALL.md](docs/INSTALL.md).
+
 ## Use
 
 ```

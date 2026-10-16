@@ -141,6 +141,18 @@ audited, and interrupt-driven operation, checksum offload and jumbo frames are n
 Rust has no stable runtime-skip, so a skipped test is reported as passed. Run with
 `cargo test -- --nocapture | findstr SKIPPED` to see which ones did not actually run.
 
+## Packaging (P4)
+
+| Test | Needs | What it establishes |
+|---|---|---|
+| `xtask::dist::tests` (2) | nothing | fixture mentions are found in project files and comments (not in `myfixtures/`, `..` refused); archive and directory names per platform |
+| `xtask::clean_unpack::the_archive_unpacks_and_runs_from_a_clean_directory` (`#[ignore]`) | an archive in `dist/` (`cargo xtask dist`), or `ZYNQSIM_DIST_ARCHIVE` | the archive unpacks into an empty directory and, with a PATH of system directories only, `zynqsim --version`, the demo run `--json` (`now_ps` 1000000000) and the `zynqsim-mcp` initialize reply all work; `lib/libxsim_dpi.a` exports `rp_open`. Runs as the last step of `cargo xtask dist` too |
+| `sim-api` `tools::tests::the_dpi_library_is_found_in_an_unpacked_release_archive` | nothing | `lib/libxsim_dpi.a` next to the executable is found; a file without `rp_open` is not |
+
+`cargo xtask dist` is the packaging gate: it builds, assembles, archives, writes
+`SHA256SUMS` and runs the clean-directory check. Run it on each OS that ships an
+archive. Windows is the only one run so far.
+
 ## Not covered (be aware)
 
 * **GUI appearance and native dialogs**: pointer click/hold, orbit/zoom, keyboard shortcuts and

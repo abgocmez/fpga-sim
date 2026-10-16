@@ -2,6 +2,9 @@
 /target
 /firmware/target
 
+# Release archives (`cargo xtask dist`)
+/dist/
+
 # Simulator output
 /out/
 *.vcd

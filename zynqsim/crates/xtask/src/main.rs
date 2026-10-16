@@ -5,6 +5,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
+use xtask::dist;
 
 const HELP: &str = "\
 cargo xtask <command>
@@ -14,6 +15,10 @@ cargo xtask <command>
   golden        regenerate the golden board PNGs (review the diff before committing)
   release       cargo build --release (zynqsim, zynqsim-gui, zynqsim-mcp)
   dpi           build the XSim DPI library (target/dpi/release/libxsim_dpi.a)
+  dist          release archive in dist/ (binaries, DPI library, examples, fixtures,
+                boards, docs, licence, INSTALL.txt, SHA256SUMS), then an unpack check
+                from a clean directory
+  dist-verify   the unpack check alone, on [ARCHIVE] (default: newest in dist/)
   firmware      build the Rust firmware (needs the armv7a-none-eabi target) and copy the
                 ELFs to fixtures/elf/rust_*.elf
   third-party   regenerate THIRD_PARTY.md from the lock file
@@ -260,19 +265,9 @@ fn main() -> ExitCode {
             &[("UPDATE_GOLDEN", "1")],
         ),
         "release" => cargo(&["build", "--release"], &[]),
-        "dpi" => cargo(
-            &[
-                "build",
-                "--release",
-                "-p",
-                "xsim-dpi",
-                "--features",
-                "freestanding",
-                "--target-dir",
-                "target/dpi",
-            ],
-            &[],
-        ),
+        "dpi" => cargo(dist::DPI_BUILD, &[]),
+        "dist" => dist::run(&workspace_root()),
+        "dist-verify" => dist::verify_cli(std::env::args().nth(2).as_deref()),
         "third-party" => third_party(),
         "firmware" => firmware(),
         "help" | "-h" | "--help" => {

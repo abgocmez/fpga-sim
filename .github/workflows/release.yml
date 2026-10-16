@@ -1,0 +1,86 @@
+# Release archives. On a tag `v*`, each operating system runs `cargo xtask dist`,
+# which builds the archive and checks it by unpacking it into an empty directory
+# and running it there with no toolchain on PATH. The archives and one combined
+# SHA256SUMS then go to a GitHub release.
+#
+# Status: implemented-untested. Nothing here has run on GitHub yet (the first tag
+# is the first test); `cargo xtask dist` itself is verified on Windows only.
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+defaults:
+  run:
+    working-directory: zynqsim
+
+permissions:
+  contents: read
+
+jobs:
+  dist:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: GUI build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: >
+          sudo apt-get update && sudo apt-get install -y
+          libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libgl1-mesa-dev
+          libasound2-dev
+      # The XSim DPI library is a GNU static archive (`libxsim_dpi.a`), so the
+      # Windows archive is built with the GNU toolchain and a MinGW gcc as linker.
+      - name: MinGW gcc for the GNU toolchain (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc
+          path-type: inherit
+      - name: GNU toolchain (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          rustup toolchain install stable-x86_64-pc-windows-gnu --profile minimal
+          echo "RUSTUP_TOOLCHAIN=stable-x86_64-pc-windows-gnu" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: zynqsim
+      - name: cargo xtask dist
+        run: cargo xtask dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          if-no-files-found: error
+          path: |
+            zynqsim/dist/zynqsim-*.zip
+            zynqsim/dist/zynqsim-*.tar.gz
+            zynqsim/dist/SHA256SUMS
+
+  release:
+    needs: dist
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: artifacts
+      - name: Combine the checksums
+        run: |
+          cat artifacts/*/SHA256SUMS > SHA256SUMS
+          cat SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/*/zynqsim-*.zip
+            artifacts/*/zynqsim-*.tar.gz
+            SHA256SUMS

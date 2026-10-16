@@ -170,19 +170,32 @@ pub fn find_dpi_lib() -> Option<PathBuf> {
         let p = PathBuf::from(p);
         return p.is_file().then_some(p);
     }
+    let exe = std::env::current_exe().ok();
+    let cwd = std::env::current_dir().ok();
+    find_dpi_lib_from(exe.as_deref(), cwd.as_deref())
+}
+
+/// The search of [`find_dpi_lib`] with the executable and working directory
+/// given, so it can be tested: `lib/` next to the executable (the release
+/// archive), the executable's own folder, then `target/dpi/release` of the
+/// tree the executable or the working directory is in.
+fn find_dpi_lib_from(
+    exe: Option<&std::path::Path>,
+    cwd: Option<&std::path::Path>,
+) -> Option<PathBuf> {
     let name = "libxsim_dpi.a";
     let mut dirs: Vec<PathBuf> = Vec::new();
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(d) = exe.parent() {
-            dirs.push(d.to_path_buf());
-            // `target/debug/deps/<exe>`, `target/release/<exe>`: the sibling
-            // `target/dpi/release` is two or three levels up.
-            for anc in d.ancestors().take(4) {
-                dirs.push(anc.join("dpi").join("release"));
-            }
+    if let Some(d) = exe.and_then(std::path::Path::parent) {
+        // An unpacked release archive: `<dir>/zynqsim` and `<dir>/lib/libxsim_dpi.a`.
+        dirs.push(d.join("lib"));
+        dirs.push(d.to_path_buf());
+        // `target/debug/deps/<exe>`, `target/release/<exe>`: the sibling
+        // `target/dpi/release` is two or three levels up.
+        for anc in d.ancestors().take(4) {
+            dirs.push(anc.join("dpi").join("release"));
         }
     }
-    if let Ok(cwd) = std::env::current_dir() {
+    if let Some(cwd) = cwd {
         for anc in cwd.ancestors().take(5) {
             dirs.push(anc.join("target").join("dpi").join("release"));
         }
@@ -335,5 +348,29 @@ mod tests {
         assert!(find_on_path("definitely-not-a-real-program-zynqsim").is_none());
         assert!(locate("definitely-not-a-real-program-zynqsim").is_none());
         assert!(locate_binary("definitely-not-a-real-program-zynqsim").is_none());
+    }
+
+    #[test]
+    fn the_dpi_library_is_found_in_an_unpacked_release_archive() {
+        let root = std::env::temp_dir().join(format!(
+            "zynqsim-dpi-lookup-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let lib_dir = root.join("lib");
+        std::fs::create_dir_all(&lib_dir).unwrap();
+        let lib = lib_dir.join("libxsim_dpi.a");
+        // A file that exports nothing is not the library.
+        std::fs::write(&lib, b"not an archive").unwrap();
+        assert_eq!(find_dpi_lib_from(Some(&root.join("zynqsim")), None), None);
+        std::fs::write(&lib, b"!<arch>\nrp_open\n").unwrap();
+        assert_eq!(
+            find_dpi_lib_from(Some(&root.join("zynqsim")), None),
+            Some(lib.clone())
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
