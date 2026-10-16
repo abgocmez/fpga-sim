@@ -256,6 +256,12 @@ backend are listed but return `unsupported` until those backends exist. `video_f
 `audio_capture` return the HDMI picture (PNG) and codec output (WAV); `media_source_set` chooses
 what the board receives.
 
+## Universality corpus
+
+Thirteen third-party permissively licensed RTL designs (CPUs, crypto cores, AXI-Stream and FIFO
+blocks) run under Vivado XSim, plus negative cases for unsupported constructs. Table and
+licences: [docs/CORPUS.md](docs/CORPUS.md); decision: [docs/adr/020-corpus.md](docs/adr/020-corpus.md).
+
 ## Layout
 
 | Path | Contents |

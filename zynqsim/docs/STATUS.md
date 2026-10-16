@@ -410,6 +410,27 @@ testbench; ~150 KB). The VHDL design file in `fixtures/export/vhdl` is hand-writ
 | Verilator / Icarus on an export | stub | no such backend (P4) |
 | GUI import of an export | stub | the project window lists `files` only |
 
+## Universality corpus (milestone P3, Vivado XSim)
+
+Table with licence, commit and result per design: `docs/CORPUS.md`. Decision: `docs/adr/020-corpus.md`.
+Every status below is verified by the named test in `backend-rtl-xsim::corpus`; `unsupported`
+means a construct the backend does not run, listed with the diagnostic the test asserts.
+
+| Design or construct | Status | Evidence / note |
+|---|---|---|
+| secworks sha256, sha1, md5, aes, chacha (BSD-2-Clause) | verified | `corpus_secworks_sha256`, `corpus_secworks_sha1`, `corpus_secworks_md5`, `corpus_secworks_aes`, `corpus_secworks_chacha` |
+| forencich lfsr, uart, axis (MIT) | verified | `corpus_forencich_lfsr`, `corpus_forencich_uart`, `corpus_forencich_axis` |
+| picorv32 (ISC), serv (ISC), uriscv (Apache-2.0) CPUs | verified | `corpus_picorv32`, `corpus_serv`, `corpus_uriscv` |
+| pulp common_cells (SHL-0.51): package, `parameter type`, `always_comb`, assertion macros | verified | `corpus_pulp_common_cells` |
+| dpretet async FIFO (MIT), dual clock | verified | `corpus_dpretet_async_fifo` |
+| Vivado post-synthesis funcsim netlist in this repository | verified | `corpus_vivado_funcsim_netlist` |
+| SystemVerilog `bind`, `config` block, `covergroup`, class `rand`/`constraint`, concurrent assertions, `virtual` interface and modport, UVM 1.2 with `-L uvm` | verified (run) | `probe_bind`, `probe_config_block`, `probe_covergroup`, `probe_constrained_random`, `probe_concurrent_assertion`, `probe_virtual_modport`, `probe_uvm_with_library` |
+| Missing include, define, UNISIM library, module, UVM library, DPI library; IEEE-1735 envelope; VHDL-2008 under VHDL-93; `nettype`; `interconnect`; VPI system task; syntax errors; undeclared identifier; `$readmemh` of a missing file; `$fatal` | unsupported (the failure is the verified behaviour) | `negative_*` (18), each with file:line and construct asserted |
+| Third-party designs that do not pass | none in the corpus | `corpus_*` all pass |
+
+Known limits: the corpus runs each design once with its own testbench or the stated check; no
+timing (SDF) simulation; UVM is only probed with the library, not a full UVM testbench.
+
 ## Backends
 
 | Backend | Status |
