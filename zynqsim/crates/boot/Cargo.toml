@@ -1,0 +1,13 @@
+[package]
+name = "boot"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Reads a Zynq-7000 BootROM image (BOOT.BIN): boot header, register-init table, partitions, checksums"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }

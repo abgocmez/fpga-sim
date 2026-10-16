@@ -1,0 +1,11 @@
+// BOOT.BIN for ZynqSim's milestone-P3 tests (bootgen 2022.1, -arch zynq).
+// fsbl_stub.elf : an ARM ELF (16 bytes of code at 0x0) standing in for the FSBL (no FSBL is built here)
+// dummy.bit     : a 484-byte file with a valid .bit container but NOT a real design
+// app.elf       : fixtures/elf/rust_hello.elf (the firmware ZynqSim already runs directly)
+the_ROM_image:
+{
+	[init] regs.int
+	[bootloader] fsbl_stub.elf
+	dummy.bit
+	[checksum=md5] app.elf
+}
