@@ -158,15 +158,21 @@ pub fn show(ui: &mut egui::Ui, tracker: &mut SourceTracker) -> PanelRects {
         return rects;
     }
     let width = window.last().map_or(1, |(n, _)| n.to_string().len());
-    for (n, text) in window {
-        let current = n == v.line;
-        let marker = if current { "=>" } else { "  " };
-        let mut t = RichText::new(format!("{marker} {n:>width$}  {text}")).monospace();
-        if current {
-            t = t.strong().background_color(Color32::from_rgb(120, 90, 0));
-        }
-        ui.label(t);
-    }
+    // Long lines scroll sideways instead of wrapping under the line numbers.
+    egui::ScrollArea::horizontal()
+        .id_salt("source_lines")
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            for (n, text) in window {
+                let current = n == v.line;
+                let marker = if current { "=>" } else { "  " };
+                let mut t = RichText::new(format!("{marker} {n:>width$}  {text}")).monospace();
+                if current {
+                    t = t.strong().background_color(Color32::from_rgb(120, 90, 0));
+                }
+                ui.add(egui::Label::new(t).wrap_mode(egui::TextWrapMode::Extend));
+            }
+        });
     if let Some(p) = &v.resolved {
         ui.label(RichText::new(p).small().color(Color32::GRAY));
     }

@@ -91,6 +91,8 @@ impl App {
         egui::Window::new("Project: PS firmware and PL design")
             .open(&mut open)
             .default_width(520.0)
+            // Opens below the view tabs instead of covering them.
+            .default_pos([330.0, 100.0])
             .show(ctx, |ui| {
                 let dir = self.draft.dir.clone();
                 ui.label(

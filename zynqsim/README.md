@@ -353,6 +353,22 @@ backend are listed but return `unsupported` until those backends exist. `video_f
 `audio_capture` return the HDMI picture (PNG) and codec output (WAV); `media_source_set` chooses
 what the board receives.
 
+## GUI screenshots
+
+Saved from real windows (`zynqsim-gui --screenshot FILE.png --exit-after-ms 60000`, Windows 11,
+display scaling 125%); the images in `docs/screenshots/` are the ones this section links. Each was
+looked at by hand; the layout defects found in that review, and what was changed, are in
+`docs/STATUS.md` (*GUI panel appearance*).
+
+| Default demo (2D board, System panel, trace) | Waveforms tab |
+|---|---|
+| ![Default demo](docs/screenshots/default-demo.png) | ![Waveforms](docs/screenshots/demo-waves.png) |
+| **Source panel at a breakpoint** (`examples/rust-debug`) | **Pmod OLED** (`examples/oled-demo`) |
+| ![Source panel](docs/screenshots/rust-debug-source.png) | ![Pmod OLED](docs/screenshots/oled-demo-pmod.png) |
+
+The side panel scrolls above a fixed trace strip; with the Source, HDMI or Audio panel open, the
+sections below it are reached by scrolling it.
+
 ## Working on this repository with AI agents (token budget)
 
 Development of this repository is done with Claude Code and sub-agents. Tokens are a budget, so:

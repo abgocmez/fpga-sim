@@ -301,7 +301,7 @@ front-end table's `unsupported` row.
 | MCP `cpu_regs`, `breakpoint_set`, `watchpoint_set`, `breakpoint_list`, `symbol_lookup` | verified for QEMU projects with `[debug]` | `mcp::scenario::debugger_through_mcp`; without `[debug]` they say how to enable it |
 | MCP `cpu_disasm`, `symbol_lookup` | verified for QEMU projects (no `[debug]` needed) | `mcp::scenario::debugger_through_mcp` |
 | MCP `pmod_attach`, `pmod_frame` (extension), CLI `--device-out JA=FILE.png`, `[devices] pmod_ja = "oled"` with validation | verified | `mcp::scenario::pmod_oled_through_mcp`, `sim-api::project::tests::devices_are_validated_by_connector_and_kind` |
-| GUI: Pmod devices panel (the OLED picture and its state) | implemented-untested | not covered by a test; the model fetches the picture (10 Hz) |
+| GUI: Pmod devices panel (the OLED picture and its state) | implemented-untested (behaviour) / verified (appearance) | not covered by a test; the model fetches the picture (10 Hz). Appearance: *GUI panel appearance* below |
 | MCP tools needing PL signals/network | stub | `unsupported` naming the missing capability |
 | `zynqsim init --ip FILE`: testbench + `project.toml` generated from the module header of an AXI4-Lite slave IP (32-bit data, any prefix/case, active-low or high reset, extra clocks tied to FCLK0, other inputs tied low) | verified | `sim-api::tbgen::tests::*` (header parsing incl. attributes/comments/parameters/non-ANSI, detection, rejections with reasons), `zynqsim::init_ip_generates_a_project_that_passes_with_the_real_firmware` (generated for `my_math_ip.v`: the real firmware passes with the same 21 bus accesses and 329 trace records as the native model). The parser reads module headers only, it is not a Verilog parser; IPs with AXI masters, interrupts or other bus flavours are refused (use a hand-written testbench). An AXI4 **master** interface (32-bit, `*ARADDR`... `*BREADY`, 25 signals) is bridged to PS memory through S_AXI_HP0 with a modelled 16-clock DDR latency: `zynqsim::init_ip_generates_the_dma_testbench_with_a_memory_bridge` generates the testbench for `dma_xform.v` and the two-core DMA regression gives **the same trace digest and 687 bus accesses** as the hand-written testbench. Other AXI4 slave flavours (full slave, AXI-Stream) are not generated; a master with other than 32-bit data is refused. One-bit outputs named `*irq*`/`*interrupt*`/`*intr*` (up to 16) become `IRQ_F2P[0..]`: `zynqsim::init_ip_forwards_interrupts_to_a_firmware_handler` (a generated testbench for `fixtures/rtl/irq/irq_ip.v`, level-high; the Rust firmware's GIC setup and handler took 3 of 3 events, 0 spurious). Only level-high is exercised; edge-style outputs are forwarded as levels |
 | `pmod_attach` | verified | `mcp::scenario::pmod_oled_through_mcp` (OLED), `pmod_sensors_through_mcp` |
@@ -316,6 +316,35 @@ front-end table's `unsupported` row.
 | GUI: 2D/3D board tabs, PL bus-access list | verified (interaction) | `app::tests` (above) and screenshots |
 | GUI: waveform viewer tab (signal picker with search, time ruler, digital and hex bus traces, wheel zoom around the pointer, drag pan, click cursor with value readout, follow live time, Export VCD) | verified (interaction, content) / implemented-untested (appearance) | `zynqsim-gui::app::tests::the_waveform_tab_zooms_pans_and_places_a_cursor` (synthetic wheel/drag/click, readouts at two cursor positions, window re-fetched to match the view), `zynqsim-gui::waves::tests::*` (zoom anchoring and clamps, search filter, fetch only while active, follow, selection kept across an engine swap, VCD export and its error). Look and feel judged by eye only; the native Save dialog of Export VCD cannot be driven by a test (the export itself is). The chosen signals live for the session and across project loads; they are not written to the project file |
 | GUI: dockable panels, CPU/PL signal/network/timeline panels, DWARF views | stub | fixed layout; panels that need a backend say so |
+
+### GUI panel appearance (screenshots, 2026-10-16)
+
+Appearance was never judged before this review. Each row below was looked at by hand in a real
+window (`zynqsim-gui --screenshot FILE --exit-after-ms 60000`; the PNG is in `docs/screenshots/`).
+"verified" here means that look at the screenshot, not a pixel test: a later change can break a
+layout without any test failing. The smoke test `crates/gui/tests/screenshot.rs` only checks that
+the screenshot path produces a non-uniform PNG.
+
+| Panel | Status | Evidence / defects found |
+|---|---|---|
+| 2D board (switches, buttons, LEDs, Pmod pins, labels) | verified (appearance) | `default-demo.png`, `board-demo-2d.png`. No defect seen |
+| 3D board (drag, zoom, reset / top-down buttons) | verified (appearance) | `board-demo-3d.png`. The 3D board has no part labels; not changed |
+| Waveforms tab | verified (appearance) | `demo-waves.png` (three signals chosen with `--wave`). Defect: the tab opens with no signal chosen, so the plot is empty; the text explains how to pick signals, so kept. |
+| Source panel at a breakpoint | verified (appearance) | `rust-debug-source.png`. Defects: (1) long source lines wrapped under the line numbers, **fixed**: the listing scrolls sideways; (2) the open panel pushed the trace and every section below it off the bottom of a 1280x820 window, **fixed** (see the side panel row) |
+| CPU 0 / CPU 1 registers | verified (appearance) | `rust-debug-source.png`. Defect: CPU 1 read "(stopped)" with all-zero registers and no explanation, **fixed**: a note says nothing has run on that core. The `pc in` line shows the mangled Rust symbol over three lines; not changed |
+| Side panel as a whole (scrolling) | verified (appearance) | `rust-debug-source.png`, `hdmi-demo-media.png`, `audio-demo-media.png`. Defect: with Source, HDMI or Audio open, the trace and the lower sections were clipped at 820 px, **fixed**: the sections scroll above a fixed trace strip |
+| Trace panel | verified (appearance) | all screenshots. Its text (and bus and Ethernet lines) is the `small` monospace style, about 9 pt at 125% scaling: readable in the screenshots but dense; not changed |
+| Pmod devices (OLED picture, sensor sliders) | verified (appearance) | `oled-demo-pmod.png`, `tmp2-demo-sensors.png`. No defect seen; the picture and the slider with its unit are readable |
+| Ethernet (GEM0) | verified (appearance) | `net-demo-ethernet.png`. No defect seen |
+| Storage (SD card line in the System panel) | verified (appearance) | `sd-demo-storage.png`. There is no storage panel, only one small text line that wraps to two lines; not changed |
+| HDMI (TX picture state, RX source picker, size) | verified (appearance) | `hdmi-demo-media.png`. Defect: clipped with the side panel, **fixed** as above |
+| Audio codec (DAC state, level, LINE IN source) | verified (appearance) | `audio-demo-media.png`. Same clipping defect, **fixed** as above |
+| Project window | verified (appearance) | `project-window.png`. Defect: it opened over the 2D / 3D / Waveforms tab row, **fixed**: it opens below the tabs |
+| Memory / image viewer | implemented-untested (appearance) | not photographed in this review |
+| Clock tree, IRQ map, SLCR | stub | the panel says it is not available (visible in `default-demo.png`); no appearance check beyond that |
+
+Caveats: the screenshots were taken at 125% display scaling (1600 px wide for a 1280 px window).
+Fonts, colours and contrast were judged by eye, not measured.
 
 ## XSA / HWH ingestion (start of milestone P3)
 
