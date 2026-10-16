@@ -4,19 +4,26 @@
 //! behaviour (zoom, pan, fetching) lives in `crate::waves`.
 
 use super::{App, dialogs};
+use crate::waves::{Group, elide_middle, group_of};
 use eframe::egui::{
-    self, Align2, Color32, FontId, Rect, RichText, ScrollArea, Sense, Stroke, StrokeKind, pos2,
-    vec2,
+    self, Align2, Color32, FontId, PointerButton, Rect, RichText, ScrollArea, Sense, Stroke,
+    StrokeKind, pos2, vec2,
 };
 use sim_api::Ps;
-use sim_api::trace::wave_scene::{BACKGROUND, Prim, SceneOpts, scene, tone_rgb};
+use sim_api::trace::wave_scene::{
+    BACKGROUND, Prim, SceneOpts, format_time, scene, tick_step, tone_rgb,
+};
 
 /// Width of the name and value column left of the plot.
-const NAMES_W: f32 = 220.0;
+const NAMES_W: f32 = 250.0;
+/// Width of the value column inside the name column.
+const VALUE_W: f32 = 74.0;
 /// Height of the time ruler.
 const HEADER_H: f32 = 22.0;
 /// Height of one signal row.
 const ROW_H: f32 = 30.0;
+/// Least width, in points, of a right-drag selection that zooms.
+const MIN_ZOOM_DRAG: f32 = 4.0;
 
 /// Widget state of the tab that is not part of the headless model.
 #[derive(Default)]
@@ -28,11 +35,24 @@ pub(super) struct WaveUi {
     pub plot: Option<Rect>,
     /// `(signal, value text)` as shown in the readout column last frame.
     pub readouts: Vec<(String, String)>,
+    /// Where a right-button drag (zoom to selection) started, screen x.
+    pub zoom_from: Option<f32>,
 }
 
 fn rgb(tone: sim_api::trace::wave_scene::Tone) -> Color32 {
     let c = tone_rgb(tone);
     Color32::from_rgb(c[0], c[1], c[2])
+}
+
+/// The colour of a signal's name, by its group.
+fn group_color(g: Group) -> Color32 {
+    match g {
+        Group::Board => Color32::from_rgb(120, 200, 255),
+        Group::Uart => Color32::from_rgb(255, 190, 90),
+        Group::Bus => Color32::from_rgb(150, 230, 150),
+        Group::Pmod => Color32::from_rgb(240, 140, 220),
+        Group::Other => Color32::from_rgb(200, 200, 200),
+    }
 }
 
 impl App {
@@ -41,7 +61,7 @@ impl App {
         self.model.waves.active = true;
         egui::SidePanel::left("wave_picker")
             .resizable(true)
-            .default_width(220.0)
+            .default_width(250.0)
             .show_inside(ui, |ui| self.wave_picker(ui));
         egui::CentralPanel::default().show_inside(ui, |ui| self.wave_plot(ui));
     }
@@ -53,31 +73,47 @@ impl App {
                 .hint_text("search (words, any order)")
                 .desired_width(f32::INFINITY),
         );
-        ui.horizontal(|ui| {
-            let n = self.model.waves.selected.len();
-            ui.label(RichText::new(format!("{n} shown")).small());
+        ui.horizontal_wrapped(|ui| {
             if ui
-                .add_enabled(n > 0, egui::Button::new("clear").small())
+                .small_button("select all matches")
+                .on_hover_text("add every signal the search text matches")
                 .clicked()
             {
-                self.model.waves.selected.clear();
+                self.model.waves.select_matching();
             }
-            if ui.small_button("show matches").clicked() {
-                let names: Vec<String> = self
-                    .model
-                    .waves
-                    .filtered()
-                    .iter()
-                    .take(16)
-                    .map(|s| s.name.clone())
-                    .collect();
-                for n in names {
-                    if !self.model.waves.is_selected(&n) {
-                        self.model.waves.selected.push(n);
-                    }
+            if ui
+                .small_button("none")
+                .on_hover_text("hide every signal")
+                .clicked()
+            {
+                self.model.waves.select_none();
+            }
+            if ui
+                .small_button("defaults")
+                .on_hover_text("replace the selection with the default signals")
+                .clicked()
+            {
+                self.model.waves.pick_defaults();
+            }
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("add group:").small());
+            for g in Group::ALL {
+                let n = self.model.waves.group_count(g);
+                let button = egui::Button::new(format!("{} {n}", g.label())).small();
+                if ui
+                    .add_enabled(n > 0, button)
+                    .on_hover_text("add every signal of this group")
+                    .clicked()
+                {
+                    self.model.waves.select_group(g);
                 }
             }
         });
+        let n = self.model.waves.selected.len();
+        ui.label(
+            RichText::new(format!("{n} shown of {}", self.model.waves.catalogue.len())).small(),
+        );
         ui.separator();
         if self.model.waves.catalogue.is_empty() {
             ui.label(
@@ -110,8 +146,10 @@ impl App {
                     } else {
                         name.clone()
                     };
-                    let r = ui.checkbox(&mut on, label).on_hover_text(format!(
-                        "{changes} change(s){}",
+                    let text =
+                        RichText::new(elide_middle(&label, 34)).color(group_color(group_of(name)));
+                    let r = ui.checkbox(&mut on, text).on_hover_text(format!(
+                        "{label}\n{changes} change(s){}",
                         if *derived {
                             "; derived from bus accesses (not in the VCD)"
                         } else {
@@ -143,7 +181,7 @@ impl App {
         ui.horizontal_wrapped(|ui| {
             ui.checkbox(&mut self.model.waves.follow, "follow live time");
             if ui
-                .button("fit")
+                .button("zoom to fit")
                 .on_hover_text("show the whole run")
                 .clicked()
             {
@@ -171,17 +209,17 @@ impl App {
             {
                 self.do_export_vcd();
             }
-            let w = &self.model.waves;
-            ui.label(
-                RichText::new(format!(
-                    "window {} .. {}   (wheel: zoom, drag: pan, click: cursor)",
-                    Ps(w.from_ps),
-                    Ps(w.to_ps())
-                ))
-                .small()
-                .color(Color32::GRAY),
-            );
         });
+        let w = &self.model.waves;
+        ui.label(
+            RichText::new(format!(
+                "window {} .. {}   wheel: zoom   right drag: zoom to selection   drag: pan   click: cursor",
+                Ps(w.from_ps),
+                Ps(w.to_ps())
+            ))
+            .small()
+            .color(Color32::GRAY),
+        );
         if let Some(n) = self.model.waves.notice.clone() {
             ui.label(RichText::new(n).small());
         }
@@ -191,11 +229,14 @@ impl App {
             ui.add_space(12.0);
             ui.label(
                 RichText::new(
-                    "Pick signals on the left: board switches, buttons and LEDs, UART bytes, \
-                     Pmod pins and PS/PL bus accesses appear as they were recorded.",
+                    "No signal is shown. Pick the defaults (LEDs, switches, buttons, UART, \
+                     Pmod pins, a bus address) or tick signals on the left.",
                 )
                 .color(Color32::GRAY),
             );
+            if ui.button("Pick default signals").clicked() {
+                self.model.waves.pick_defaults();
+            }
             self.model.sync_waves(false);
             return;
         }
@@ -240,13 +281,36 @@ impl App {
                         changed = true;
                     }
                 }
-                // Drag: pan.
-                if resp.dragged_by(egui::PointerButton::Primary) {
+                // Drag with the left button: pan.
+                if resp.dragged_by(PointerButton::Primary) {
                     let dx = resp.drag_delta().x;
                     if dx != 0.0 {
                         let span = self.model.waves.span_ps;
                         self.model.waves.pan(-t_of(span, plot.min.x + dx));
                         changed = true;
+                    }
+                }
+                // Drag with the right button: zoom to the dragged range.
+                if resp.drag_started_by(PointerButton::Secondary) {
+                    self.wave_ui.zoom_from = ui.input(|i| i.pointer.press_origin()).map(|p| p.x);
+                }
+                if resp.drag_stopped_by(PointerButton::Secondary) {
+                    let end = resp
+                        .interact_pointer_pos()
+                        .or_else(|| ui.input(|i| i.pointer.latest_pos()))
+                        .map(|p| p.x);
+                    if let (Some(a), Some(b)) = (self.wave_ui.zoom_from.take(), end) {
+                        let lo = a.min(b).clamp(plot.min.x, plot.max.x);
+                        let hi = a.max(b).clamp(plot.min.x, plot.max.x);
+                        if hi - lo >= MIN_ZOOM_DRAG {
+                            let w = &self.model.waves;
+                            let t0 = w.from_ps as f64 + t_of(w.span_ps, lo);
+                            let t1 = w.from_ps as f64 + t_of(w.span_ps, hi);
+                            self.model
+                                .waves
+                                .zoom_to(t0.max(0.0) as u64, t1.max(0.0) as u64);
+                            changed = true;
+                        }
                     }
                 }
                 // Click: place the cursor.
@@ -283,6 +347,7 @@ impl App {
                     return;
                 };
                 let probe = waves.cursor_ps.or(hover_ps).unwrap_or(data.to_ps);
+                let span = data.to_ps.saturating_sub(data.from_ps).max(1);
                 let opts = SceneOpts {
                     plot_w: plot.width(),
                     label_w: 0.0,
@@ -325,6 +390,20 @@ impl App {
                         }
                     }
                 }
+                // The ruler's unit: the unit of its tick labels.
+                let step = tick_step(span, plot.width(), 110.0);
+                let unit = format_time(step, step)
+                    .rsplit(' ')
+                    .next()
+                    .unwrap_or("ps")
+                    .to_string();
+                painter.text(
+                    pos2(plot.max.x - 4.0, rect.min.y + HEADER_H / 2.0),
+                    Align2::RIGHT_CENTER,
+                    format!("time in {unit}"),
+                    mono.clone(),
+                    Color32::GRAY,
+                );
                 if let (Some(h), None) = (hover_ps, waves.cursor_ps) {
                     let x = plot.min.x
                         + ((h as f64 - data.from_ps as f64)
@@ -336,8 +415,26 @@ impl App {
                         Stroke::new(1.0_f32, Color32::from_white_alpha(40)),
                     );
                 }
+                // The range a right-button drag would zoom to.
+                if let (Some(a), Some(b)) =
+                    (self.wave_ui.zoom_from, ui.input(|i| i.pointer.latest_pos()))
+                {
+                    let r = Rect::from_x_y_ranges(
+                        a.min(b.x).clamp(plot.min.x, plot.max.x)
+                            ..=a.max(b.x).clamp(plot.min.x, plot.max.x),
+                        plot.y_range(),
+                    );
+                    painter.rect(
+                        r,
+                        0.0,
+                        Color32::from_white_alpha(24),
+                        Stroke::new(1.0_f32, Color32::from_white_alpha(120)),
+                        StrokeKind::Inside,
+                    );
+                }
 
-                // Name and value column.
+                // Name column (coloured by group, elided, full name on hover)
+                // and the value column at the probe time.
                 let mut readouts = Vec::new();
                 painter.text(
                     rect.min + vec2(4.0, HEADER_H / 2.0),
@@ -346,28 +443,26 @@ impl App {
                     mono.clone(),
                     rgb(sim_api::trace::wave_scene::Tone::Cursor),
                 );
+                let name_w = NAMES_W - VALUE_W - 26.0;
+                let name_chars = ((name_w - 4.0) / char_w).max(8.0) as usize;
                 let mut remove: Option<String> = None;
                 for (i, s) in data.signals.iter().enumerate() {
                     let y = rect.min.y + HEADER_H + i as f32 * ROW_H;
                     let row = Rect::from_min_size(pos2(rect.min.x, y), vec2(NAMES_W, ROW_H));
                     let value = waves.readout(s, probe.clamp(data.from_ps, data.to_ps));
-                    let max_chars = ((NAMES_W - 34.0) / char_w) as usize;
-                    let shown = if s.name.len() + value.len() + 1 > max_chars {
-                        let keep = max_chars.saturating_sub(value.len() + 2);
-                        format!("{}~", &s.name[..keep.min(s.name.len())])
-                    } else {
-                        s.name.clone()
-                    };
                     painter.text(
-                        row.min + vec2(4.0, ROW_H / 2.0 - 7.0),
+                        row.min + vec2(4.0, ROW_H / 2.0),
                         Align2::LEFT_CENTER,
-                        shown,
+                        elide_middle(&s.name, name_chars),
                         mono.clone(),
-                        rgb(sim_api::trace::wave_scene::Tone::Label),
+                        group_color(group_of(&s.name)),
                     );
+                    let name_rect = Rect::from_min_size(row.min, vec2(name_w, ROW_H));
+                    ui.interact(name_rect, ui.id().with(("wave_name", i)), Sense::hover())
+                        .on_hover_text(&s.name);
                     painter.text(
-                        row.min + vec2(4.0, ROW_H / 2.0 + 7.0),
-                        Align2::LEFT_CENTER,
+                        pos2(row.max.x - 26.0, row.min.y + ROW_H / 2.0),
+                        Align2::RIGHT_CENTER,
                         &value,
                         mono.clone(),
                         rgb(sim_api::trace::wave_scene::Tone::BusText),

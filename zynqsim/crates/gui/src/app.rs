@@ -7,7 +7,8 @@ mod view3d;
 mod wave_view;
 
 use crate::loader::ProjectDraft;
-use crate::model::{Model, SPEEDS};
+use crate::model::{Model, SPEEDS, TailFollow, TraceFilter, TraceKind, trace_kind, visible_lines};
+use crate::waves::elide_long_symbols;
 use eframe::egui::{
     self, Align2, Color32, ColorImage, FontId, Key, Rect, RichText, Sense, TextureHandle,
     TextureOptions, pos2, vec2,
@@ -30,6 +31,10 @@ pub struct Opts {
     pub view_3d: bool,
     /// Open on the Waveforms tab, with these signals shown.
     pub waves: Vec<String>,
+    /// Open on the Waveforms tab with the default signals.
+    pub waves_tab: bool,
+    /// Text the trace strip's filter starts with.
+    pub trace_text: String,
     /// Open the project window.
     pub project_window: bool,
     /// Where relative paths of the project that was opened resolve, and the
@@ -93,6 +98,11 @@ pub struct App {
     media: media::MediaUi,
     // waveform tab
     wave_ui: wave_view::WaveUi,
+    // trace strip and console
+    trace_filter: TraceFilter,
+    trace_follow: TailFollow,
+    /// Text size of the trace strip and the console, in points (10..=18).
+    font_pt: f32,
 }
 
 impl App {
@@ -110,10 +120,11 @@ impl App {
             None => ProjectDraft::demo(),
         };
         let view_3d = opts.view_3d;
-        let waves = !opts.waves.is_empty();
+        let waves = !opts.waves.is_empty() || opts.waves_tab;
         let mut model = model;
         model.waves.selected.extend(opts.waves.iter().cloned());
         let opts_project_window = opts.project_window;
+        let opts_trace_text = opts.trace_text.clone();
         App {
             model,
             opts,
@@ -161,6 +172,12 @@ impl App {
                 tab: waves,
                 ..Default::default()
             },
+            trace_filter: TraceFilter {
+                text: opts_trace_text,
+                ..TraceFilter::default()
+            },
+            trace_follow: TailFollow::default(),
+            font_pt: 12.0,
         }
     }
 
@@ -472,19 +489,91 @@ impl App {
         });
     }
 
-    /// The newest trace records, in the bottom strip of the side panel.
-    fn trace_panel(&self, ui: &mut egui::Ui) {
-        ui.strong(format!("Trace ({} records)", self.model.trace_total));
+    /// The newest trace records, in the bottom strip of the side panel: a
+    /// text size, a substring filter and type toggles, copy of the visible
+    /// lines, and auto-scroll that pauses when the user scrolls up.
+    fn trace_panel(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.strong(format!("Trace ({} records)", self.model.trace_total));
+            ui.add(
+                egui::Slider::new(&mut self.font_pt, 10.0..=18.0)
+                    .step_by(1.0)
+                    .suffix(" pt")
+                    .show_value(true),
+            )
+            .on_hover_text("text size of the trace strip and the console");
+        });
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut self.trace_filter.text)
+                    .hint_text("filter (text, no regex)")
+                    .desired_width(ui.available_width()),
+            );
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.checkbox(&mut self.trace_filter.uart, "uart");
+            ui.checkbox(&mut self.trace_filter.board, "board");
+            ui.checkbox(&mut self.trace_filter.bus, "bus");
+            ui.checkbox(&mut self.trace_filter.marker, "marker");
+            ui.checkbox(&mut self.trace_filter.protocol, "protocol");
+        });
+        let lines: Vec<(TraceKind, String)> = self
+            .model
+            .trace_tail
+            .iter()
+            .map(|r| (trace_kind(r), describe(r)))
+            .collect();
+        let shown = visible_lines(&lines, &self.trace_filter);
+        ui.horizontal(|ui| {
+            if ui
+                .small_button("copy visible")
+                .on_hover_text("copy the lines shown below to the clipboard")
+                .clicked()
+            {
+                let text: Vec<&str> = shown.iter().map(|&i| lines[i].1.as_str()).collect();
+                ui.ctx().copy_text(text.join("\n"));
+            }
+            if self.trace_follow.paused() {
+                let n = self.trace_follow.new_since_pause(self.model.trace_total);
+                let label = if n > 0 {
+                    format!("jump to latest ({n} new)")
+                } else {
+                    "jump to latest".to_string()
+                };
+                if ui.small_button(label).clicked() {
+                    self.trace_follow.jump_to_latest();
+                }
+            } else {
+                ui.label(
+                    RichText::new(format!("{} shown", shown.len()))
+                        .small()
+                        .color(Color32::GRAY),
+                );
+            }
+        });
         ui.add_space(4.0);
-        egui::ScrollArea::vertical()
+        let font = FontId::monospace(self.font_pt);
+        let out = egui::ScrollArea::vertical()
             .id_salt("trace")
             .auto_shrink([false, false])
-            .stick_to_bottom(true)
+            .stick_to_bottom(!self.trace_follow.paused())
             .show(ui, |ui| {
-                for r in &self.model.trace_tail {
-                    ui.label(RichText::new(describe(r)).monospace().small());
+                for &i in &shown {
+                    let line = &lines[i].1;
+                    // A long mangled symbol is elided; the full line is the tooltip.
+                    match elide_long_symbols(line) {
+                        Some(short) => {
+                            ui.label(RichText::new(short).font(font.clone()))
+                                .on_hover_text(line.as_str());
+                        }
+                        None => {
+                            ui.label(RichText::new(line.as_str()).font(font.clone()));
+                        }
+                    }
                 }
             });
+        let at_bottom = out.state.offset.y + out.inner_rect.height() >= out.content_size.y - 2.0;
+        self.trace_follow.observe(at_bottom, self.model.trace_total);
     }
 
     /// Guest memory as a hex dump or as a grayscale image.
@@ -635,7 +724,8 @@ impl App {
             .show(ui, |ui| {
                 ui.add(
                     egui::Label::new(
-                        RichText::new(self.model.console[port].replace('\r', "")).monospace(),
+                        RichText::new(self.model.console[port].replace('\r', ""))
+                            .font(FontId::monospace(self.font_pt)),
                     )
                     .wrap(),
                 );

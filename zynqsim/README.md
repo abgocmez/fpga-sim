@@ -376,6 +376,8 @@ looked at by hand; the layout defects found in that review, and what was changed
 | ![Default demo](docs/screenshots/default-demo.png) | ![Waveforms](docs/screenshots/demo-waves.png) |
 | **Source panel at a breakpoint** (`examples/rust-debug`) | **Pmod OLED** (`examples/oled-demo`) |
 | ![Source panel](docs/screenshots/rust-debug-source.png) | ![Pmod OLED](docs/screenshots/oled-demo-pmod.png) |
+| **Waveforms with the default signals** (`--waves-tab`) | **Trace strip filtered** (`--trace-filter uart`) |
+| ![Waveforms defaults](docs/screenshots/waves-defaults.png) | ![Trace filtered](docs/screenshots/trace-filtered.png) |
 
 The side panel scrolls above a fixed trace strip; with the Source, HDMI or Audio panel open, the
 sections below it are reached by scrolling it.

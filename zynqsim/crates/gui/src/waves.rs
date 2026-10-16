@@ -17,12 +17,143 @@ const LIVE_REFRESH: Duration = Duration::from_millis(100);
 const CATALOGUE_REFRESH: Duration = Duration::from_millis(500);
 /// The shortest window the viewer zooms to, in picoseconds.
 pub const MIN_SPAN_PS: u64 = 100;
+/// Signals a project opens with, at most.
+pub const DEFAULT_SIGNALS: usize = 12;
+/// Signals the picker shows at once (the trace answers at most this many).
+pub const MAX_SHOWN: usize = 128;
+/// Longest symbol shown whole in the trace strip; longer ones are elided.
+pub const SYMBOL_MAX: usize = 48;
+
+/// The picker's signal groups, in the order its buttons are shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Group {
+    Board,
+    Uart,
+    Bus,
+    Pmod,
+    Other,
+}
+
+impl Group {
+    /// Every group, in display order.
+    pub const ALL: [Group; 5] = [
+        Group::Board,
+        Group::Uart,
+        Group::Bus,
+        Group::Pmod,
+        Group::Other,
+    ];
+
+    /// The button and tooltip word.
+    pub fn label(self) -> &'static str {
+        match self {
+            Group::Board => "board",
+            Group::Uart => "uart",
+            Group::Bus => "bus",
+            Group::Pmod => "pmod",
+            Group::Other => "other",
+        }
+    }
+}
+
+/// The group of a signal, from its trace name (`board.led0`, `uart1.tx`,
+/// `bus.M_AXI_GP0.addr`, `pmod.ja`, `hdmi.tx.frame`...).
+pub fn group_of(name: &str) -> Group {
+    if name.starts_with("board.") {
+        Group::Board
+    } else if name.starts_with("uart") {
+        Group::Uart
+    } else if name.starts_with("bus.") {
+        Group::Bus
+    } else if name.starts_with("pmod.") {
+        Group::Pmod
+    } else {
+        Group::Other
+    }
+}
+
+/// The signals a project opens with: LEDs, switches, buttons, UART bytes,
+/// Pmod pins, the RGB LEDs and one bus address, at most [`DEFAULT_SIGNALS`].
+/// Each kind has a share first, so a board with many LEDs still shows its
+/// UART; room left over is filled in the same order.
+pub fn default_signals(catalogue: &[SignalInfo]) -> Vec<String> {
+    type Rule = (usize, fn(&str) -> bool);
+    let rules: [Rule; 7] = [
+        (3, |n| n.starts_with("board.led")),
+        (2, |n| n.starts_with("board.sw")),
+        (1, |n| n.starts_with("board.btn")),
+        (2, |n| n.starts_with("uart")),
+        (2, |n| n.starts_with("pmod.")),
+        (1, |n| n == "board.rgb_pins"),
+        (1, |n| n.starts_with("bus.") && n.ends_with(".addr")),
+    ];
+    let mut out: Vec<String> = Vec::new();
+    for shares in [true, false] {
+        for (share, wanted) in rules {
+            let mut taken = 0;
+            for s in catalogue {
+                if out.len() >= DEFAULT_SIGNALS {
+                    return out;
+                }
+                if shares && taken >= share {
+                    break;
+                }
+                if wanted(&s.name) && !out.contains(&s.name) {
+                    out.push(s.name.clone());
+                    taken += 1;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Shortens `s` to at most `max` characters: its middle becomes "...", the
+/// start and the end stay (they tell a mangled symbol apart). Text that fits
+/// is returned unchanged.
+pub fn elide_middle(s: &str, max: usize) -> String {
+    let n = s.chars().count();
+    if n <= max {
+        return s.to_string();
+    }
+    if max <= 3 {
+        return s.chars().take(max).collect();
+    }
+    let keep = max - 3;
+    let head = keep.div_ceil(2);
+    let tail = keep - head;
+    let start: String = s.chars().take(head).collect();
+    let end: String = s.chars().skip(n - tail).collect();
+    format!("{start}...{end}")
+}
+
+/// `line` with each long symbol (a mangled `_ZN...` name or a `::` path
+/// longer than [`SYMBOL_MAX`]) elided, or `None` when there is none.
+pub fn elide_long_symbols(line: &str) -> Option<String> {
+    let mut changed = false;
+    let out: Vec<String> = line
+        .split(' ')
+        .map(|tok| {
+            let symbol = tok.starts_with("_ZN") || tok.contains("::");
+            if symbol && tok.chars().count() > SYMBOL_MAX {
+                changed = true;
+                elide_middle(tok, SYMBOL_MAX)
+            } else {
+                tok.to_string()
+            }
+        })
+        .collect();
+    changed.then(|| out.join(" "))
+}
 
 /// Everything the waveform panel shows and does, except drawing.
 #[derive(Default)]
 pub struct WaveState {
     /// Signals shown, in display order. Survives a project reload.
     pub selected: Vec<String>,
+    /// Whether the defaults were chosen for this project (or not needed):
+    /// they are chosen once, when the first signals appear.
+    defaults_done: bool,
     /// Every signal the trace holds, in name order.
     pub catalogue: Vec<SignalInfo>,
     /// The latest answer for the visible window.
@@ -94,10 +225,78 @@ impl WaveState {
             .collect()
     }
 
+    /// Chooses the default signals once, when the first ones are known and
+    /// nothing was picked yet (a new project).
+    fn apply_defaults(&mut self) {
+        if self.defaults_done || self.catalogue.is_empty() {
+            return;
+        }
+        self.defaults_done = true;
+        if self.selected.is_empty() {
+            self.selected = default_signals(&self.catalogue);
+        }
+    }
+
+    /// The "Pick default signals" button: replaces the selection with the
+    /// defaults.
+    pub fn pick_defaults(&mut self) {
+        self.defaults_done = true;
+        self.selected = default_signals(&self.catalogue);
+    }
+
+    /// Adds every signal the search text matches (up to [`MAX_SHOWN`]).
+    pub fn select_matching(&mut self) {
+        let names: Vec<String> = self.filtered().iter().map(|s| s.name.clone()).collect();
+        self.add_names(names);
+    }
+
+    /// Adds every signal of `group` (up to [`MAX_SHOWN`]).
+    pub fn select_group(&mut self, group: Group) {
+        let names: Vec<String> = self
+            .catalogue
+            .iter()
+            .filter(|s| group_of(&s.name) == group)
+            .map(|s| s.name.clone())
+            .collect();
+        self.add_names(names);
+    }
+
+    /// Hides every signal.
+    pub fn select_none(&mut self) {
+        self.selected.clear();
+    }
+
+    /// How many catalogue signals are in `group`.
+    pub fn group_count(&self, group: Group) -> usize {
+        self.catalogue
+            .iter()
+            .filter(|s| group_of(&s.name) == group)
+            .count()
+    }
+
+    fn add_names(&mut self, names: Vec<String>) {
+        for n in names {
+            if self.selected.len() >= MAX_SHOWN {
+                break;
+            }
+            if !self.is_selected(&n) {
+                self.selected.push(n);
+            }
+        }
+    }
+
     /// Shows the whole run, from time 0 to the newest record.
     pub fn fit(&mut self) {
         self.from_ps = 0;
         self.span_ps = self.now_ps.max(MIN_SPAN_PS);
+        self.follow = false;
+    }
+
+    /// Shows the time from `from` to `to` (picoseconds), at least
+    /// [`MIN_SPAN_PS`] wide; leaves follow mode. Used by "zoom to selection".
+    pub fn zoom_to(&mut self, from: u64, to: u64) {
+        self.from_ps = from;
+        self.span_ps = to.saturating_sub(from).max(MIN_SPAN_PS);
         self.follow = false;
     }
 
@@ -184,6 +383,7 @@ impl Model {
                 self.waves.catalogue_at = Some(Instant::now());
             }
         }
+        self.waves.apply_defaults();
         let now = self.status.now_ps.max(self.waves.now_ps);
         self.waves.now_ps = now;
         if self.waves.span_ps == 0 {
@@ -404,5 +604,158 @@ mod tests {
         assert!(e.contains("cannot write"), "{e}");
         assert_eq!(m.waves.notice.as_deref(), Some(e.as_str()));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn info(n: &str) -> SignalInfo {
+        SignalInfo {
+            name: n.to_string(),
+            width: 1,
+            changes: 1,
+            first_ps: 0,
+            last_ps: 0,
+            derived: false,
+        }
+    }
+
+    #[test]
+    fn default_signals_cover_each_kind_and_stay_within_the_cap() {
+        let names = [
+            "bus.M_AXI_GP0.addr",
+            "uart1.tx",
+            "uart1.rx",
+            "uart0.tx",
+            "board.led0",
+            "board.led1",
+            "board.led2",
+            "board.led3",
+            "board.led4",
+            "board.sw0",
+            "board.sw1",
+            "board.sw2",
+            "board.btn0",
+            "board.btn1",
+            "board.rgb_pins",
+            "pmod.ja",
+            "pmod.jb",
+            "hdmi.tx.frame",
+            "codec.r4",
+        ];
+        let cat: Vec<SignalInfo> = names.iter().map(|n| info(n)).collect();
+        let d = default_signals(&cat);
+        assert!(d.len() <= DEFAULT_SIGNALS, "{d:?}");
+        // Every kind is represented, and LEDs come first.
+        assert_eq!(d[0], "board.led0");
+        for want in [
+            "board.sw0",
+            "board.btn0",
+            "uart1.tx",
+            "uart1.rx",
+            "pmod.ja",
+            "board.rgb_pins",
+            "bus.M_AXI_GP0.addr",
+        ] {
+            assert!(d.iter().any(|n| n == want), "missing {want}: {d:?}");
+        }
+        // Only the useful kinds are chosen while there is room for them.
+        assert!(
+            !d.iter()
+                .any(|n| n.starts_with("hdmi") || n.starts_with("codec"))
+        );
+        // A catalogue with many LEDs does not crowd out the UART.
+        let many: Vec<SignalInfo> = (0..40)
+            .map(|i| info(&format!("board.led{i}")))
+            .chain([info("uart1.tx")])
+            .collect();
+        let d = default_signals(&many);
+        assert_eq!(d.len(), DEFAULT_SIGNALS);
+        assert!(d.iter().any(|n| n == "uart1.tx"), "{d:?}");
+    }
+
+    #[test]
+    fn groups_and_the_picker_actions() {
+        assert_eq!(group_of("board.sw0"), Group::Board);
+        assert_eq!(group_of("uart1.rx"), Group::Uart);
+        assert_eq!(group_of("bus.M_AXI_GP0.write"), Group::Bus);
+        assert_eq!(group_of("pmod.ja"), Group::Pmod);
+        assert_eq!(group_of("hdmi.tx.frame"), Group::Other);
+
+        let mut w = WaveState {
+            catalogue: vec![
+                info("board.led0"),
+                info("uart1.tx"),
+                info("uart1.rx"),
+                info("pmod.ja"),
+            ],
+            ..WaveState::default()
+        };
+        assert_eq!(w.group_count(Group::Uart), 2);
+        assert_eq!(w.group_count(Group::Bus), 0);
+        w.select_group(Group::Uart);
+        assert_eq!(w.selected, ["uart1.tx", "uart1.rx"]);
+        // Groups add to the selection without duplicates.
+        w.select_group(Group::Uart);
+        w.select_group(Group::Board);
+        assert_eq!(w.selected, ["uart1.tx", "uart1.rx", "board.led0"]);
+        w.select_none();
+        assert!(w.selected.is_empty());
+        w.filter = "pmod".to_string();
+        w.select_matching();
+        assert_eq!(w.selected, ["pmod.ja"]);
+        // The first pick replaces an empty selection with the defaults.
+        w.select_none();
+        w.pick_defaults();
+        assert!(w.selected.contains(&"board.led0".to_string()));
+        // Once picked (even emptied), the defaults are not forced again.
+        w.select_none();
+        w.apply_defaults();
+        assert!(w.selected.is_empty());
+    }
+
+    #[test]
+    fn a_new_project_opens_with_the_default_signals() {
+        let mut m = model();
+        run(&mut m, 1_000_000_000);
+        m.waves.active = true;
+        m.refresh();
+        let sel = &m.waves.selected;
+        assert!(!sel.is_empty() && sel.len() <= DEFAULT_SIGNALS, "{sel:?}");
+        assert!(sel.iter().any(|n| n == "board.led0"), "{sel:?}");
+        assert!(sel.iter().any(|n| n.starts_with("uart")), "{sel:?}");
+    }
+
+    #[test]
+    fn long_symbols_are_elided_in_the_middle_and_short_text_is_kept() {
+        assert_eq!(elide_middle("short", 10), "short");
+        let s = "_ZN9firmware4main17h0123456789abcdefE_very_long_tail_end";
+        let e = elide_middle(s, 20);
+        assert_eq!(e.chars().count(), 20);
+        assert!(e.starts_with("_ZN9firm") && e.ends_with("tail_end"), "{e}");
+        assert!(e.contains("..."));
+        assert_eq!(elide_middle("abcdef", 2), "ab");
+        // Multi-byte text is cut on character boundaries.
+        assert_eq!(elide_middle("ööööööööööööö", 6).chars().count(), 6);
+
+        let line = format!("pc in {s} at 0x100");
+        let out = elide_long_symbols(&line).expect("the symbol is long");
+        assert!(out.starts_with("pc in _ZN") && out.ends_with(" at 0x100"));
+        assert!(out.len() < line.len());
+        assert_eq!(elide_long_symbols("uart1 tx A"), None);
+        let path = "core::fmt::Formatter::pad_integral::with_long_name_for_tests::xyz";
+        assert!(elide_long_symbols(path).unwrap().contains("..."));
+    }
+
+    #[test]
+    fn zoom_to_selection_sets_the_window_and_leaves_follow() {
+        let mut w = WaveState {
+            now_ps: 1_000_000,
+            follow: true,
+            ..WaveState::default()
+        };
+        w.zoom_to(200_000, 300_000);
+        assert_eq!((w.from_ps, w.span_ps), (200_000, 100_000));
+        assert!(!w.follow);
+        // A selection narrower than the minimum still shows MIN_SPAN_PS.
+        w.zoom_to(5, 5);
+        assert_eq!((w.from_ps, w.span_ps), (5, MIN_SPAN_PS));
     }
 }
