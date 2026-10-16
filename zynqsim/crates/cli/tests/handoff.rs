@@ -199,6 +199,12 @@ fn one_init_gives_the_xsa_mapping_and_the_bootbin_boot() {
 /// folder, the Xilinx IP still come from the XSA, the image is the same BOOT.BIN.
 #[test]
 fn the_export_variant_references_the_export_and_keeps_the_xilinx_ip() {
+    // The export's lists name `$XILINX_VIVADO/.../glbl.v`: without a Vivado
+    // install (CI) the variable is undefined and the export is refused.
+    if !backend_found("xsim") && std::env::var_os("XILINX_VIVADO").is_none() {
+        eprintln!("SKIPPED: the export names $XILINX_VIVADO (no Vivado here)");
+        return;
+    }
     let d = temp("init-export");
     let v = init(Variant::Export, &d);
     assert_eq!(v["boot"]["mode"], "boot_bin");
