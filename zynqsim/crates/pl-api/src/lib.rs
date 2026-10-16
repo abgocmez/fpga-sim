@@ -130,6 +130,17 @@ pub struct PinEvent {
     pub levels: u8,
 }
 
+/// A byte a PL-side UART (the AXI UART Lite model) put on its TX line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UartByte {
+    /// PS time at which the character finished shifting out, in nanoseconds.
+    pub t_ns: u64,
+    /// Channel index, in the order [`PlTarget::uart_channels`] lists them.
+    pub channel: u8,
+    /// The byte.
+    pub byte: u8,
+}
+
 /// The board side of the PL's Pmod pins: whatever is plugged into the ports.
 ///
 /// The PL adapter calls it on its own thread of control, in PL-time order, the
@@ -256,6 +267,25 @@ pub trait PlTarget {
     /// Sets where the PL's HDMI RX and codec ADC get their data. Either may
     /// be left unchanged with `None`.
     fn set_media_sources(&mut self, _video: Option<VideoSource>, _audio: Option<AudioSource>) {}
+
+    /// Instance names of the PL's host-visible UARTs (AXI UART Lite), in
+    /// channel order.
+    fn uart_channels(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Removes and returns the bytes the PL's UARTs transmitted since the
+    /// last call.
+    fn drain_uart_tx(&mut self) -> Vec<UartByte> {
+        Vec::new()
+    }
+
+    /// The host sends `data` to the receiver of UART `channel`, starting at
+    /// PS time `now_ns`. Returns the number of bytes accepted (the model's
+    /// receive queue is bounded).
+    fn uart_rx(&mut self, _channel: u8, _data: &[u8], _now_ns: u64) -> usize {
+        0
+    }
 
     /// True once the PL has ended the simulation (for example a testbench
     /// `$finish`). Accesses after that fail.

@@ -3054,6 +3054,7 @@ dependencies = [
  "thiserror 2.0.21",
  "toml",
  "trace",
+ "vendor-ip",
  "xsa-import",
  "yaxpeax-arch",
  "yaxpeax-arm",
@@ -3591,6 +3592,14 @@ dependencies = [
  "js-sys",
  "serde_core",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "vendor-ip"
+version = "0.1.0"
+dependencies = [
+ "pl-api",
+ "pl-native",
 ]
 
 [[package]]

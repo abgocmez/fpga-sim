@@ -31,6 +31,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use trace::{TraceEvent, TraceLog};
+use vendor_ip::{VendorInstance, VendorPl};
 
 /// Flush the UART and PL accesses into the trace at this virtual-time
 /// granularity. Fixed, so the trace is identical however the caller slices
@@ -57,6 +58,14 @@ pub struct NativeInstance {
     pub gp: u8,
     /// Base address.
     pub base: u64,
+    /// Size of the address window; `None` uses the model's default (64 KiB).
+    pub size: Option<u64>,
+    /// `IRQ_F2P` bit the instance's interrupt output drives.
+    pub irq: Option<u32>,
+    /// IP parameters by Vivado name (`C_GPIO_WIDTH`), plus `CLK_FREQ_HZ`.
+    pub params: std::collections::BTreeMap<String, String>,
+    /// Board bindings: GPIO interface (`GPIO`, `GPIO2`) to board signal (`board.leds`).
+    pub bindings: std::collections::BTreeMap<String, String>,
 }
 
 /// An RTL design to run in XSim as the PL.
@@ -153,7 +162,8 @@ pub struct QemuSpec {
     pub uart: UartMode,
     /// Native PL models.
     pub natives: Vec<NativeInstance>,
-    /// An RTL design; when set it is the PL and `natives` must be empty.
+    /// An RTL design. Native models placed next to it answer in their own windows; every
+    /// other access goes to the RTL (ADR-016).
     pub rtl: Option<RtlSpec>,
     /// Board machine name.
     pub board: String,
@@ -275,6 +285,18 @@ impl PlTarget for TracedPl {
         self.inner.has_board_pins()
     }
 
+    fn uart_channels(&self) -> Vec<String> {
+        self.inner.uart_channels()
+    }
+
+    fn drain_uart_tx(&mut self) -> Vec<pl_api::UartByte> {
+        self.inner.drain_uart_tx()
+    }
+
+    fn uart_rx(&mut self, channel: u8, data: &[u8], now_ns: u64) -> usize {
+        self.inner.uart_rx(channel, data, now_ns)
+    }
+
     fn has_pin_groups(&self) -> bool {
         self.inner.has_pin_groups()
     }
@@ -325,7 +347,7 @@ fn model(name: &str) -> Option<Box<dyn RegisterBlock>> {
 }
 
 /// Names accepted for `[native]` models.
-pub const NATIVE_MODELS: &[&str] = &["my_math_ip"];
+pub const NATIVE_MODELS: &[&str] = &["my_math_ip", "axi_gpio", "axi_timer", "axi_uartlite"];
 
 /// Gives the PL adapter access to the devices on the Pmod ports.
 struct BankSink(Arc<Mutex<devices::Bank>>);
@@ -542,6 +564,8 @@ pub struct QemuEngine {
     pl: TracedPl,
     trace: TraceLog,
     uart1: ByteLog,
+    /// Bytes the PL's UARTs (AXI UART Lite) transmitted, by channel; `uart_read` port 2 + n.
+    pl_uart: Vec<ByteLog>,
     target_ns: u64,
     quantum_ns: u64,
     pl_name: String,
@@ -719,13 +743,8 @@ impl QemuEngine {
     pub fn new(spec: &QemuSpec) -> Result<QemuEngine, ApiError> {
         let def = BoardDef::builtin(&spec.board)
             .ok_or_else(|| ApiError::not_found(format!("unknown board `{}`", spec.board)))?;
-        let pl: Box<dyn PlTarget + Send> = match &spec.rtl {
+        let rtl_pl: Option<Box<dyn PlTarget + Send>> = match &spec.rtl {
             Some(rtl) => {
-                if !spec.natives.is_empty() {
-                    return Err(ApiError::invalid_argument(
-                        "native PL models and an RTL design cannot be combined yet",
-                    ));
-                }
                 let cfg = backend_rtl_xsim::XsimConfig {
                     vivado_root: rtl.vivado_root.clone(),
                     sources: rtl.sources.clone(),
@@ -740,14 +759,41 @@ impl QemuEngine {
                         .then(|| spec.work_dir.parent().map(|p| p.join("xsim-cache")))
                         .flatten(),
                 };
-                Box::new(backend_rtl_xsim::XsimPl::start(&cfg).map_err(|e| {
-                    ApiError::io(e.to_string())
-                        .with_hint("see build.log / xsim.out.log in the run directory")
-                })?)
+                Some(Box::new(backend_rtl_xsim::XsimPl::start(&cfg).map_err(
+                    |e| {
+                        ApiError::io(e.to_string())
+                            .with_hint("see build.log / xsim.out.log in the run directory")
+                    },
+                )?))
             }
-            None => {
-                let mut native = NativePl::new();
-                for n in &spec.natives {
+            None => None,
+        };
+        let pl: Box<dyn PlTarget + Send> = if spec.natives.is_empty() {
+            rtl_pl.unwrap_or_else(|| Box::new(NativePl::new()))
+        } else {
+            // Native models (the prototype's math IP, the vendor-ip library), next to the
+            // RTL design when there is one.
+            let mut vp = VendorPl::new(rtl_pl);
+            for n in &spec.natives {
+                if n.gp > 1 {
+                    return Err(ApiError::invalid_argument(format!(
+                        "instance `{}`: M_AXI_GP{} does not exist",
+                        n.name, n.gp
+                    )));
+                }
+                if vendor_ip::is_model(&n.model) {
+                    vp.add(&VendorInstance {
+                        name: n.name.clone(),
+                        model: n.model.clone(),
+                        gp: n.gp,
+                        base: n.base,
+                        size: n.size,
+                        irq: n.irq,
+                        params: n.params.clone(),
+                        bindings: n.bindings.clone(),
+                    })
+                    .map_err(ApiError::invalid_argument)?;
+                } else {
                     let block = model(&n.model).ok_or_else(|| {
                         ApiError::invalid_argument(format!(
                             "unknown native model `{}` for instance `{}`; available: {}",
@@ -756,16 +802,11 @@ impl QemuEngine {
                             NATIVE_MODELS.join(", ")
                         ))
                     })?;
-                    if n.gp > 1 {
-                        return Err(ApiError::invalid_argument(format!(
-                            "instance `{}`: M_AXI_GP{} does not exist",
-                            n.name, n.gp
-                        )));
-                    }
-                    native.map(n.gp, n.base, block);
+                    vp.add_block(&n.name, n.gp, n.base, block)
+                        .map_err(ApiError::invalid_argument)?;
                 }
-                Box::new(native)
             }
+            Box::new(vp)
         };
 
         let mut cfg = QemuConfig::new(
@@ -876,6 +917,7 @@ impl QemuEngine {
             pl,
             trace,
             uart1: ByteLog::default(),
+            pl_uart: Vec::new(),
             target_ns: 0,
             quantum_ns: spec.quantum_ns,
             pl_name: spec.pl_name.clone(),
@@ -1292,6 +1334,21 @@ impl QemuEngine {
             );
             self.uart1.push(b);
         }
+        for b in self.pl.drain_uart_tx() {
+            let ch = usize::from(b.channel);
+            if self.pl_uart.len() <= ch {
+                self.pl_uart.resize_with(ch + 1, ByteLog::default);
+            }
+            self.pl_uart[ch].push(b.byte);
+            self.trace.push(
+                Ps(b.t_ns.saturating_mul(1000)),
+                TraceEvent::Uart {
+                    port: 2 + b.channel,
+                    tx: true,
+                    byte: b.byte,
+                },
+            );
+        }
     }
 
     /// Runs QEMU to `end_ns`, in chunks that end on multiples of [`CHUNK_NS`],
@@ -1626,6 +1683,32 @@ impl QemuEngine {
                     now_ps: self.now_ps().0,
                 })
             }
+            Command::Input(Input::UartWrite { port, data }) if port >= 2 => {
+                // A PL UART (AXI UART Lite): deterministic, delivered at the current time.
+                let ch = port - 2;
+                if usize::from(ch) >= self.pl.uart_channels().len() {
+                    return Err(ApiError::invalid_argument(format!(
+                        "no uart {port}: the PL has {} UART Lite instance(s) (ports 2..)",
+                        self.pl.uart_channels().len()
+                    )));
+                }
+                let now_ns = self.machine.now_ns();
+                let n = self.pl.uart_rx(ch, &data, now_ns);
+                let now = self.now_ps();
+                self.trace.push(
+                    now,
+                    TraceEvent::Input {
+                        what: format!("uart{port} write {n} byte(s)"),
+                    },
+                );
+                if n < data.len() {
+                    return Err(ApiError::invalid_argument(format!(
+                        "uart{port}: only {n} of {} byte(s) fit the receive queue",
+                        data.len()
+                    )));
+                }
+                Ok(Response::Ok)
+            }
             Command::Input(Input::UartWrite { port, data }) => {
                 if port != 1 {
                     return Err(self.unsupported(
@@ -1902,6 +1985,17 @@ impl QemuEngine {
                     next: 0,
                     oldest: 0,
                 }),
+                // The PL's AXI UART Lite instances, in instance-name order.
+                p if usize::from(*p) < 2 + self.pl.uart_channels().len() => {
+                    let empty = ByteLog::default();
+                    let log = self.pl_uart.get(usize::from(*p) - 2).unwrap_or(&empty);
+                    let (data, next) = log.read(*from, *max);
+                    Ok(Response::Uart {
+                        data,
+                        next,
+                        oldest: log.base,
+                    })
+                }
                 p => Err(ApiError::invalid_argument(format!("no uart {p}"))),
             },
             Query::Trace { from, max } => {

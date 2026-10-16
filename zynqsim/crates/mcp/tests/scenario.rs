@@ -233,7 +233,7 @@ fn argument_validation_gives_precise_errors() {
         "exactly one of",
     );
     h.err("uart_write", json!({ "port": 1, "hex": "6" }), "odd number");
-    h.err("uart_write", json!({ "port": 2, "text": "a" }), "maximum");
+    h.err("uart_write", json!({ "port": 8, "text": "a" }), "maximum");
     h.err("pin_get", json!({ "name": "nope" }), "no pin or control");
     h.err(
         "waveform_export",

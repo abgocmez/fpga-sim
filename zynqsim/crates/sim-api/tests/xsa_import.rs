@@ -24,7 +24,7 @@ fn errors(p: &Project, base: &std::path::Path) -> Vec<(String, String)> {
 }
 
 #[test]
-fn the_gpio_design_maps_the_user_ip_and_refuses_the_gpio() {
+fn the_gpio_design_maps_the_user_ip_and_places_the_gpio_model_next_to_it() {
     let out = temp("map");
     let opts = ImportOptions {
         rtl: vec![fixtures().join("rtl/math/my_math_ip.v")],
@@ -38,16 +38,28 @@ fn the_gpio_design_maps_the_user_ip_and_refuses_the_gpio() {
     };
     let plan = xsa::plan(&fixtures().join("xsa/zs_math_gpio.xsa"), &out, &opts).unwrap();
     assert_eq!(plan.testbench_module.as_deref(), Some("my_math_ip"));
-    assert_eq!(plan.unmodelled.len(), 1);
-    let u = &plan.unmodelled[0];
+    assert!(plan.unmodelled.is_empty(), "{:?}", plan.unmodelled);
+    assert!(plan.runnable_design());
+    // The AXI GPIO becomes a vendor-ip model with the block design's parameters, next to the RTL.
+    assert_eq!(plan.project.native["axi_gpio_0"], "axi_gpio");
+    let np = &plan.project.native_params["axi_gpio_0"];
+    assert_eq!(np["C_GPIO_WIDTH"].to_string(), "4");
+    assert_eq!(np["C_ALL_OUTPUTS"].to_string(), "1");
+    assert_eq!(np["C_INTERRUPT_PRESENT"].to_string(), "1");
+    assert_eq!(np["ADDRESS_SIZE"].to_string(), "0x10000");
+    assert_eq!(np["CLK_FREQ_HZ"].to_string(), "100000000");
+    assert_eq!(plan.project.native_irq("axi_gpio_0"), Some(0));
     assert_eq!(
-        (u.instance.as_str(), u.vlnv.as_str()),
-        ("axi_gpio_0", "xilinx.com:ip:axi_gpio:2.0")
+        plan.project.native_placement("axi_gpio_0"),
+        Some((0, 0x4120_0000))
     );
-    assert_eq!(u.base.as_deref(), Some("0x41200000"));
-    assert_eq!(u.size, Some(0x10000));
-    assert_eq!(u.irq, vec![0]);
-    assert!(!plan.runnable_design());
+    // Four output bits: guessed to be the board LEDs, and the report says it is a guess.
+    assert_eq!(plan.project.connect["axi_gpio_0.GPIO"], "board.leds");
+    assert!(
+        plan.warnings.iter().any(|w| w.contains("guess")),
+        "{:?}",
+        plan.warnings
+    );
 
     // The generated project text round-trips and carries the maps.
     let p = Project::from_toml(&plan.project_toml).unwrap();
@@ -63,26 +75,60 @@ fn the_gpio_design_maps_the_user_ip_and_refuses_the_gpio() {
         "interconnect is wiring: {c:?}"
     );
 
-    // Written to disk it validates with exactly one error: the unmodelled IP.
+    // Written to disk it validates clean (the ELF exists) and keeps the native model.
     plan.write(&out).unwrap();
     let loaded = Project::load(&out.join("project.toml")).unwrap();
+    assert_eq!(loaded, plan.project);
     let e = errors(&loaded, &out);
-    assert_eq!(e.len(), 1, "{e:?}");
-    assert_eq!(e[0].0, "xsa.unmodelled.axi_gpio_0");
-    assert!(e[0].1.contains("milestone P3, not built yet"), "{e:?}");
-    assert!(e[0].1.contains("0x41200000"));
+    assert!(e.is_empty(), "{e:?}");
 
-    // build_engine stops there, naming the IP.
-    let err = loaded.build_engine(&out).err().expect("must refuse");
-    assert!(err.message.contains("axi_gpio_0"), "{}", err.message);
-
-    // The report says so too.
-    assert!(plan.report.contains("NOT RUNNABLE"));
-    assert!(plan.report.contains("`axi_gpio_0`"));
+    // The report names the model and says what was and was not verified.
+    assert!(!plan.report.contains("NOT RUNNABLE"));
+    assert!(plan.report.contains("vendor-ip model `axi_gpio`"));
     assert!(plan.report.contains("PS7"));
     assert!(plan.report.contains("MIO use"));
     assert!(plan.report.contains("UART 1"));
     assert!(plan.report.contains("ps7_init.tcl"));
+}
+
+#[test]
+fn an_ip_without_a_model_is_recorded_and_stops_the_run() {
+    let out = temp("dma");
+    let opts = ImportOptions {
+        rtl: vec![fixtures().join("rtl/math/my_math_ip.v")],
+        elf: Some(
+            fixtures()
+                .join("elf/math_test.elf")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        ..Default::default()
+    };
+    let plan = xsa::plan(&fixtures().join("xsa/zs_math_dma.hwh"), &out, &opts).unwrap();
+    assert_eq!(plan.testbench_module.as_deref(), Some("my_math_ip"));
+    assert_eq!(plan.unmodelled.len(), 1);
+    let u = &plan.unmodelled[0];
+    assert_eq!(
+        (u.instance.as_str(), u.vlnv.as_str()),
+        ("axi_dma_0", "xilinx.com:ip:axi_dma:7.1")
+    );
+    assert_eq!(u.base.as_deref(), Some("0x40400000"));
+    assert_eq!(u.size, Some(0x10000));
+    assert_eq!(u.irq, vec![0]);
+    assert!(!plan.runnable_design());
+    assert!(plan.project.native.is_empty());
+
+    plan.write(&out).unwrap();
+    let loaded = Project::load(&out.join("project.toml")).unwrap();
+    let e = errors(&loaded, &out);
+    assert_eq!(e.len(), 1, "{e:?}");
+    assert_eq!(e[0].0, "xsa.unmodelled.axi_dma_0");
+    assert!(e[0].1.contains("does not exist yet"), "{e:?}");
+    assert!(e[0].1.contains("0x40400000"));
+    let err = loaded.build_engine(&out).err().expect("must refuse");
+    assert!(err.message.contains("axi_dma_0"), "{}", err.message);
+    assert!(plan.report.contains("NOT RUNNABLE"));
+    assert!(plan.report.contains("`axi_dma_0`"));
 }
 
 #[test]

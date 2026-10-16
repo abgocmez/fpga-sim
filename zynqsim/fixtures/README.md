@@ -33,6 +33,17 @@ instructions at 0x0: no FSBL is built on this machine, so it is a stand-in), `du
 with `[checksum=md5]` and the register-init file `regs.int`. `mkstubs.py` made the two stub inputs.
 Used by `boot`, `sim-api`, `zynqsim` and `zynqsim-mcp` tests (ADR-018).
 
+`zs_vendor_ip.xsa` (`xsa/make_vendor_xsa.tcl`, also Vivado 2022.1) holds only Xilinx IP: two AXI
+GPIOs (`leds_4bits` 4 outputs at `0x41200000`; `sws_4bits` + `btns_4bits` dual, 4 inputs each, with
+interrupt, at `0x41210000`), an AXI Timer at `0x42800000` and an AXI UART Lite (115200) at
+`0x40600000`, interrupts `IRQ_F2P[0..2]` through an `xlconcat`. It is the design of
+`examples/gpio-timer-uart` (`elf/rust_gpio_timer_uart.elf`, built from `firmware/gpio_timer_uart`).
+`elf/rust_vendor_mix.elf` (`firmware/vendor_mix`) is the firmware for `zs_math_gpio.xsa` with the
+math RTL in XSim next to the GPIO model.
+
+`xsa/zs_math_dma.hwh` is **hand-written, not Vivado output**: the math IP plus an AXI DMA (which
+has no model), to test that an unmodelled IP stops the run.
+
 ## `rtl/`
 
 User-supplied RTL and testbench tops from the prototype, used as inputs to the XSim backend.

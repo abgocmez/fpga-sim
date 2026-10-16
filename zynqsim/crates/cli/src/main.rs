@@ -820,7 +820,7 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
             "source": regs.as_ref().and_then(|r| r.pc_source.clone()),
         })
     });
-    let mut uart = |port: u8| -> String {
+    let mut uart_opt = |port: u8| -> Option<String> {
         match engine.query(
             &Query::UartRead {
                 port,
@@ -829,11 +829,18 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
             },
             false,
         ) {
-            Ok(Response::Uart { data, .. }) => String::from_utf8_lossy(&data).into_owned(),
-            _ => String::new(),
+            Ok(Response::Uart { data, .. }) => Some(String::from_utf8_lossy(&data).into_owned()),
+            _ => None,
         }
     };
-    let (u0, u1) = (uart(0), uart(1));
+    let (u0, u1) = (
+        uart_opt(0).unwrap_or_default(),
+        uart_opt(1).unwrap_or_default(),
+    );
+    // The PL's AXI UART Lite instances (ports 2..): listed when the PL has any.
+    let pl_uarts: Vec<(u8, String)> = (2u8..10)
+        .filter_map(|p| uart_opt(p).map(|t| (p, t)))
+        .collect();
     // The state of every attached device: settable quantities and registers.
     let mut device_state = Vec::new();
     for d in &st.devices {
@@ -884,7 +891,14 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
                 "storage": st.storage,
                 "debug": debug,
                 "leds": leds,
-                "uart": { "0": u0, "1": u1 },
+                "uart": {
+                    "0": u0,
+                    "1": u1,
+                    "pl": pl_uarts
+                        .iter()
+                        .map(|(p, t)| (p.to_string(), t.clone()))
+                        .collect::<std::collections::BTreeMap<_, _>>(),
+                },
                 "inputs": recording.as_ref().map(|r| r.entries.len()),
             })
         );
@@ -969,6 +983,9 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
             .collect();
         println!("leds      : {}", on.join(" "));
         println!("uart1 tx  : {u1:?}");
+        for (p, t) in &pl_uarts {
+            println!("uart{p} tx  : {t:?} (PL UART Lite)");
+        }
         if !u0.is_empty() {
             println!("uart0 tx  : {u0:?}");
         }

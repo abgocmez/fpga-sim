@@ -91,7 +91,7 @@ pub struct McpServer {
     client: SimClient,
     roots: Vec<PathBuf>,
     project: Option<OpenProject>,
-    uart_cursor: [u64; 2],
+    uart_cursor: [u64; 8],
     tools: Vec<ToolDef>,
 }
 
@@ -114,7 +114,7 @@ impl McpServer {
             client: SimClient::spawn(SimConfig::default())?,
             roots: canon,
             project: None,
-            uart_cursor: [0; 2],
+            uart_cursor: [0; 8],
             tools: tool_defs(),
         })
     }
@@ -304,7 +304,7 @@ impl McpServer {
             "sim_reset" => {
                 let seed = a.get("seed").and_then(Value::as_u64);
                 self.client.command(Command::Input(Input::Reset { seed }))?;
-                self.uart_cursor = [0; 2];
+                self.uart_cursor = [0; 8];
                 self.time_result()
             }
             "snapshot_save" => {
@@ -317,7 +317,7 @@ impl McpServer {
                 let n = str_arg(a, "name")?.to_string();
                 self.client
                     .command(Command::SnapshotRestore { name: n.clone() })?;
-                self.uart_cursor = [0; 2];
+                self.uart_cursor = [0; 8];
                 let mut out = self.time_result()?;
                 out.structured["restored"] = json!(n);
                 Ok(out)
@@ -784,7 +784,7 @@ impl McpServer {
             let base = file.parent().unwrap_or(Path::new("."));
             let engine = project.build_engine(base)?;
             self.client = SimClient::spawn_engine(engine);
-            self.uart_cursor = [0; 2];
+            self.uart_cursor = [0; 8];
         }
         let out = json!({
             "path": file.display().to_string(),
@@ -938,11 +938,11 @@ impl McpServer {
         let port = a.get("port").and_then(Value::as_u64).unwrap_or(0) as u8;
         let max = a.get("max").and_then(Value::as_u64).unwrap_or(4096) as usize;
         let explicit = a.get("from").and_then(Value::as_u64);
-        let from = explicit.unwrap_or(self.uart_cursor[usize::from(port.min(1))]);
+        let from = explicit.unwrap_or(self.uart_cursor[usize::from(port.min(7))]);
         match self.client.query(Query::UartRead { port, from, max })? {
             Response::Uart { data, next, oldest } => {
                 if explicit.is_none() {
-                    self.uart_cursor[usize::from(port.min(1))] = next;
+                    self.uart_cursor[usize::from(port.min(7))] = next;
                 }
                 Ok(Out::json(json!({
                     "port": port,
@@ -1057,7 +1057,7 @@ impl McpServer {
         if let Some(seed) = a.get("seed").and_then(Value::as_u64) {
             self.client
                 .command(Command::Input(Input::Reset { seed: Some(seed) }))?;
-            self.uart_cursor = [0; 2];
+            self.uart_cursor = [0; 8];
         }
         let st = self.client.status()?;
         Ok(Out::json(json!({ "status": st })))

@@ -92,7 +92,7 @@ pub fn tool_defs() -> Vec<ToolDef> {
         ),
         t(
             "project_create_from_xsa",
-            "Create a project from a Vivado hardware handoff (.xsa or .hwh): reads the PS7              configuration, every PL IP with its VLNV, address map, interrupts and clocks, writes              project.toml, a generated testbench for the user's AXI4-Lite RTL and xsa-report.md              into `out_dir`, and returns the report summary. IP that has no model (AXI GPIO,              Timer, ... need the vendor-ip library, milestone P3) is listed under `unmodelled`              and makes the project invalid: `runnable` is then false and project_open refuses              to start it. Existing files are never overwritten.",
+            "Create a project from a Vivado hardware handoff (.xsa or .hwh): reads the PS7              configuration, every PL IP with its VLNV, address map, interrupts and clocks, writes              project.toml, a generated testbench for the user's AXI4-Lite RTL and xsa-report.md              into `out_dir`, and returns the report summary. AXI GPIO, AXI Timer and AXI UART Lite              become native vendor-ip models next to the user's RTL; IP that has no model (DMA,              IIC, ...) is listed under `unmodelled` and makes the project invalid: `runnable` is then false and project_open refuses              to start it. Existing files are never overwritten.",
             Open,
             object(
                 vec![
@@ -399,7 +399,12 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 vec![
                     (
                         "port",
-                        integer("UART index: 0 or 1.", Some(0), Some(1), &[1]),
+                        integer(
+                            "UART index: 0 or 1 are the PS UARTs, 2.. the PL's AXI UART Lite instances in name order.",
+                            Some(0),
+                            Some(7),
+                            &[1],
+                        ),
                     ),
                     ("text", string("Text to send (UTF-8).", &["hello\r\n"])),
                     ("hex", string("Bytes to send as hex.", &["68690d0a"])),
@@ -417,7 +422,12 @@ pub fn tool_defs() -> Vec<ToolDef> {
                 vec![
                     (
                         "port",
-                        integer("UART index: 0 or 1.", Some(0), Some(1), &[1]),
+                        integer(
+                            "UART index: 0 or 1 are the PS UARTs, 2.. the PL's AXI UART Lite instances in name order.",
+                            Some(0),
+                            Some(7),
+                            &[1],
+                        ),
                     ),
                     (
                         "from",

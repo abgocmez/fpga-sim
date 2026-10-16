@@ -13,6 +13,18 @@ pub trait RegisterBlock: Send {
     fn write32(&mut self, offset: u64, value: u32, strobe: u8);
     /// Returns the block to its power-on state.
     fn reset(&mut self);
+
+    /// Brings the block's notion of time up to `now_ns` (PS time, monotone).
+    /// Called before every access and on every lock-step `advance`; models
+    /// with timers, baud-paced FIFOs and similar use it. The default does
+    /// nothing, which is what a purely combinational register block wants.
+    fn advance(&mut self, _now_ns: u64) {}
+
+    /// Level of the block's interrupt output. Polled after `advance`; a
+    /// change is forwarded to the PS on the block's mapped `IRQ_F2P` line.
+    fn irq_level(&self) -> bool {
+        false
+    }
 }
 
 /// A register block placed at a base address on one GP port.
@@ -23,6 +35,10 @@ pub struct Mapped {
     pub base: u64,
     /// The block.
     pub block: Box<dyn RegisterBlock>,
+    /// `IRQ_F2P` line (0..=15) the block's interrupt output drives, if any.
+    pub irq: Option<u32>,
+    /// Level last reported to the PS on `irq`.
+    irq_state: bool,
 }
 
 /// A PL made of native register blocks.
@@ -57,7 +73,62 @@ impl NativePl {
                 m.block.name()
             );
         }
-        self.blocks.push(Mapped { gp, base, block });
+        self.blocks.push(Mapped {
+            gp,
+            base,
+            block,
+            irq: None,
+            irq_state: false,
+        });
+    }
+
+    /// Like [`NativePl::map`], and drives `IRQ_F2P[irq]` from the block's
+    /// [`RegisterBlock::irq_level`]. A change caused by a bus access is sent
+    /// with that access; one caused by time passing (a timer) or by a board
+    /// input reaches the PS on the next lock-step [`PlTarget::advance`], at
+    /// most one quantum later.
+    pub fn map_irq(&mut self, gp: u8, base: u64, block: Box<dyn RegisterBlock>, irq: Option<u32>) {
+        self.map(gp, base, block);
+        if let Some(m) = self.blocks.last_mut() {
+            m.irq = irq;
+        }
+    }
+
+    /// The `(gp, base, size, name)` of every mapped window.
+    pub fn windows(&self) -> Vec<(u8, u64, u64, String)> {
+        self.blocks
+            .iter()
+            .map(|m| (m.gp, m.base, m.block.size(), m.block.name().to_string()))
+            .collect()
+    }
+
+    /// Forwards a change of any block's interrupt output to the PS.
+    ///
+    /// Called at the end of every bus access and on every lock-step `advance`. Sending the
+    /// change from inside the access that caused it (the way an RTL design's interrupt reaches
+    /// the PS while an access is outstanding) is what lets a level interrupt fall before the
+    /// guest's handler returns; waiting for the next sync would make it fire again.
+    fn sync_irqs(&mut self, now_ns: u64, ps: &mut dyn PsPort) {
+        for m in &mut self.blocks {
+            if let Some(line) = m.irq {
+                let level = m.block.irq_level();
+                if level != m.irq_state {
+                    m.irq_state = level;
+                    // A PS that rejects the update is not the model's problem.
+                    let _ = ps.irq(line, level, now_ns);
+                }
+            }
+        }
+    }
+
+    /// True when `addr` on `M_AXI_GP<gp>` is inside a mapped window.
+    pub fn decodes(&self, gp: u8, addr: u64) -> bool {
+        self.blocks.iter().any(|m| {
+            m.gp == gp
+                && addr
+                    .checked_sub(m.base)
+                    .is_some_and(|off| off < m.block.size())
+        })
     }
 
     fn find(&mut self, gp: u8, addr: u64) -> Option<(&mut Mapped, u64)> {
@@ -74,8 +145,8 @@ impl PlTarget for NativePl {
         gp: u8,
         addr: u64,
         buf: &mut [u8],
-        _now_ns: u64,
-        _ps: &mut dyn PsPort,
+        now_ns: u64,
+        ps: &mut dyn PsPort,
     ) -> BusResult<()> {
         self.accesses += 1;
         let mut done = 0usize;
@@ -84,10 +155,12 @@ impl PlTarget for NativePl {
             let lane = (a & 3) as usize;
             let n = (4 - lane).min(buf.len() - done);
             let (m, off) = self.find(gp, a & !3).ok_or(BusError::Decode)?;
+            m.block.advance(now_ns);
             let word = m.block.read32(off & !3).to_le_bytes();
             buf[done..done + n].copy_from_slice(&word[lane..lane + n]);
             done += n;
         }
+        self.sync_irqs(now_ns, ps);
         Ok(())
     }
 
@@ -96,8 +169,8 @@ impl PlTarget for NativePl {
         gp: u8,
         addr: u64,
         data: &[u8],
-        _now_ns: u64,
-        _ps: &mut dyn PsPort,
+        now_ns: u64,
+        ps: &mut dyn PsPort,
     ) -> BusResult<()> {
         self.accesses += 1;
         let mut done = 0usize;
@@ -110,12 +183,21 @@ impl PlTarget for NativePl {
             let strobe = (((1u16 << n) - 1) << lane) as u8;
             let in_reset = self.in_reset;
             let (m, off) = self.find(gp, a & !3).ok_or(BusError::Decode)?;
+            m.block.advance(now_ns);
             if !in_reset {
                 m.block.write32(off & !3, u32::from_le_bytes(word), strobe);
             }
             done += n;
         }
+        self.sync_irqs(now_ns, ps);
         Ok(())
+    }
+
+    fn advance(&mut self, now_ns: u64, ps: &mut dyn PsPort) {
+        for m in &mut self.blocks {
+            m.block.advance(now_ns);
+        }
+        self.sync_irqs(now_ns, ps);
     }
 
     fn wire(&mut self, line: u32, level: bool, _now_ns: u64) {
