@@ -21,11 +21,39 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// One `zynqsim` run is given this much wall time; a QEMU that hangs (seen once in a full
+/// gate run) is killed and fails the test instead of blocking the suite forever.
+const RUN_LIMIT: std::time::Duration = std::time::Duration::from_secs(600);
+
 fn zynqsim(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_zynqsim"))
+    let child = Command::new(env!("CARGO_BIN_EXE_zynqsim"))
         .args(args)
-        .output()
-        .expect("zynqsim runs")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("zynqsim starts");
+    let pid = child.id();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    match rx.recv_timeout(RUN_LIMIT) {
+        Ok(out) => out.expect("zynqsim runs"),
+        Err(_) => {
+            // Kill the whole tree (zynqsim started QEMU).
+            if cfg!(windows) {
+                let _ = Command::new("taskkill")
+                    .args(["/F", "/T", "/PID", &pid.to_string()])
+                    .output();
+            } else {
+                let _ = Command::new("kill").args(["-9", &pid.to_string()]).output();
+            }
+            panic!(
+                "`zynqsim {}` did not finish within {RUN_LIMIT:?}",
+                args.join(" ")
+            );
+        }
+    }
 }
 
 fn qemu_available() -> bool {
