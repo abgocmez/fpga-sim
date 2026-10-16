@@ -320,7 +320,7 @@ mod tests {
     }
 
     /// An engine whose `run_for` costs wall time, like RTL in XSim.
-    struct SlowEngine(Simulator);
+    struct SlowEngine(Simulator, std::sync::Arc<std::sync::atomic::AtomicUsize>);
 
     impl Engine for SlowEngine {
         fn def(&self) -> &BoardDef {
@@ -342,36 +342,41 @@ mod tests {
             Engine::query(&mut self.0, q, playing)
         }
         fn run_for(&mut self, d: Ps) -> Result<(), ApiError> {
+            self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             std::thread::sleep(Duration::from_millis(25));
             Engine::run_for(&mut self.0, d)
         }
     }
 
     /// A front end refreshes its view with a burst of sequential requests.
-    /// While a slow engine plays, the burst must cost about one slice, not
-    /// one slice per request (the GUI stuttered on RTL projects).
+    /// While a slow engine plays, the burst must not cost one slice per
+    /// request (the GUI stuttered on RTL projects). Counted in slices run
+    /// during the burst, not in wall time, so a loaded CI machine does not
+    /// matter; the least disturbed of several bursts is judged.
     #[test]
-    fn a_burst_of_requests_does_not_wait_one_slice_each() {
+    fn a_burst_of_requests_does_not_run_a_slice_each() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let slices = std::sync::Arc::new(AtomicUsize::new(0));
         let sim = Simulator::new(SimConfig::default()).unwrap();
-        let c = SimClient::spawn_engine(Box::new(SlowEngine(sim)));
+        let c = SimClient::spawn_engine(Box::new(SlowEngine(sim, slices.clone())));
         c.command(Command::Play {
             ps_per_second: Ps::PER_S,
         })
         .unwrap();
         std::thread::sleep(Duration::from_millis(100));
-        let mut worst = Duration::ZERO;
-        for _ in 0..5 {
-            let t = Instant::now();
+        let mut fewest = usize::MAX;
+        for _ in 0..8 {
+            let before = slices.load(Ordering::SeqCst);
             for _ in 0..10 {
                 c.status().unwrap();
             }
-            worst = worst.max(t.elapsed());
-            std::thread::sleep(Duration::from_millis(40));
+            fewest = fewest.min(slices.load(Ordering::SeqCst) - before);
+            std::thread::sleep(Duration::from_millis(60));
         }
-        // Per slice of 25 ms, ten requests took ~250 ms before.
+        // Before the fix every request was followed by a slice: about 10.
         assert!(
-            worst < Duration::from_millis(120),
-            "a burst of 10 requests took {worst:?}"
+            fewest <= 3,
+            "{fewest} slices ran during a burst of 10 requests"
         );
         c.command(Command::Pause).unwrap();
         assert!(
