@@ -368,36 +368,27 @@ what the board receives.
 
 ## GUI screenshots
 
-Saved from real windows (`zynqsim-gui --screenshot FILE.png --exit-after-ms 60000`, Windows 11,
-display scaling 125%); the images in `docs/screenshots/` are the ones this section links. Each was
+Saved from real windows (`zynqsim-gui --screenshot FILE.png --exit-after-ms 60000`, Windows 11);
+the images in `docs/screenshots/` are the ones this section links. Each was
 looked at by hand; the layout defects found in that review, and what was changed, are in
 `docs/STATUS.md` (*GUI panel appearance*).
 
-| Default demo (2D board, System panel, trace) | Waveforms tab |
+| Default demo (2D board, System panel, trace strip) | **Waveforms with the default signals** (`--waves-tab`) |
 |---|---|
-| ![Default demo](docs/screenshots/default-demo.png) | ![Waveforms](docs/screenshots/demo-waves.png) |
-| **Source panel at a breakpoint** (`examples/rust-debug`) | **Pmod OLED** (`examples/oled-demo`) |
-| ![Source panel](docs/screenshots/rust-debug-source.png) | ![Pmod OLED](docs/screenshots/oled-demo-pmod.png) |
-| **Waveforms with the default signals** (`--waves-tab`) | **Trace strip filtered** (`--trace-filter uart`) |
-| ![Waveforms defaults](docs/screenshots/waves-defaults.png) | ![Trace filtered](docs/screenshots/trace-filtered.png) |
-
-The window has a menu bar (File: open, recent projects, examples; Simulation; View: 2D, 3D,
-Waveforms, side panel, console, UI scale, theme; Help) and a status line at the bottom (time, run
-state, measured speed, project, backends, last error). Settings and recent projects are kept
-between runs. The shell with the light theme, and its keyboard shortcuts window (F1):
-
-| Default demo with the shell | Light theme |
-|---|---|
-| ![Shell](docs/screenshots/shell-default.png) | ![Light](docs/screenshots/shell-light.png) |
+| ![Default demo](docs/screenshots/default-demo.png) | ![Waveforms defaults](docs/screenshots/waves-defaults.png) |
+| **Source, registers and memory at a breakpoint** (`examples/rust-debug`, `--run-ms 1 --mem-hex --sections source=1,memory=1`) | **Storage table** (`examples/sd-demo`) |
+| ![Source panel](docs/screenshots/rust-debug-source.png) | ![Storage table](docs/screenshots/sd-demo-storage-table.png) |
 | **Keyboard shortcuts (F1)** | |
 | ![Shortcuts](docs/screenshots/shell-shortcuts.png) | |
 
-| **Registers and memory while stopped** (`examples/rust-debug`, `--run-ms 1 --mem-hex`) | **Storage table** (`examples/sd-demo`) |
-|---|---|
-| ![Registers and memory](docs/screenshots/rust-debug-registers-memory.png) | ![Storage table](docs/screenshots/sd-demo-storage-table.png) |
+The window has a menu bar (File: open, recent projects, examples; Simulation; View: 2D, 3D,
+Waveforms, side panel, console, UI scale, theme; Help) and a status line at the bottom (time, run
+state, project and backends, last error or the F1 hint). The play speed is set only in the side
+panel. Settings and recent projects are kept between runs.
 
-The side panel scrolls above a fixed trace strip; with the Source, HDMI or Audio panel open, the
-sections below it are reached by scrolling it. Each section header shows a one-line summary while
+The side panel scrolls above the trace strip, which takes about a third of the panel's height (at
+least 120 px) and can be resized with the grip between the two; with the Source, HDMI or Audio
+panel open, the sections below it are reached by scrolling it. Each section header shows a one-line summary while
 it is closed, and the open or closed state is kept between runs. The speed row above the sections
 offers 0.01x to max and shows the measured simulated-to-wall ratio. `--sections source=0,memory=1`
 sets the sections for one run (automated checks and screenshots); `--mem-hex` opens the memory

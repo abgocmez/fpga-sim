@@ -5,15 +5,15 @@ mod dialogs;
 mod media;
 mod memory;
 mod project;
-mod shell;
 mod sections;
+mod shell;
 mod view3d;
 mod wave_view;
 
 use crate::loader::ProjectDraft;
 use crate::model::{Model, SPEEDS, TailFollow, TraceFilter, TraceKind, trace_kind, visible_lines};
-use crate::waves::elide_long_symbols;
 use crate::prefs::Prefs;
+use crate::waves::elide_long_symbols;
 use eframe::egui::{
     self, Align2, Color32, ColorImage, FontId, Key, Rect, RichText, Sense, TextureHandle,
     TextureOptions, pos2, vec2,
@@ -122,6 +122,8 @@ pub struct App {
     trace_follow: TailFollow,
     /// Text size of the trace strip and the console, in points (10..=18).
     font_pt: f32,
+    /// Share of the side panel's height given to the trace strip (dragged with the grip).
+    trace_share: f32,
     // menu bar, status bar, settings
     shell: shell::Shell,
     /// Which side-panel sections are open (remembered between runs).
@@ -212,6 +214,7 @@ impl App {
             },
             trace_follow: TailFollow::default(),
             font_pt: 12.0,
+            trace_share: 0.35,
             shell,
             sections: SectionState::default(),
         }
@@ -346,13 +349,28 @@ impl App {
     fn side_panel(&mut self, ui: &mut egui::Ui) {
         // The sections scroll, so a long one (Source, HDMI) cannot push the
         // trace off the bottom of the window; the trace keeps a strip of its own.
-        let trace_h = (ui.available_height() * 0.2).clamp(120.0, 180.0);
+        let avail = ui.available_height();
+        const GRIP: f32 = 8.0;
+        let trace_h = (avail * self.trace_share).clamp(120.0, (avail - 120.0).max(120.0));
         egui::ScrollArea::vertical()
             .id_salt("side_sections")
-            .max_height((ui.available_height() - trace_h).max(120.0))
+            .max_height((avail - trace_h - GRIP).max(0.0))
             .auto_shrink([false, false])
             .show(ui, |ui| self.side_sections(ui));
-        ui.separator();
+        // Drag grip between the sections and the trace strip.
+        let (rect, grip) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), GRIP), egui::Sense::drag());
+        ui.painter().hline(
+            rect.x_range(),
+            rect.center().y,
+            ui.visuals().widgets.noninteractive.bg_stroke,
+        );
+        if grip.hovered() || grip.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+        }
+        if grip.dragged() && avail > 0.0 {
+            self.trace_share = (self.trace_share - grip.drag_delta().y / avail).clamp(0.3, 0.7);
+        }
         self.trace_panel(ui);
     }
 

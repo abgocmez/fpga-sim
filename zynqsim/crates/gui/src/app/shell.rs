@@ -4,7 +4,6 @@
 //! [`App::run_action`], so the behaviour is testable without a window.
 
 use super::App;
-use crate::model::SPEEDS;
 use crate::prefs::{self, Prefs, next_scale};
 use eframe::egui::{
     self, Button, Color32, Key, Layout, Modifiers, RichText, ScrollArea, Sense, TextStyle,
@@ -38,7 +37,6 @@ pub enum Action {
     Reset,
     SnapshotSave,
     SnapshotRestore,
-    SetSpeed(usize),
     SetView(View),
     ToggleSide,
     ToggleConsole,
@@ -262,12 +260,6 @@ impl App {
             Action::Reset => self.model.reset(),
             Action::SnapshotSave => self.model.snapshot_save(),
             Action::SnapshotRestore => self.model.snapshot_restore(),
-            Action::SetSpeed(i) => {
-                self.model.speed = i;
-                if self.model.status.playing {
-                    self.model.play();
-                }
-            }
             Action::SetView(v) => {
                 self.view_3d = v == View::Board3d;
                 self.wave_ui.tab = v == View::Waves;
@@ -448,15 +440,6 @@ impl App {
                 if item(ui, "Restore snapshot", "") {
                     acts.push(Action::SnapshotRestore);
                 }
-                ui.separator();
-                ui.menu_button("Speed", |ui| {
-                    for (i, (label, _)) in SPEEDS.iter().enumerate() {
-                        if ui.radio(self.model.speed == i, *label).clicked() {
-                            acts.push(Action::SetSpeed(i));
-                            ui.close();
-                        }
-                    }
-                });
             });
             ui.menu_button("View", |ui| {
                 for (label, v) in [
@@ -547,14 +530,23 @@ impl App {
             .clone()
             .or_else(|| self.model.last_error.clone())
             .map(|e| e.lines().next().unwrap_or("").to_string());
+        let left = format!(
+            "t = {}   |   {state}   |   speed {speed}   |   {project}  [{backends}]",
+            Ps(s.now_ps)
+        );
         ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("t = {}", Ps(s.now_ps))).monospace());
-            ui.separator();
-            ui.label(state);
-            ui.separator();
-            ui.label(format!("speed {speed}"));
-            ui.separator();
-            ui.label(format!("{project}  [{backends}]"));
+            // The left text is cut to the room the right side leaves, so a long
+            // breakpoint message cannot run under the shortcut hint.
+            let right_w = 280.0_f32.min(ui.available_width() * 0.5);
+            let left_w = (ui.available_width() - right_w).max(0.0);
+            ui.allocate_ui_with_layout(
+                egui::vec2(left_w, ui.available_height()),
+                Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.add(egui::Label::new(RichText::new(&left).monospace()).truncate())
+                        .on_hover_text(&left);
+                },
+            );
             ui.with_layout(
                 Layout::right_to_left(egui::Align::Center),
                 |ui| match error {

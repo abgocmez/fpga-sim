@@ -19,6 +19,10 @@ const CATALOGUE_REFRESH: Duration = Duration::from_millis(500);
 pub const MIN_SPAN_PS: u64 = 100;
 /// Signals a project opens with, at most.
 pub const DEFAULT_SIGNALS: usize = 12;
+
+/// The widest signal the default pick takes: a 24-bit LED bus or a 32-bit
+/// address is shown only when chosen by hand.
+pub const DEFAULT_MAX_WIDTH: u8 = 8;
 /// Signals the picker shows at once (the trace answers at most this many).
 pub const MAX_SHOWN: usize = 128;
 /// Longest symbol shown whole in the trace strip; longer ones are elided.
@@ -98,7 +102,7 @@ pub fn default_signals(catalogue: &[SignalInfo]) -> Vec<String> {
                 if shares && taken >= share {
                     break;
                 }
-                if wanted(&s.name) && !out.contains(&s.name) {
+                if s.width <= DEFAULT_MAX_WIDTH && wanted(&s.name) && !out.contains(&s.name) {
                     out.push(s.name.clone());
                     taken += 1;
                 }
@@ -615,6 +619,19 @@ mod tests {
             last_ps: 0,
             derived: false,
         }
+    }
+
+    #[test]
+    fn default_signals_skip_wide_buses() {
+        let wide = |n: &str, width: u8| SignalInfo { width, ..info(n) };
+        let cat = vec![
+            wide("board.led5", 24),
+            wide("board.led6", 24),
+            wide("board.led0", 1),
+            wide("bus.M_AXI_GP0.addr", 32),
+        ];
+        let d = default_signals(&cat);
+        assert_eq!(d, ["board.led0"], "{d:?}");
     }
 
     #[test]
