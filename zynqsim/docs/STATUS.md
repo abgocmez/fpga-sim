@@ -122,7 +122,8 @@ control plane drive it). Caveats are listed under *Known limits of the P1 engine
 | Waveforms from XSim (`.wdb`) | verified by hand | `[rtl] waves = true` records `xsim/zs_snap.wdb` in the run directory (`%TEMP%\zynqsim
 un-*`), which is **kept** (also with `ZYNQSIM_KEEP_RUN=1`; the path is printed on stderr); XSim is ended cleanly so the database is closed. Run on the board demo: 11 MB file written. No automated test, and the file was not opened in the Vivado viewer |
 | FST export | not-planned | VCD is sufficient for now |
-| AXI protocol checkers, latency histograms | stub | not implemented |
+| AXI protocol checkers in the `init --ip` testbenches (ADR-025): VALID/READY and payload stability per channel, VALID high in reset, INCR 4 KB crossing, WLAST/RLAST, WRAP alignment and length, AxSIZE vs bus width, SLVERR/DECERR as info. `[rtl] protocol_checkers` = true (warnings, default), false (compiled out), `"strict"` (errors, `zynqsim run` exits 1) | verified: the legal math, DMA, IRQ and PMOD OLED designs report nothing; five deliberately illegal fixtures (`fixtures/rtl/illegal/`) report their rule at their time; strict fails the run; off is silent. Real XSim. **Limits:** hand-written testbenches have no checkers; a W beat before its AW turns WLAST checking off for the port; unaligned INCR starts are not reported | `zynqsim::protocol_checks::*` (9 tests), `sim-api::tbgen::protocol_checkers_*`, `sim-api::project::protocol_checkers_*`, `pl-api::protocol::tests::*`, `xsim-dpi::core::tests::protocol_*` |
+| AXI latency histograms | stub | not implemented |
 
 ## Debugger (`[debug] enabled = true`)
 

@@ -176,6 +176,67 @@ pub struct RtlSection {
     /// Record a waveform database in the run directory.
     #[serde(default)]
     pub waves: bool,
+    /// AXI protocol checkers in the generated testbench (ADR-025): `true` (default) reports
+    /// violations as warnings, `false` turns the checkers off, `"strict"` makes a violation
+    /// an `error` record and fails `zynqsim run`.
+    #[serde(default, skip_serializing_if = "ProtocolCheckers::is_default")]
+    pub protocol_checkers: ProtocolCheckers,
+}
+
+/// `[rtl] protocol_checkers` (see [`RtlSection`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "ProtocolCheckersRepr", into = "ProtocolCheckersRepr")]
+pub enum ProtocolCheckers {
+    /// Checkers on, violations are warnings.
+    #[default]
+    Warn,
+    /// No checkers: the testbench does not instantiate them.
+    Off,
+    /// Checkers on, violations are errors and fail the run.
+    Strict,
+}
+
+impl ProtocolCheckers {
+    fn is_default(&self) -> bool {
+        *self == ProtocolCheckers::Warn
+    }
+}
+
+/// The TOML spelling: a boolean or a word.
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum ProtocolCheckersRepr {
+    Flag(bool),
+    Word(String),
+}
+
+impl TryFrom<ProtocolCheckersRepr> for ProtocolCheckers {
+    type Error = String;
+
+    fn try_from(v: ProtocolCheckersRepr) -> Result<Self, String> {
+        match v {
+            ProtocolCheckersRepr::Flag(true) => Ok(ProtocolCheckers::Warn),
+            ProtocolCheckersRepr::Flag(false) => Ok(ProtocolCheckers::Off),
+            ProtocolCheckersRepr::Word(w) => match w.as_str() {
+                "warn" => Ok(ProtocolCheckers::Warn),
+                "off" => Ok(ProtocolCheckers::Off),
+                "strict" => Ok(ProtocolCheckers::Strict),
+                other => Err(format!(
+                    "protocol_checkers = \"{other}\": expected true, false, \"warn\", \"off\" or \"strict\""
+                )),
+            },
+        }
+    }
+}
+
+impl From<ProtocolCheckers> for ProtocolCheckersRepr {
+    fn from(v: ProtocolCheckers) -> Self {
+        match v {
+            ProtocolCheckers::Warn => ProtocolCheckersRepr::Flag(true),
+            ProtocolCheckers::Off => ProtocolCheckersRepr::Flag(false),
+            ProtocolCheckers::Strict => ProtocolCheckersRepr::Word("strict".to_string()),
+        }
+    }
 }
 
 /// `[media]` section: what the board's HDMI RX and audio LINE IN receive.
@@ -569,6 +630,14 @@ const IMPLEMENTED_PS: &[&str] = &["demo", "qemu"];
 const IMPLEMENTED_PL: &[&str] = &["demo", "native", "xsim"];
 
 impl Project {
+    /// The `[rtl] protocol_checkers` setting (the default when there is no `[rtl]`).
+    pub fn protocol_checkers(&self) -> ProtocolCheckers {
+        self.rtl
+            .as_ref()
+            .map(|r| r.protocol_checkers)
+            .unwrap_or_default()
+    }
+
     /// Parses project text.
     pub fn from_toml(text: &str) -> Result<Project, ApiError> {
         toml::from_str(text).map_err(|e| ApiError::invalid_argument(format!("project.toml: {e}")))
@@ -778,14 +847,21 @@ impl Project {
                     if let Some(e) = resolved.first_error() {
                         return Err(ApiError::invalid_argument(e));
                     }
+                    // `protocol_checkers = false`: the generated testbench compiles the
+                    // checkers out (ADR-025).
+                    let mut defines = r.defines.clone();
+                    if r.protocol_checkers == ProtocolCheckers::Off {
+                        defines.push("ZS_NO_PROTOCOL_CHECKERS".to_string());
+                    }
                     Some(crate::RtlSpec {
                         vivado_root,
                         sources: resolved.files,
                         top: resolved.top.unwrap_or_default(),
-                        defines: r.defines.clone(),
+                        defines,
                         dpi_lib,
                         waves: r.waves,
                         export: resolved.export,
+                        protocol_strict: r.protocol_checkers == ProtocolCheckers::Strict,
                     })
                 } else {
                     None
@@ -1650,6 +1726,47 @@ seed = 7
         assert!(p.validate(Path::new(".")).is_empty());
         let c = p.sim_config();
         assert_eq!((c.seed, c.quantum_ps), (7, 1_000_000));
+    }
+
+    #[test]
+    fn protocol_checkers_are_on_by_default_and_take_a_flag_or_a_word() {
+        let base = "schema_version = 1
+[board]
+name = \"zybo-z7-20\"
+[rtl]
+files = []
+";
+        let mode = |line: &str| {
+            Project::from_toml(&format!(
+                "{base}{line}
+"
+            ))
+            .map(|p| p.protocol_checkers())
+            .map_err(|e| e.message)
+        };
+        assert_eq!(mode(""), Ok(ProtocolCheckers::Warn));
+        assert_eq!(mode("protocol_checkers = true"), Ok(ProtocolCheckers::Warn));
+        assert_eq!(mode("protocol_checkers = false"), Ok(ProtocolCheckers::Off));
+        assert_eq!(
+            mode("protocol_checkers = \"strict\""),
+            Ok(ProtocolCheckers::Strict)
+        );
+        assert_eq!(
+            mode("protocol_checkers = \"off\""),
+            Ok(ProtocolCheckers::Off)
+        );
+        let err = mode("protocol_checkers = \"loud\"").unwrap_err();
+        assert!(err.contains("loud"), "{err}");
+        // The default is not written back.
+        let p = Project::from_toml(&format!(
+            "{base}protocol_checkers = \"strict\"
+"
+        ))
+        .unwrap();
+        let text = p.to_toml().unwrap();
+        assert!(text.contains("protocol_checkers = \"strict\""), "{text}");
+        let plain = Project::from_toml(base).unwrap().to_toml().unwrap();
+        assert!(!plain.contains("protocol_checkers"), "{plain}");
     }
 
     #[test]

@@ -929,6 +929,19 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
         .iter()
         .filter(|r| matches!(r.event, sim_api::trace::TraceEvent::Bus { .. }))
         .count();
+    // AXI protocol checkers (ADR-025): `strict` makes a violation a failed run.
+    let checkers = a
+        .project
+        .as_ref()
+        .and_then(|p| sim_api::Project::load(p).ok())
+        .map(|p| p.protocol_checkers())
+        .unwrap_or_default();
+    let checks = sim_api::protocol_summary(engine.trace());
+    let check_mode = match checkers {
+        sim_api::ProtocolCheckers::Warn => "warn",
+        sim_api::ProtocolCheckers::Off => "off",
+        sim_api::ProtocolCheckers::Strict => "strict",
+    };
 
     if json {
         println!(
@@ -970,6 +983,13 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
                         .collect::<std::collections::BTreeMap<_, _>>(),
                 },
                 "inputs": recording.as_ref().map(|r| r.entries.len()),
+                "protocol_checks": {
+                    "mode": check_mode,
+                    "warnings": checks.warnings,
+                    "errors": checks.errors,
+                    "infos": checks.infos,
+                    "findings": checks.findings,
+                },
             })
         );
     } else {
@@ -1059,8 +1079,18 @@ fn cmd_run(json: bool, a: RunArgs) -> Result<u8, Failure> {
         if !u0.is_empty() {
             println!("uart0 tx  : {u0:?}");
         }
+        if checks.warnings + checks.errors + checks.infos > 0 {
+            println!(
+                "protocol  : {} warning(s), {} error(s), {} info ({check_mode})",
+                checks.warnings, checks.errors, checks.infos
+            );
+            for f in &checks.findings {
+                println!("  {f}");
+            }
+        }
     }
-    Ok(0)
+    // A strict run with a protocol violation fails (the error records are in the trace).
+    Ok(u8::from(checks.errors > 0))
 }
 
 fn read_recording(path: &Path) -> Result<Recording, Failure> {
@@ -1172,7 +1202,8 @@ fn init_from_ip(json: bool, dir: &Path, o: InitIp) -> Result<u8, Failure> {
     };
     let file = dir.join("project.toml");
     let tb_path = dir.join("tb").join("cosim_top.sv");
-    for p in [&file, &tb_path] {
+    let checker_path = dir.join("tb").join(sim_api::PROTOCOL_CHECKER_FILE);
+    for p in [&file, &tb_path, &checker_path] {
         if p.exists() {
             return Err(fail(
                 2,
@@ -1183,10 +1214,12 @@ fn init_from_ip(json: bool, dir: &Path, o: InitIp) -> Result<u8, Failure> {
     std::fs::create_dir_all(dir.join("tb"))
         .map_err(|e| fail(2, format!("cannot create {}: {e}", dir.display())))?;
     write_file(&tb_path, sim_api::generate_testbench(&m, &axi).as_bytes())?;
-    let rtl: Vec<String> =
+    write_file(&checker_path, sim_api::protocol_checker_source().as_bytes())?;
+    let mut rtl: Vec<String> =
         o.ip.iter()
             .map(|p| sim_api::relative_path(dir, p))
             .collect();
+    rtl.push(format!("tb/{}", sim_api::PROTOCOL_CHECKER_FILE));
     let elf = o.elf.unwrap_or_else(|| "fw/app.elf".to_string());
     write_file(
         &file,
@@ -1205,7 +1238,11 @@ fn init_from_ip(json: bool, dir: &Path, o: InitIp) -> Result<u8, Failure> {
         println!(
             "{}",
             json!({
-                "created": [file.display().to_string(), tb_path.display().to_string()],
+                "created": [
+                    file.display().to_string(),
+                    tb_path.display().to_string(),
+                    checker_path.display().to_string(),
+                ],
                 "module": m.name,
                 "interface": axi.prefix,
                 "interrupts": irqs,

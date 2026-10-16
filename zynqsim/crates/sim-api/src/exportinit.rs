@@ -143,9 +143,9 @@ pub fn plan_init(export: &Path, out: &Path, opts: &InitOptions) -> Result<Export
     let base = opts.base.unwrap_or(0x43C0_0000);
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
 
-    let project = |name: &str| {
+    let project = |name: &str, rtl: &[String]| {
         crate::generate_project(
-            &[],
+            rtl,
             "tb/cosim_top.sv",
             &elf,
             opts.elf1.as_deref(),
@@ -165,7 +165,7 @@ pub fn plan_init(export: &Path, out: &Path, opts: &InitOptions) -> Result<Export
             .cloned()
             .or_else(|| names.first().cloned())
             .ok_or_else(|| ApiError::invalid_argument("the testbench file declares no module"))?;
-        let text = project(&top)
+        let text = project(&top, &[])
             .replace("files = [\n    \"tb/cosim_top.sv\",\n]\n", "")
             .replace("top = \"cosim_top\"", &format!("top = \"{top}\""));
         (top, None, text)
@@ -235,7 +235,16 @@ pub fn plan_init(export: &Path, out: &Path, opts: &InitOptions) -> Result<Export
             "tb/cosim_top.sv".to_string(),
             crate::generate_testbench(&m, &axi).into_bytes(),
         ));
-        ("cosim_top".to_string(), Some(name.clone()), project(&name))
+        files.push((
+            format!("tb/{}", crate::PROTOCOL_CHECKER_FILE),
+            crate::protocol_checker_source().as_bytes().to_vec(),
+        ));
+        let checker = [format!("tb/{}", crate::PROTOCOL_CHECKER_FILE)];
+        (
+            "cosim_top".to_string(),
+            Some(name.clone()),
+            project(&name, &checker),
+        )
     };
     // A BOOT.BIN replaces the ELF.
     let mut toml = toml;

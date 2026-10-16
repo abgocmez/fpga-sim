@@ -158,6 +158,29 @@ Pattern used by the repository's own tests (`crates/cli/tests/cli.rs`):
 3. Determinism: run three times and require the same `trace_hash`.
 4. Replay: `zynqsim run ... --record s.json` then `zynqsim test s.json`.
 
+## 4a. AXI protocol checkers
+
+A testbench from `zynqsim init --ip` (or `--export-sim`) watches both AXI interfaces with
+protocol checkers (ADR-025). They drive nothing. Each finding is a trace record, and the run
+prints it with its simulation time, port, channel and rule:
+
+```
+protocol  : 1 warning(s), 0 error(s), 0 info (warn)
+  protocol check warning at 45635 ns: AXI4 master W LAST_EARLY detail=0x1
+```
+
+* Rules: VALID_DROP (VALID fell before READY), PAYLOAD_UNSTABLE (address, data, strobe or
+  length changed while waiting), RESET_VALID (VALID high while ARESETN is low), CROSS_4KB (an
+  INCR burst crosses 4 KB), LAST_EARLY / LAST_MISSING (WLAST or RLAST on the wrong beat), WRAP_ALIGN
+  and WRAP_LEN, SIZE (AxSIZE wider than the bus), and RESP (SLVERR or DECERR, reported as info).
+* `[rtl] protocol_checkers` in `project.toml`: `true` (the default) reports warnings; `"strict"`
+  makes each violation an `error` record and `zynqsim run` exits 1; `false` leaves the checkers out.
+  `--json` has the same counts under `protocol_checks`.
+* A hand-written testbench (your own `cosim_top.sv`) has no checkers. Copy the checker in from
+  `fixtures/rtl/common/zs_axi_checker.sv` and instantiate it if you need them.
+* Limits: a W beat that arrives before its AW turns the WLAST check off for that port; an INCR
+  burst with an unaligned start is legal and not reported.
+
 ## 5. When it fails
 
 * The run directory is `%TEMP%\zynqsim\run-*`: `qemu.err.log`, `xsim/build.log`,
@@ -176,7 +199,7 @@ Pattern used by the repository's own tests (`crates/cli/tests/cli.rs`):
 * PL timing is exact only at the 1 us quantum; CPU timing is instruction counting (fidelity F0).
 * XSim costs roughly 0.3-0.6 s of wall time per simulated millisecond; the first build of a design
   takes ~11 s (cached afterwards).
-* There is no AXI protocol checker; the generated testbench does not assert anything about your
-  IP's handshakes beyond completing them.
+* The AXI protocol checkers (section 4a) cover the generated testbenches only; a hand-written
+  testbench checks nothing about the IP's handshakes beyond completing them.
 * Typed UART input arrives on the host's schedule, not virtual time's, so tests that type
   into the firmware may see different orderings under load.

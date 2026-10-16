@@ -49,6 +49,9 @@ pub const DEV_CODEC_REG: u32 = 18;
 pub const DEV_PIN_OUT: u32 = 19;
 /// Pin-group input levels sent by the host: `line` = group, `val` = levels.
 pub const DEV_PIN_IN: u32 = 20;
+/// AXI protocol-checker findings: interrupt packets, `line` = port << 12 | channel << 8 |
+/// rule, `val` = 1 for an informational finding, `vector` = detail (ADR-025).
+pub const DEV_PROTOCOL_CHECK: u32 = 21;
 /// Audio frames sent per bus packet (and fetched per read).
 const AUDIO_BLOCK: usize = 64;
 
@@ -196,7 +199,17 @@ pub struct Dpi<T: Transport> {
     arx_block: Vec<i16>,
     arx_block_start: u64,
     arx_index: u64,
+    /// Protocol-checker findings reported before the host connected (the checkers see the
+    /// reset, which comes before `rp_open`): sent by `open`, oldest first.
+    early_checks: VecDeque<EarlyCheck>,
 }
+
+/// A protocol-checker finding waiting for the connection: `(t_ns, port, channel, rule,
+/// info, detail)`.
+type EarlyCheck = (u64, u32, u32, u32, bool, u64);
+
+/// Findings kept while disconnected; older ones are dropped beyond this.
+const EARLY_CHECKS_MAX: usize = 256;
 
 /// Video-out assembly state.
 #[derive(Default)]
@@ -241,6 +254,7 @@ impl<T: Transport> Dpi<T> {
             arx_block: Vec::new(),
             arx_block_start: u64::MAX,
             arx_index: 0,
+            early_checks: VecDeque::new(),
         }
     }
 
@@ -255,7 +269,13 @@ impl<T: Transport> Dpi<T> {
             minor: VERSION_MINOR,
             caps: vec![cap::BUSACCESS_EXT_BASE, cap::WIRE_POSTED_UPDATES],
         };
-        self.send(&hello)
+        if !self.send(&hello) {
+            return false;
+        }
+        while let Some((t_ns, port, channel, rule, info, detail)) = self.early_checks.pop_front() {
+            self.protocol_check(t_ns, port, channel, rule, info, detail);
+        }
+        true
     }
 
     /// Closes the connection.
@@ -786,6 +806,38 @@ impl<T: Transport> Dpi<T> {
         self.pins_in.get(group as usize).copied().unwrap_or(0)
     }
 
+    /// Reports one protocol-checker finding to the host, stamped `now_ns` (see
+    /// `pl_api::protocol`).
+    pub fn protocol_check(
+        &mut self,
+        now_ns: u64,
+        port: u32,
+        channel: u32,
+        rule: u32,
+        info: bool,
+        detail: u64,
+    ) {
+        if self.t.is_none() {
+            // Not connected yet: keep it for `open`.
+            if self.early_checks.len() == EARLY_CHECKS_MAX {
+                self.early_checks.pop_front();
+            }
+            self.early_checks
+                .push_back((now_ns, port, channel, rule, info, detail));
+            return;
+        }
+        let id = self.alloc_id();
+        self.send(&Packet::Interrupt(Interrupt {
+            id,
+            flags: flags::POSTED,
+            dev: DEV_PROTOCOL_CHECK,
+            timestamp: now_ns,
+            vector: detail,
+            line: (port & 0xF) << 12 | (channel & 0xF) << 8 | (rule & 0xFF),
+            val: u8::from(info),
+        }));
+    }
+
     /// Handles a testbench telemetry event. Only `{"k":"led","v":N,"t":T}` is
     /// meaningful: it reports the LED pins to the host. Everything else is
     /// dropped (the GUI reads the trace through the control plane instead).
@@ -1287,6 +1339,43 @@ mod tests {
             .recv_timeout(Duration::from_millis(50))
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn protocol_findings_are_sent_as_interrupt_packets() {
+        let (mut dpi, mut host) = pair();
+        dpi.protocol_check(1250, 1, 1, 6, false, 3);
+        match host.recv().unwrap() {
+            Packet::Interrupt(i) => {
+                assert_eq!(i.dev, DEV_PROTOCOL_CHECK);
+                assert_eq!(i.timestamp, 1250);
+                assert_eq!(i.line, 0x1106);
+                assert_eq!(i.val, 0);
+                assert_eq!(i.vector, 3);
+                assert_eq!(i.flags & flags::POSTED, flags::POSTED);
+            }
+            p => panic!("{p:?}"),
+        }
+        dpi.protocol_check(15, 0, 4, 10, true, 2);
+        match host.recv().unwrap() {
+            Packet::Interrupt(i) => assert_eq!((i.line, i.val, i.vector), (0x040A, 1, 2)),
+            p => panic!("{p:?}"),
+        }
+    }
+
+    #[test]
+    fn protocol_findings_before_the_connection_are_sent_after_the_hello() {
+        // A disconnected instance keeps them (the reset comes before rp_open).
+        let mut dpi: Dpi<StdTransport> = Dpi::new();
+        dpi.protocol_check(15, 0, 4, 3, false, 0);
+        dpi.protocol_check(25, 0, 0, 1, false, 0);
+        assert_eq!(dpi.early_checks.len(), 2);
+        // Oldest dropped beyond the bound.
+        for k in 0..EARLY_CHECKS_MAX as u64 {
+            dpi.protocol_check(100 + k, 1, 0, 2, false, k);
+        }
+        assert_eq!(dpi.early_checks.len(), EARLY_CHECKS_MAX);
+        assert_eq!(dpi.early_checks.front().map(|e| e.0), Some(100));
     }
 
     #[test]

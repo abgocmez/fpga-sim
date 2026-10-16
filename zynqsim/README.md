@@ -49,6 +49,11 @@ many changes for the window is marked "truncated: zoom in". Only signals recorde
 boundary exist, not the design's internal nets (see `docs/adr/014-waveform-viewer.md`). The MCP
 tool `waveform_get` returns the same windows as JSON, optionally drawn as SVG or PNG.
 
+AXI protocol checkers run in every `init --ip` testbench by default and report VALID/READY,
+reset, 4 KB, WLAST/RLAST and WRAP violations with their simulation time; `[rtl] protocol_checkers`
+is `true` (warnings), `false` (off) or `"strict"` (errors fail the run). See
+`docs/TEST_YOUR_DESIGN.md` section 4a and `docs/adr/025-protocol-checkers.md`.
+
 ### Run real firmware
 
 ```
