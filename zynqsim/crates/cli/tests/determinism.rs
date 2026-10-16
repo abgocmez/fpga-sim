@@ -65,6 +65,11 @@ const CASES: &[Case] = &[
     case("dma-loopback", "20ms"),
     case("dma-sg", "20ms"),
     case("gpio-timer-uart", "20ms"),
+    Case {
+        // The button press is scripted: capture on its rising edge at 3 ms.
+        extra: &["--at", "3ms=btn0:down", "--at", "4ms=btn0:up"],
+        ..case("timer-modes", "20ms")
+    },
     case("conf-gpiops", "20ms"),
     case("conf-scutimer", "200ms"),
     case("intc-demo", "20ms"),

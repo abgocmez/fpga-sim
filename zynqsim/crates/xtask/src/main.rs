@@ -156,6 +156,7 @@ const FIRMWARE: &[(&str, &str)] = &[
     ("qspi_demo", "rust_qspi.elf"),
     ("debug_demo", "rust_debug.elf"),
     ("gpio_timer_uart", "rust_gpio_timer_uart.elf"),
+    ("timer_modes", "rust_timer_modes.elf"),
     ("vendor_mix", "rust_vendor_mix.elf"),
     ("handoff_demo", "rust_handoff_demo.elf"),
     ("board8_demo", "rust_board8.elf"),

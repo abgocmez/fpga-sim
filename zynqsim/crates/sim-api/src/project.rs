@@ -1154,6 +1154,37 @@ impl Project {
         }
 
         for (key, value) in &self.connect {
+            // A board bit on an AXI Timer's capture input (`"axi_timer_0.CAPTURETRIG0" =
+            // "board.btn0"`); a whole bus on anything else (GPIO) is checked by the engine.
+            if let Some((inst, port)) = key.split_once('.') {
+                let is_timer = self.native.get(inst).map(String::as_str) == Some("axi_timer");
+                if is_timer && value.trim().starts_with("board.") {
+                    let field = format!("connect.\"{key}\"");
+                    let bit = matches!(
+                        vendor_ip::BoardSignal::parse(value),
+                        Ok(vendor_ip::BoardSignal::Switch(_) | vendor_ip::BoardSignal::Button(_))
+                    );
+                    if !matches!(port, "CAPTURETRIG0" | "CAPTURETRIG1") {
+                        d.push(err(
+                            &field,
+                            format!(
+                                "`{port}` is not a capture input of `{inst}`; an axi_timer takes \
+                                 CAPTURETRIG0 or CAPTURETRIG1 (or an interrupt, IRQ_F2P[n])"
+                            ),
+                        ));
+                        continue;
+                    } else if !bit {
+                        d.push(err(
+                            &field,
+                            format!(
+                                "`{value}`: a capture trigger takes one switch or button, \
+                                 board.swN or board.btnN (N = 0..7)"
+                            ),
+                        ));
+                        continue;
+                    }
+                }
+            }
             // A native model's interrupt routed to an interrupt controller input.
             if let Some(vendor_ip::IrqDest::Block { block, input }) =
                 vendor_ip::parse_irq_dest(value)
@@ -2014,5 +2045,40 @@ files = ["rtl/*.v"]
                 .any(|x| x.field == "network" && x.severity == Severity::Error),
             "{d:?}"
         );
+    }
+
+    #[test]
+    fn a_timer_capture_input_takes_one_bit_and_only_the_capture_pins() {
+        let errors = |connect: &str| -> Vec<String> {
+            let p = Project::from_toml(&format!(
+                "schema_version = 1
+[board]
+name = \"zybo-z7-20\"
+[backends]
+ps = \"qemu\"
+pl = \"native\"
+[native]
+tmr = \"axi_timer\"
+[connect]
+{connect}
+"
+            ))
+            .unwrap();
+            p.validate(Path::new("."))
+                .into_iter()
+                .filter(|d| d.severity == Severity::Error && d.field.contains("connect"))
+                .map(|d| d.message)
+                .collect()
+        };
+        assert!(errors("\"tmr.CAPTURETRIG0\" = \"board.btn0\"").is_empty());
+        assert!(errors("\"tmr.CAPTURETRIG1\" = \"board.sw3\"").is_empty());
+        assert!(errors("\"tmr.CAPTURETRIG0\" = \"board.btn\"")[0].contains("one switch or button"));
+        assert!(
+            errors("\"tmr.CAPTURETRIG0\" = \"board.btn9\"")[0].contains("one switch or button")
+        );
+        assert!(
+            errors("\"tmr.CAPTURETRIG0\" = \"board.pmod_ja\"")[0].contains("one switch or button")
+        );
+        assert!(errors("\"tmr.GENERATEOUT0\" = \"board.btn0\"")[0].contains("not a capture input"));
     }
 }

@@ -23,8 +23,27 @@
 //! simulated time at which it is read, and the interrupt reaches the PS at the next lock-step
 //! sync (see `pl_native::NativePl::advance`).
 //!
-//! Not modelled (stubs): capture mode (there are no capture pins, a timer in capture mode just
-//! counts), cascade mode (64 bit; `CASC` reads back as written and has no effect).
+//! Capture mode (`MDT` = 1): a rising edge on `CAPTURETRIG0` (timer 0) or `CAPTURETRIG1`
+//! (timer 1) while `CAPT` and `ENT` are set copies the counter into `TLR` (the capture register),
+//! sets `TINT` and counts a capture. The trigger comes from a board switch or button bound with
+//! `[connect] "<inst>.CAPTURETRIG0" = "board.btn0"` (or `board.swN`), or programmatically through
+//! [`TimerHandle::capture_input`]. Rollovers set no interrupt in capture mode.
+//!
+//! Cascade mode (`CASC` in `TCSR0`): the two timers form one counter of `2 * C_COUNT_WIDTH` bits,
+//! timer 1 is the high word (`TCR1`, `TLR1`), timer 0 the low word. Timer 0's `ENT`, `UDT`,
+//! `ARHT`, `MDT`, `GENT`, `LOAD` and `CAPT` control it; the carry from timer 0 is internal. A
+//! rollover of the 64-bit counter sets `TINT` of both timers, and a capture on `CAPTURETRIG0`
+//! stores the 64-bit count in `TLR1:TLR0` and sets `TINT0`.
+//!
+//! `VERIFY:` items (capture and cascade are from memory of PG079, not from hardware):
+//! * Capture: the trigger is a rising edge; capture needs `ENT` as well as `CAPT`; `TLR` holds
+//!   the captured count; `TINT` and `ENIT` report it.
+//! * Capture with `ARHT` ("hold"): the counter stops at the captured value until `TINT` is
+//!   cleared by a write of 1 (what a driver's "hold" means is not checked).
+//! * Cascade: which timer's `TINT` and interrupt a 64-bit rollover uses (both are set here),
+//!   whether `CAPTURETRIG1` is ignored in cascade mode, and whether timer 1's own `ENT`, `UDT`
+//!   and `ARHT` are ignored (they are, here).
+//! * `pwm` and `GENT` pulses in cascade mode count the 64-bit rollovers.
 //!
 //! `VERIFY:` items:
 //! * Period: up `MAX - TLR + 1` clocks, down `TLR + 1` clocks (PG079's period formula as
@@ -131,6 +150,7 @@ struct Chan {
     count: u32,
     rollovers: u64,
     pulses: u64,
+    captures: u64,
     /// Cycle number of the last rollover.
     last_roll: Option<u64>,
 }
@@ -139,6 +159,8 @@ struct Chan {
 struct State {
     cfg: TimerConfig,
     t: [Chan; 2],
+    /// Last level seen on `CAPTURETRIG0` and `CAPTURETRIG1` (for the rising edge).
+    trig: [bool; 2],
     /// Clock cycle (since time 0) of the last synchronisation.
     cyc: u64,
 }
@@ -152,13 +174,48 @@ impl State {
         if self.cfg.one_timer_only { 1 } else { 2 }
     }
 
+    /// True when the two timers form one 64-bit counter (`CASC` in `TCSR0`).
+    fn cascaded(&self) -> bool {
+        self.channels() == 2 && self.t[0].tcsr & CASC != 0
+    }
+
+    fn word_mask(&self) -> u128 {
+        (1u128 << self.cfg.count_width) - 1
+    }
+
+    /// The cascaded counter: timer 1 is the high word.
+    fn joined(&self) -> u128 {
+        let w = self.cfg.count_width;
+        ((u128::from(self.t[1].count) << w) | u128::from(self.t[0].count))
+            & ((1u128 << (2 * w)) - 1)
+    }
+
+    /// The cascaded load value `TLR1:TLR0`.
+    fn joined_tlr(&self) -> u128 {
+        let w = self.cfg.count_width;
+        let m = self.word_mask();
+        ((u128::from(self.t[1].tlr) & m) << w) | (u128::from(self.t[0].tlr) & m)
+    }
+
+    /// Stores a cascaded count into the two counter registers.
+    fn split(&mut self, v: u128) {
+        let w = self.cfg.count_width;
+        let m = self.word_mask();
+        self.t[0].count = (v & m) as u32;
+        self.t[1].count = ((v >> w) & m) as u32;
+    }
+
     fn sync(&mut self, now_ns: u64) {
         let c = self.cycle_of(now_ns);
         if c > self.cyc {
             let d = c - self.cyc;
             let base = self.cyc;
-            for i in 0..self.channels() {
-                self.step(i, d, base);
+            if self.cascaded() {
+                self.step_cascade(d, base);
+            } else {
+                for i in 0..self.channels() {
+                    self.step(i, d, base);
+                }
             }
             self.cyc = c;
         }
@@ -180,7 +237,11 @@ impl State {
         // Clocks until the next rollover event.
         let to_roll = if down { count + 1 } else { max - count + 1 };
         if t.tcsr & MDT != 0 {
-            // Capture mode: free running, wraps, no events.
+            // Capture mode: free running and wrapping, no events. With ARHT ("hold") the
+            // counter stops at a captured value until its TINT is cleared.
+            if t.tcsr & ARHT != 0 && t.tcsr & TINT != 0 {
+                return;
+            }
             let m = max + 1;
             let v = if down {
                 (count + m - d % m) % m
@@ -213,12 +274,96 @@ impl State {
         }
     }
 
+    /// Cascade mode: one counter of `2 * C_COUNT_WIDTH` bits driven by timer 0's control bits.
+    fn step_cascade(&mut self, d: u64, base: u64) {
+        let w = self.cfg.count_width;
+        let max = (1u128 << (2 * w)) - 1;
+        let tcsr = self.t[0].tcsr;
+        let reload = self.joined_tlr();
+        if tcsr & LOAD != 0 {
+            self.split(reload);
+            return;
+        }
+        if tcsr & ENT == 0 {
+            return;
+        }
+        if tcsr & MDT != 0 && tcsr & ARHT != 0 && self.t[0].tcsr & TINT != 0 {
+            return; // hold after a capture
+        }
+        let down = tcsr & UDT != 0;
+        let count = self.joined();
+        let d = u128::from(d);
+        if tcsr & MDT != 0 {
+            let m = max + 1;
+            let v = if down {
+                (count + m - d % m) % m
+            } else {
+                (count + d) % m
+            };
+            self.split(v);
+            return;
+        }
+        let to_roll = if down { count + 1 } else { max - count + 1 };
+        if d < to_roll {
+            self.split(if down { count - d } else { count + d });
+            return;
+        }
+        let rem = d - to_roll;
+        let (period, start) = if tcsr & ARHT != 0 {
+            let p = if down { reload + 1 } else { max - reload + 1 };
+            (p, reload)
+        } else {
+            (max + 1, if down { max } else { 0 })
+        };
+        let n = 1 + rem / period;
+        let r = rem % period;
+        self.split(if down { start - r } else { start + r });
+        let last = base + (to_roll + (n - 1) * period) as u64;
+        self.t[0].rollovers += n as u64;
+        self.t[0].last_roll = Some(last);
+        if tcsr & GENT != 0 {
+            self.t[0].pulses += n as u64;
+        }
+        self.t[0].tcsr |= TINT;
+        self.t[1].tcsr |= TINT;
+    }
+
+    /// A level on `CAPTURETRIG<ch>` at `now_ns`: a rising edge captures the counter.
+    fn capture_input(&mut self, ch: usize, level: bool, now_ns: u64) {
+        self.sync(now_ns);
+        let rising = level && !self.trig[ch];
+        self.trig[ch] = level;
+        if !rising {
+            return;
+        }
+        const NEED: u32 = MDT | CAPT | ENT;
+        if self.cascaded() {
+            // The cascade captures on CAPTURETRIG0 only.
+            if ch != 0 || self.t[0].tcsr & NEED != NEED {
+                return;
+            }
+            let v = self.joined();
+            let w = self.cfg.count_width;
+            let m = self.word_mask();
+            self.t[0].tlr = (v & m) as u32;
+            self.t[1].tlr = ((v >> w) & m) as u32;
+            self.t[0].captures += 1;
+            self.t[0].tcsr |= TINT;
+        } else if ch < self.channels() && self.t[ch].tcsr & NEED == NEED {
+            let t = &mut self.t[ch];
+            t.tlr = t.count;
+            t.captures += 1;
+            t.tcsr |= TINT;
+        }
+    }
+
     fn irq(&self) -> bool {
         (0..self.channels()).any(|i| self.t[i].tcsr & (TINT | ENIT) == (TINT | ENIT))
     }
 
     fn reset(&mut self) {
         self.t = [Chan::default(); 2];
+        self.trig = [false; 2];
     }
 }
 
@@ -251,6 +396,7 @@ impl AxiTimer {
         let st = Arc::new(Mutex::new(State {
             cfg,
             t: [Chan::default(); 2],
+            trig: [false; 2],
             cyc: 0,
         }));
         (
@@ -293,6 +439,21 @@ impl TimerHandle {
             (Some(a), Some(b)) => a > b,
             (Some(_), None) => true,
             _ => false,
+        }
+    }
+
+    /// Number of capture events of timer `i` since reset (rising edges on its trigger while
+    /// capture mode is armed).
+    pub fn captures(&self, i: usize) -> u64 {
+        self.lock().t.get(i).map_or(0, |t| t.captures)
+    }
+
+    /// Drives `CAPTURETRIG<ch>` (0 or 1) to `level` at simulated time `now_ns`. A rising edge
+    /// captures the counter into `TLR` when the timer is in capture mode with `CAPT` and `ENT`
+    /// set. The board binding calls this with the switch or button level.
+    pub fn capture_input(&self, ch: usize, level: bool, now_ns: u64) {
+        if ch < 2 {
+            self.lock().capture_input(ch, level, now_ns);
         }
     }
 
@@ -347,7 +508,12 @@ impl RegisterBlock for AxiTimer {
                 let new = (v & !TINT) | tint;
                 s.t[i].tcsr = new;
                 if new & LOAD != 0 {
-                    s.t[i].count = s.t[i].tlr & max;
+                    if s.cascaded() {
+                        let r = s.joined_tlr();
+                        s.split(r);
+                    } else {
+                        s.t[i].count = s.t[i].tlr & max;
+                    }
                 }
                 if new & ENALL != 0 {
                     for k in 0..s.channels() {
@@ -578,5 +744,187 @@ mod tests {
         assert_eq!(t.read32(TCR0), 50);
         assert_eq!(clocks_in(1_000, 50_000_000), 50);
         assert_eq!(clock_param(&p), Ok(50_000_000));
+    }
+
+    /// Capture mode on timer 0 from count 0 at time 0 (`MDT | CAPT | ENT`, plus `extra`).
+    fn armed_capture(t: &mut AxiTimer, extra: u32) {
+        t.advance(0);
+        w(t, TLR0, 0);
+        w(t, TCSR0, LOAD);
+        w(t, TCSR0, MDT | CAPT | ENT | extra);
+    }
+
+    #[test]
+    fn capture_on_a_rising_edge_copies_the_counter_into_tlr() {
+        let (mut t, h) = timer();
+        armed_capture(&mut t, ENIT);
+        // 1 us after the start the counter is 100 (10 ns clocks).
+        h.capture_input(0, true, 1_000);
+        assert_eq!(h.captures(0), 1);
+        assert_eq!(t.read32(TLR0), 100, "the captured count is in TLR0");
+        assert_eq!(t.read32(TCSR0) & TINT, TINT, "the capture sets TINT");
+        assert!(t.irq_level(), "TINT and ENIT raise the interrupt");
+        // The counter keeps running; the capture register does not follow it.
+        t.advance(3_000);
+        assert_eq!(t.read32(TCR0), 300);
+        assert_eq!(t.read32(TLR0), 100);
+        // Write 1 to TINT clears the flag and the interrupt; writing 0 leaves it.
+        w(&mut t, TCSR0, MDT | CAPT | ENT | ENIT);
+        assert_eq!(t.read32(TCSR0) & TINT, TINT);
+        w(&mut t, TCSR0, MDT | CAPT | ENT | ENIT | TINT);
+        assert_eq!(t.read32(TCSR0) & TINT, 0);
+        assert!(!t.irq_level());
+    }
+
+    #[test]
+    fn capture_needs_a_rising_edge_not_a_level() {
+        let (mut t, h) = timer();
+        armed_capture(&mut t, 0);
+        h.capture_input(0, true, 1_000);
+        // The input stays high: no second edge, no second capture.
+        h.capture_input(0, true, 2_000);
+        assert_eq!(h.captures(0), 1);
+        assert_eq!(t.read32(TLR0), 100, "the first edge's value");
+        // Falling then rising again: a new capture at the new time.
+        h.capture_input(0, false, 2_500);
+        h.capture_input(0, true, 4_000);
+        assert_eq!(h.captures(0), 2);
+        assert_eq!(t.read32(TLR0), 400);
+    }
+
+    #[test]
+    fn capture_is_ignored_when_capt_or_ent_or_mdt_is_clear() {
+        let (mut t, h) = timer();
+        // Capture mode but CAPT clear: the trigger does nothing.
+        armed_capture(&mut t, 0);
+        w(&mut t, TCSR0, MDT | ENT);
+        h.capture_input(0, true, 1_000);
+        assert_eq!(h.captures(0), 0);
+        assert_eq!(t.read32(TLR0), 0);
+        assert_eq!(t.read32(TCSR0) & TINT, 0);
+        // Generate mode: the same edge on CAPTURETRIG0 is not a capture.
+        h.capture_input(0, false, 1_100);
+        w(&mut t, TCSR0, CAPT | ENT);
+        h.capture_input(0, true, 1_200);
+        assert_eq!(h.captures(0), 0);
+        // A stopped timer does not capture either.
+        h.capture_input(0, false, 1_300);
+        w(&mut t, TCSR0, MDT | CAPT);
+        h.capture_input(0, true, 1_400);
+        assert_eq!(h.captures(0), 0);
+        assert_eq!(t.read32(TLR0), 0);
+    }
+
+    #[test]
+    fn timer1_has_its_own_capture_trigger() {
+        let (mut t, h) = timer();
+        t.advance(0);
+        w(&mut t, TLR1, 0);
+        w(&mut t, TCSR1, LOAD);
+        w(&mut t, TCSR1, MDT | CAPT | ENT);
+        h.capture_input(0, true, 500); // CAPTURETRIG0 is not wired to timer 1
+        assert_eq!(h.captures(1), 0);
+        h.capture_input(1, true, 500);
+        assert_eq!(h.captures(1), 1);
+        assert_eq!(t.read32(TLR1), 50);
+        assert_eq!(h.captures(0), 0);
+    }
+
+    #[test]
+    fn capture_with_arht_holds_the_counter_until_tint_is_cleared() {
+        let (mut t, h) = timer();
+        armed_capture(&mut t, ENIT | ARHT);
+        h.capture_input(0, true, 1_000);
+        assert_eq!(t.read32(TLR0), 100);
+        t.advance(5_000);
+        assert_eq!(t.read32(TCR0), 100, "held after the capture");
+        // Clearing TINT releases the hold; the time spent held is not counted.
+        t.advance(5_000);
+        w(&mut t, TCSR0, MDT | CAPT | ENT | ENIT | ARHT | TINT);
+        t.advance(6_000);
+        assert_eq!(t.read32(TCR0), 200);
+    }
+
+    #[test]
+    fn cascade_carries_from_timer0_into_timer1_across_the_32_bit_boundary() {
+        let (mut t, h) = timer();
+        t.advance(0);
+        w(&mut t, TLR1, 0);
+        w(&mut t, TLR0, 0xFFFF_FFF0);
+        w(&mut t, TCSR0, LOAD | CASC);
+        assert_eq!(t.read32(TCR0), 0xFFFF_FFF0);
+        assert_eq!(t.read32(TCR1), 0);
+        w(&mut t, TCSR0, ENT | CASC);
+        // 16 clocks reach 2^32: the low word wraps and the high word counts the carry.
+        t.advance(160);
+        assert_eq!(t.read32(TCR0), 0);
+        assert_eq!(t.read32(TCR1), 1);
+        t.advance(170);
+        assert_eq!(t.read32(TCR0), 1);
+        assert_eq!(t.read32(TCR1), 1);
+        // A carry is not a 64-bit rollover: no interrupt, no rollover count.
+        assert_eq!(t.read32(TCSR0) & TINT, 0);
+        assert_eq!(h.rollovers(0), 0);
+    }
+
+    #[test]
+    fn cascade_rollover_is_a_64_bit_rollover_with_a_periodic_interrupt() {
+        let (mut t, h) = timer();
+        t.advance(0);
+        // Reload 2^64 - 16 with auto reload: a 16-clock period of the 64-bit counter.
+        w(&mut t, TLR1, u32::MAX);
+        w(&mut t, TLR0, 0xFFFF_FFF0);
+        w(&mut t, TCSR0, LOAD | CASC);
+        w(&mut t, TCSR0, ENT | CASC | ARHT | ENIT);
+        t.advance(160);
+        assert_eq!(h.rollovers(0), 1, "one 64-bit rollover in 16 clocks");
+        assert_eq!(t.read32(TCR1), u32::MAX, "reloaded, high word kept");
+        assert_eq!(t.read32(TCR0), 0xFFFF_FFF0);
+        assert!(t.irq_level());
+        // Both timers show TINT; clearing timer 0's flag drops the output.
+        assert_eq!(t.read32(TCSR1) & TINT, TINT);
+        w(&mut t, TCSR0, ENT | CASC | ARHT | ENIT | TINT);
+        assert!(!t.irq_level());
+        // The next rollover is 16 clocks later (clock 32) and raises it again.
+        t.advance(320);
+        assert_eq!(h.rollovers(0), 2);
+        assert!(t.irq_level());
+        // Clocks 33..64 hold two more rollovers (48 and 64): four in total.
+        t.advance(640);
+        assert_eq!(h.rollovers(0), 4);
+    }
+
+    #[test]
+    fn cascade_capture_stores_the_64_bit_count_in_tlr1_tlr0() {
+        let (mut t, h) = timer();
+        t.advance(0);
+        w(&mut t, TLR1, 0);
+        w(&mut t, TLR0, 0xFFFF_FFF0);
+        w(&mut t, TCSR0, LOAD | CASC);
+        w(&mut t, TCSR0, MDT | CAPT | ENT | CASC);
+        // 100 clocks after the start: 0xFFFF_FFF0 + 100 = 0x1_0000_0054.
+        h.capture_input(0, true, 1_000);
+        assert_eq!(h.captures(0), 1);
+        assert_eq!(t.read32(TLR0), 0x54);
+        assert_eq!(t.read32(TLR1), 1);
+        assert_eq!(t.read32(TCSR0) & TINT, TINT);
+        // Timer 1's trigger is not part of the cascade.
+        h.capture_input(1, true, 2_000);
+        assert_eq!(h.captures(1), 0);
+    }
+
+    #[test]
+    fn reset_clears_captures_and_the_trigger_level() {
+        let (mut t, h) = timer();
+        armed_capture(&mut t, ENIT);
+        h.capture_input(0, true, 1_000);
+        assert_eq!(h.captures(0), 1);
+        t.reset();
+        assert_eq!(h.captures(0), 0);
+        assert_eq!(t.read32(TCSR0), 0);
+        // After reset the input is low again: a high level is a fresh rising edge.
+        armed_capture(&mut t, 0);
+        h.capture_input(0, true, 2_000);
+        assert_eq!(h.captures(0), 1);
     }
 }

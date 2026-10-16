@@ -190,7 +190,13 @@ zynqsim run --project examples/dma-loopback/project.toml --for 4ms   # direct mo
 zynqsim run --project examples/dma-sg/project.toml --for 3ms         # scatter-gather, hand-written
 zynqsim run --project examples/iic-bram-demo/project.toml --for 8ms  # IIC reads a TMP2, BRAM
 zynqsim run --project examples/intc-demo/project.toml --for 3ms      # INTC collects timer and GPIO
+zynqsim run --project examples/timer-modes/project.toml --for 20ms \
+  --at 3ms=btn0:down --at 4ms=btn0:up                                 # timer capture on a button, 64-bit cascade
 ```
+
+The AXI Timer's capture and cascade modes (ADR-026) are bound like the GPIO channels: a
+`CAPTURETRIG0` or `CAPTURETRIG1` input takes one switch or button (`[connect]
+"axi_timer_0.CAPTURETRIG0" = "board.btn0"`).
 
 The scatter-gather DMA has no Vivado handoff; its limits are in ADR-021 and STATUS.md.
 
@@ -375,8 +381,8 @@ licences: [docs/CORPUS.md](docs/CORPUS.md); decision: [docs/adr/020-corpus.md](d
 | `crates/` | `sim-core`, `trace`, `board-zybo`, `devices`, `sim-api`, `mcp`, `cli`, `gui`, `xtask`, `interop`, `pl-api`, `pl-native`, `backend-qemu`, `backend-rtl-xsim`, `xsim-dpi` |
 | `boards/` | board descriptions (TOML) |
 | `docs/` | `DESIGN.md`, `STATUS.md`, `TESTPLAN.md`, `adr/` |
-| `examples/` | `demo`, `custom-board`, `zedboard-demo`, `math-qemu`, `math-debug`, `dma-regression`, `board-demo`, `audio-demo`, `hdmi-demo`, `irq-demo`, `oled-demo`, `rgb-demo`, `rust-hello`, `rust-debug`, `net-demo`, `sd-demo`, `qspi-demo`, `bsp-hello`, `bsp-peripherals` (Xilinx's own BSP templates, unmodified), `gpio-timer-uart`, `dma-loopback`, `dma-sg`, `iic-bram-demo`, `intc-demo` projects |
-| `firmware/` | Rust `no_std` Cortex-A9 firmware (`hello`, `audio_demo`, `hdmi_demo`, `irq_demo`, `oled_demo`, `rgb_demo`, `net_demo`, `sd_demo`, `qspi_demo`, `gpio_timer_uart`, `dma_loopback`, `dma_sg`, `iic_bram_demo`, `intc_demo`, `vendor_mix`); its own workspace, built by `cargo xtask firmware` |
+| `examples/` | `demo`, `custom-board`, `zedboard-demo`, `math-qemu`, `math-debug`, `dma-regression`, `board-demo`, `audio-demo`, `hdmi-demo`, `irq-demo`, `oled-demo`, `rgb-demo`, `rust-hello`, `rust-debug`, `net-demo`, `sd-demo`, `qspi-demo`, `bsp-hello`, `bsp-peripherals` (Xilinx's own BSP templates, unmodified), `gpio-timer-uart`, `timer-modes`, `dma-loopback`, `dma-sg`, `iic-bram-demo`, `intc-demo` projects |
+| `firmware/` | Rust `no_std` Cortex-A9 firmware (`hello`, `audio_demo`, `hdmi_demo`, `irq_demo`, `oled_demo`, `rgb_demo`, `net_demo`, `sd_demo`, `qspi_demo`, `gpio_timer_uart`, `timer_modes`, `dma_loopback`, `dma_sg`, `iic_bram_demo`, `intc_demo`, `vendor_mix`); its own workspace, built by `cargo xtask firmware` |
 | `fixtures/` | prototype firmware ELFs, the prebuilt Rust ELFs (`rust_*.elf`) and the RTL used by the examples and tests |
 
 Requirements: [../docs/RUST_SOC_SIM_PROMPT.md](../docs/RUST_SOC_SIM_PROMPT.md).

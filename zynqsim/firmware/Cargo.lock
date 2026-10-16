@@ -401,6 +401,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "timer_modes"
+version = "0.1.0"
+dependencies = [
+ "rt",
+]
+
+[[package]]
 name = "tmp2_demo"
 version = "0.1.0"
 dependencies = [
