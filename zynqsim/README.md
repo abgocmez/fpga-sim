@@ -358,6 +358,12 @@ Development of this repository is done with Claude Code and sub-agents. Tokens a
   with `git merge --ff-only <your-branch>`.
 * Keep reports short and in files: long logs go to a file and only the failing lines are read.
 
+## Universality corpus
+
+Thirteen third-party permissively licensed RTL designs (CPUs, crypto cores, AXI-Stream and FIFO
+blocks) run under Vivado XSim, plus negative cases for unsupported constructs. Table and
+licences: [docs/CORPUS.md](docs/CORPUS.md); decision: [docs/adr/020-corpus.md](docs/adr/020-corpus.md).
+
 ## Layout
 
 | Path | Contents |

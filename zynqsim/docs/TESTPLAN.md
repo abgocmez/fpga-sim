@@ -14,7 +14,7 @@ release build). Regenerate golden images: `cargo xtask golden` (review the diff)
 | 2. Peripheral conformance (xuartps, xgpiops, ...) | not started (P1+) | n/a |
 | 3. Multicore (WFE/SEV, LDREX/STREX, SGI) | not started (P1+) | n/a |
 | 4. PL protocol checkers, 4 KB crossing, IRQ completion | not started (P1) | n/a |
-| 5. Universality corpus (>= 10 third-party designs) | not started (P3) | n/a |
+| 5. Universality corpus (>= 10 third-party designs) | **done**: 13 third-party permissively licensed designs (MIT, ISC, BSD-2-Clause, Apache-2.0, SHL-0.51) pass in XSim, plus 18 negative cases and 7 construct probes; table in `docs/CORPUS.md` | `backend-rtl-xsim::corpus::corpus_*` (14), `negative_*` (18), `probe_*` (7), `the_manifest_matches_the_files_on_disk`, `every_negative_case_has_a_test`, `corpus_table_is_current` |
 | 6. Determinism, 5 runs, identical hashes | **done**: demo model (5 runs, in-process and 5 processes), QEMU+native PL (3 processes), QEMU+XSim DMA (3 processes in the test, 5 runs manually) | `sim-api::sim::tests::five_runs_one_digest_and_replay_agrees`, `zynqsim::five_separate_processes_produce_one_trace_hash`, `zynqsim::qemu_project_runs_the_firmware_and_is_deterministic`, `zynqsim::dma_regression_passes_and_is_deterministic_across_processes`, `backend-qemu::two_runs_are_identical_in_time_and_traffic` |
 | 7. GUI headless render vs golden PNGs | **done for the board renderer** | `board-zybo::render::tests::default_board_matches_golden`, `active_board_matches_golden` |
 | 8. MCP schema validation, scenario, fuzzed inputs | **done** | `crates/mcp/tests/{scenario,fuzz,stdio}.rs`, `tools::tests::*`, `schema::tests::*` |
@@ -40,6 +40,22 @@ release build). Regenerate golden images: `cargo xtask golden` (review the diff)
 | `boot` (15), `sim-api` `bootbin` (3), `zynqsim` `bootbin` (5), `zynqsim-mcp` `bootbin` (2) | a real `bootgen` 2022.1 image read field by field (values equal `bootgen -read`); MD5 against RFC 1321 vectors; every kind of corruption named with field and file offset (boot header, partition header, payload MD5, truncation, magic words); encrypted/authenticated images refused; 3000 seeded mutations never panic; payloads equal the ELF segments given to bootgen; project validation per field; `boot-info`, `init --boot`, MCP `boot_inspect`; booted from BOOT.BIN the UART text equals the ELF boot | BOOT.BIN support (§12, P3) is right on the one image bootgen produced here and honest about what it refuses and does not run (FSBL, `ps7_init`, bitstream) |
 | `xsim-export` (14), `backend-rtl-xsim` `export::tests` (5, no tools), `sim-api` `exportsim::tests` (4), `zynqsim` `export_sim` (2 of 3), `zynqsim-mcp` `export` (2) | `.prj` shapes (comments, quoted and spaced paths, relative `..`, continuations, per-line `-i`/`-d`/`-L`, libraries), `.f` lists (nested, `-work`, `+incdir+`/`+define+`), `elab.opt`, `xsim.ini`, scripts with variables, one netlist file, environment variables, include loops; the two real Vivado 2022.1 exports; diagnostics with file:line:construct; xvlog/xvhdl/xelab command lines (order, libraries, `glbl`, quoting, library mapping); glob matching and expansion; project validation with an export; `init --export-sim` and MCP `project_create_from_export` | Vivado simulation exports (§9.1 items 3-4, P3) are read faithfully and everything unsupported is named |
 | `sim-api` `netlog::tests` (3), `project::tests::network_*` (3) | counters, direction, paging, bounded retention, digest depends on the payload; `[network]` defaults/overrides, every problem with its field, needs a CPU backend | the engine's capture record and the `[network]` section behave as documented |
+
+## Universality corpus (P3, Vivado XSim)
+
+Driver: `crates/backend-rtl-xsim/tests/corpus.rs` (+ `src/standalone.rs`); designs in
+`tests/rtl/`; generated table `docs/CORPUS.md` (regenerate with
+`ZYNQSIM_CORPUS_BLESS=1 cargo test -p backend-rtl-xsim --test corpus corpus_table_is_current`).
+Needs Vivado/XSim; skipped with a message when it is not found.
+
+| Area | Tests | What they establish |
+|---|---|---|
+| Third-party designs compile, elaborate and run their own or a stated self-check | `corpus_secworks_*` (5), `corpus_forencich_*` (3), `corpus_picorv32`, `corpus_uriscv`, `corpus_serv`, `corpus_pulp_common_cells`, `corpus_dpretet_async_fifo` | the simulator handles real RTL outside this project |
+| Design in this repository, from a Vivado export | `corpus_vivado_funcsim_netlist` | a UNISIM netlist runs under the driver |
+| Negative cases: each unsupported or erroneous construct fails at the stated stage with its file:line diagnostic | `negative_*` (18) | the failure is reported, not silent |
+| Construct probes (bind, config, covergroup, constrained random, assertions, UVM with library, virtual modport) | `probe_*` (7) | which SystemVerilog and UVM constructs run |
+| Corpus manifest: licence, commit and source files exist for every design | `the_manifest_matches_the_files_on_disk` | no design without provenance |
+| Table is current | `corpus_table_is_current` | `docs/CORPUS.md` matches the test results |
 
 ## Tests that need external engines (P1)
 

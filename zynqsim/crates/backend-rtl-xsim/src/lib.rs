@@ -22,7 +22,12 @@
 //! static archive there and the DPI library is built `no_std` for that.
 
 mod export;
+mod standalone;
 pub use export::{ExportPlan, plan as plan_export};
+pub use standalone::{
+    DiagSeverity, FinishInfo, Stage, StandaloneConfig, StandaloneReport, StandaloneSource,
+    ToolDiagnostic, locate_constructs, parse_diagnostics, parse_finish, run_standalone,
+};
 pub use xsim_export::ExportDesign;
 
 use interop::{
@@ -96,7 +101,24 @@ impl fmt::Display for XsimError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             XsimError::MissingFile(p) => write!(f, "file not found: {}", p.display()),
-            XsimError::Build { step, log } => write!(f, "XSim build failed at {step}:\n{log}"),
+            XsimError::Build { step, log } => {
+                write!(f, "XSim build failed at {step}:\n{log}")?;
+                // The compiler's file/line/construct, once more in one place (prompt §9.1).
+                let mut found = standalone::parse_diagnostics(standalone::Stage::Xvlog, log);
+                found.retain(standalone::ToolDiagnostic::is_error);
+                if !found.is_empty() {
+                    write!(f, "\nunsupported or invalid constructs:")?;
+                    for d in &found {
+                        match (&d.file, d.line) {
+                            (Some(file), Some(line)) => {
+                                write!(f, "\n  {file}:{line}: `{}`", d.construct_or_message())?;
+                            }
+                            _ => write!(f, "\n  `{}`", d.construct_or_message())?,
+                        }
+                    }
+                }
+                Ok(())
+            }
             XsimError::Io(e) => write!(f, "XSim adapter I/O error: {e}"),
             XsimError::NotConnected { detail } => {
                 write!(f, "XSim did not connect to the adapter: {detail}")
@@ -415,7 +437,7 @@ impl XsimPl {
                 };
                 return Err(XsimError::Build {
                     step,
-                    log: tail(&build_log),
+                    log: standalone::failure_log(&build_log),
                 });
             }
             if let (Some(dir), Some(k)) = (&cfg.cache_dir, &key) {
