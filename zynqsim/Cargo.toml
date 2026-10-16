@@ -28,6 +28,7 @@ members = [
     "crates/dpi-cdylib",
     "crates/backend-rtl-xsim",
     "crates/backend-rtl-verilator",
+    "crates/rtl-frontend",
 ]
 default-members = [
     "crates/sim-core",
@@ -53,6 +54,7 @@ default-members = [
     "crates/xsim-dpi",
     "crates/backend-rtl-xsim",
     "crates/backend-rtl-verilator",
+    "crates/rtl-frontend",
 ]
 
 [workspace.package]

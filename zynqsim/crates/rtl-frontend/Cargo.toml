@@ -1,0 +1,16 @@
+[package]
+name = "rtl-frontend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Adds `serde::Serialize` to the AST, the diagnostics and the design summary.
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"], optional = true }

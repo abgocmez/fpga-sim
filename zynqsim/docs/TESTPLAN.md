@@ -244,3 +244,20 @@ firmware word sweep proves decoding, not behaviour; `rust_firmware` assertions c
   both (`cli::verilator`), but this is one design. The DMA regression, the board, media and pin
   models have **not** been run under Verilator. Trace digests are compared, not asserted equal,
   by the test (equal in the one run recorded in STATUS.md).
+## Native RTL front end (P6, optional)
+
+Run: `cargo test -p rtl-frontend` (93 tests, about 4 s) and `cargo test -p zynqsim --test rtl_check`
+(5 tests). Nothing here needs an external tool, so none of these tests skip.
+
+| Test | Needs | What it establishes |
+|---|---|---|
+| `rtl-frontend` `lexer_pp` (23) | nothing | literals (sized, based, unsized, fill, reals), operators, comments, continuations, positions; macros (object, function, defaults, pasting); conditionals; `include` (file-relative, cycles, missing); `timescale`, `default_nettype`, `-D` |
+| `rtl-frontend` `parser` (40) | nothing | every construct in `docs/RTL_SUBSET.md` parses to the expected AST shape; operator precedence through an S-expression printer; unsupported constructs are named with their position and parsing continues; a broken statement does not lose the next module |
+| `rtl-frontend` `elab` (26) | nothing | constant evaluation (widths, signs, shifts, reductions, `$clog2`, constant functions, step limit); parameter overrides; generate unrolling and paths; widths of ports and nets; undefined module, port, identifier and function checks; recursion limit |
+| `rtl-frontend` `corpus` (1) | the repository's sources (no tool) | every Verilog and SV file under `zynqsim/{fixtures,examples,tests}` (148): the pinned list of 39 files with their constructs; no other file produces diagnostics; `RTL_CORPUS_PRINT=1` prints the current list |
+| `rtl-frontend` `fuzz` (3) | nothing | 5000 mutated sources: no panic, no budget exhaustion; the lexer loop found by the fuzzer; the budget stops a large input |
+| `zynqsim` `rtl_check` (5) | the built binary | exit codes 0, 1 (`file:line:col: construct: message`), 2 (unreadable file); JSON hierarchy and port widths with `--top`; `-I` and `-D` |
+
+Not covered: that a parse-clean design elaborates or simulates like XSim (no differential run yet);
+the DPI, class, interface and package constructs (reported, not parsed); performance on large designs
+(the corpus is the largest input; a 2000-module input is only checked against the budget).

@@ -156,6 +156,24 @@ enum Cmd {
         #[arg(long, alias = "boot-bin")]
         boot: Option<PathBuf>,
     },
+    /// Parse Verilog/SystemVerilog with the native front end and print its diagnostics.
+    ///
+    /// Exit codes: 0 no diagnostics, 1 diagnostics (each `file:line:col: construct: message`),
+    /// 2 a file cannot be read.
+    RtlCheck {
+        /// Source files (`.v`, `.sv`, `.vh`, `.svh`), compiled as one compilation.
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+        /// Elaborate this module as the top (instance tree and checks); default: parse only.
+        #[arg(long)]
+        top: Option<String>,
+        /// Include directory for `` `include `` (repeatable).
+        #[arg(short = 'I', long = "include", value_name = "DIR")]
+        include: Vec<PathBuf>,
+        /// Macro definition `NAME` or `NAME=VALUE` (repeatable).
+        #[arg(short = 'D', long = "define", value_name = "NAME=VAL")]
+        define: Vec<String>,
+    },
     /// List the partitions of a Zynq-7000 BOOT.BIN and say whether ZynqSim can boot it.
     BootInfo {
         /// The BOOT.BIN.
@@ -352,6 +370,12 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
             let _ = (rtl, filelist, ip, module, elf, elf1, base);
             init_from_boot(json, &out.unwrap_or(dir), &boot.unwrap_or_default())
         }
+        Cmd::RtlCheck {
+            files,
+            top,
+            include,
+            define,
+        } => cmd_rtl_check(json, &files, top.as_deref(), &include, &define),
         Cmd::BootInfo { file } => cmd_boot_info(json, &file),
         Cmd::Init {
             dir,
@@ -1291,6 +1315,56 @@ fn init_from_ip(json: bool, dir: &Path, o: InitIp) -> Result<u8, Failure> {
         );
     }
     Ok(0)
+}
+
+/// `rtl-check`: parse (and with `--top`, elaborate) with the native RTL front end.
+fn cmd_rtl_check(
+    json: bool,
+    files: &[PathBuf],
+    top: Option<&str>,
+    include: &[PathBuf],
+    define: &[String],
+) -> Result<u8, Failure> {
+    for f in files {
+        if !f.is_file() {
+            return Err(Failure {
+                code: 2,
+                message: format!("cannot read `{}`", f.display()),
+            });
+        }
+    }
+    let design = match top {
+        Some(t) => rtl_frontend::elaborate(t, files, define, include),
+        None => {
+            let opts = rtl_frontend::Options {
+                defines: define.to_vec(),
+                include_dirs: include.to_vec(),
+                ..rtl_frontend::Options::default()
+            };
+            rtl_frontend::summarize_parsed(&rtl_frontend::parse_files(files, &opts))
+        }
+    };
+    let clean = design.diagnostics.is_empty();
+    if json {
+        let value = json!({
+            "ok": clean,
+            "top": design.top,
+            "diagnostics": design.diagnostics,
+            "modules": design.modules,
+            "hierarchy": design.hierarchy,
+        });
+        println!("{value}");
+    } else {
+        for d in &design.diagnostics {
+            println!("{d}");
+        }
+        if clean {
+            println!("rtl-check: no diagnostics in {} file(s)", files.len());
+        } else {
+            println!("rtl-check: {} diagnostic(s)", design.diagnostics.len());
+        }
+    }
+    Ok(if clean { 0 } else { 1 })
 }
 
 /// `boot-info`: the partitions of a BOOT.BIN and whether it can be booted.
