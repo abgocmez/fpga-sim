@@ -34,7 +34,9 @@ zynqsim bench --project examples/rust-hello/project.toml --for 100ms   # wall ti
 zynqsim-gui --project examples/demo/project.toml
 ```
 
-Keys in the GUI: `1`-`4` toggle switches, `Q` `W` `E` `R` hold buttons.
+Keys in the GUI: `1`-`4` toggle switches, `Q` `W` `E` `R` hold buttons. Shell keys: `Space` play or
+pause, `F6` step, `F5` reset, `F1` the shortcuts window, `Ctrl+O` open a project, `Ctrl+=` / `Ctrl+-` /
+`Ctrl+0` UI scale, `Ctrl+Q` quit.
 
 ### Waveforms
 
@@ -376,6 +378,17 @@ looked at by hand; the layout defects found in that review, and what was changed
 | ![Default demo](docs/screenshots/default-demo.png) | ![Waveforms](docs/screenshots/demo-waves.png) |
 | **Source panel at a breakpoint** (`examples/rust-debug`) | **Pmod OLED** (`examples/oled-demo`) |
 | ![Source panel](docs/screenshots/rust-debug-source.png) | ![Pmod OLED](docs/screenshots/oled-demo-pmod.png) |
+
+The window has a menu bar (File: open, recent projects, examples; Simulation; View: 2D, 3D,
+Waveforms, side panel, console, UI scale, theme; Help) and a status line at the bottom (time, run
+state, measured speed, project, backends, last error). Settings and recent projects are kept
+between runs. The shell with the light theme, and its keyboard shortcuts window (F1):
+
+| Default demo with the shell | Light theme |
+|---|---|
+| ![Shell](docs/screenshots/shell-default.png) | ![Light](docs/screenshots/shell-light.png) |
+| **Keyboard shortcuts (F1)** | |
+| ![Shortcuts](docs/screenshots/shell-shortcuts.png) | |
 
 The side panel scrolls above a fixed trace strip; with the Source, HDMI or Audio panel open, the
 sections below it are reached by scrolling it.

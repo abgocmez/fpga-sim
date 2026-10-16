@@ -4979,6 +4979,8 @@ dependencies = [
  "cpal",
  "eframe",
  "rfd",
+ "serde",
+ "serde_json",
  "sim-api",
 ]
 

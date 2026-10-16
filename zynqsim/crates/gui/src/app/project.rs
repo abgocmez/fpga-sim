@@ -49,6 +49,7 @@ impl App {
     pub(super) fn open_project_file(&mut self, file: PathBuf) {
         match ProjectDraft::load(&file) {
             Ok(d) => {
+                self.shell.note_recent(&file);
                 self.draft = d;
                 let name = file
                     .file_name()
