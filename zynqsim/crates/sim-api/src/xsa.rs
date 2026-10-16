@@ -1055,7 +1055,10 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
     let rtl = match &tb {
         _ if export_rel.is_some() => Some(RtlSection {
             files: if tb.is_some() {
-                vec!["tb/cosim_top.sv".to_string()]
+                vec![
+                    format!("tb/{}", tbgen::PROTOCOL_CHECKER_FILE),
+                    "tb/cosim_top.sv".to_string(),
+                ]
             } else {
                 Vec::new()
             },
@@ -1069,6 +1072,7 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
         }),
         Some((_, _)) => {
             let mut list: Vec<String> = srcs.iter().map(|s| esc(&s.project_path)).collect();
+            list.push(format!("tb/{}", tbgen::PROTOCOL_CHECKER_FILE));
             list.push("tb/cosim_top.sv".to_string());
             Some(RtlSection {
                 files: list,
@@ -1082,6 +1086,11 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
     };
     if let Some((_, text)) = &tb {
         files.push(("tb/cosim_top.sv".to_string(), text.clone().into_bytes()));
+        // The generated testbench instantiates the protocol checker.
+        files.push((
+            format!("tb/{}", tbgen::PROTOCOL_CHECKER_FILE),
+            tbgen::protocol_checker_source().as_bytes().to_vec(),
+        ));
     }
 
     let project = Project {
