@@ -291,6 +291,7 @@ pub fn parse_hwh(text: &str) -> Result<Design, String> {
         ips: Vec::new(),
         memory_map: Vec::new(),
         interrupts: Vec::new(),
+        intc_inputs: Vec::new(),
         clocks: Vec::new(),
         resets: Vec::new(),
         notes: Vec::new(),
@@ -348,8 +349,44 @@ pub fn parse_hwh(text: &str) -> Result<Design, String> {
     // assigned (the PS7 is not an IpInstance, so none were stored there).
 
     resolve_interrupts(&mut design);
+    resolve_intc_inputs(&mut design);
     resolve_clocks_and_resets(&mut design);
     Ok(design)
+}
+
+/// Traces what drives the `intr` input of every `axi_intc`, through `xlconcat`.
+fn resolve_intc_inputs(design: &mut Design) {
+    let mut out: Vec<IntcLink> = Vec::new();
+    let mut notes = Vec::new();
+    for ip in design.ips.iter().filter(|i| i.modtype == "axi_intc") {
+        for p in ip.ports.iter().filter(|p| p.dir == "I" && p.name == "intr") {
+            let mut links = Vec::new();
+            for c in &p.connections {
+                trace_irq(
+                    design,
+                    &c.instance,
+                    &c.port,
+                    0,
+                    &mut Vec::new(),
+                    &mut links,
+                    &mut notes,
+                    0,
+                );
+            }
+            out.extend(links.into_iter().map(|link| IntcLink {
+                intc: ip.instance.clone(),
+                link,
+            }));
+        }
+    }
+    out.sort_by(|a, b| {
+        a.intc
+            .cmp(&b.intc)
+            .then(a.link.bit.cmp(&b.link.bit))
+            .then(a.link.instance.cmp(&b.link.instance))
+    });
+    design.intc_inputs = out;
+    design.notes.extend(notes);
 }
 
 fn is_input_name(name: &str) -> Option<u32> {

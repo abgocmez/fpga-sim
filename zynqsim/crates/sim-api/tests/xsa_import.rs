@@ -104,15 +104,15 @@ fn an_ip_without_a_model_is_recorded_and_stops_the_run() {
         ),
         ..Default::default()
     };
-    let plan = xsa::plan(&fixtures().join("xsa/zs_math_dma.hwh"), &out, &opts).unwrap();
+    let plan = xsa::plan(&fixtures().join("xsa/zs_math_vdma.hwh"), &out, &opts).unwrap();
     assert_eq!(plan.testbench_module.as_deref(), Some("my_math_ip"));
     assert_eq!(plan.unmodelled.len(), 1);
     let u = &plan.unmodelled[0];
     assert_eq!(
         (u.instance.as_str(), u.vlnv.as_str()),
-        ("axi_dma_0", "xilinx.com:ip:axi_dma:7.1")
+        ("axi_vdma_0", "xilinx.com:ip:axi_vdma:6.3")
     );
-    assert_eq!(u.base.as_deref(), Some("0x40400000"));
+    assert_eq!(u.base.as_deref(), Some("0x43000000"));
     assert_eq!(u.size, Some(0x10000));
     assert_eq!(u.irq, vec![0]);
     assert!(!plan.runnable_design());
@@ -122,13 +122,13 @@ fn an_ip_without_a_model_is_recorded_and_stops_the_run() {
     let loaded = Project::load(&out.join("project.toml")).unwrap();
     let e = errors(&loaded, &out);
     assert_eq!(e.len(), 1, "{e:?}");
-    assert_eq!(e[0].0, "xsa.unmodelled.axi_dma_0");
+    assert_eq!(e[0].0, "xsa.unmodelled.axi_vdma_0");
     assert!(e[0].1.contains("does not exist yet"), "{e:?}");
-    assert!(e[0].1.contains("0x40400000"));
+    assert!(e[0].1.contains("0x43000000"));
     let err = loaded.build_engine(&out).err().expect("must refuse");
-    assert!(err.message.contains("axi_dma_0"), "{}", err.message);
+    assert!(err.message.contains("axi_vdma_0"), "{}", err.message);
     assert!(plan.report.contains("NOT RUNNABLE"));
-    assert!(plan.report.contains("`axi_dma_0`"));
+    assert!(plan.report.contains("`axi_vdma_0`"));
 }
 
 #[test]

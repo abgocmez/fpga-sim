@@ -64,13 +64,13 @@ fn ensure_dpi_lib() {
     }
 }
 
-/// The design with an AXI DMA (no model): the project is generated, the report names the
+/// The design with an AXI VDMA (no model): the project is generated, the report names the
 /// unmodelled IP, and `run` stops with the diagnostic instead of simulating a design that is
 /// not there. (The AXI GPIO of `zs_math_gpio.xsa` has a vendor-ip model, see below.)
 #[test]
 fn an_unmodelled_ip_is_reported_and_stops_the_run() {
     let d = temp("dma");
-    let xsa = fixtures().join("xsa/zs_math_dma.hwh");
+    let xsa = fixtures().join("xsa/zs_math_vdma.hwh");
     let rtl = fixtures().join("rtl/math/my_math_ip.v");
     let elf = fixtures().join("elf/math_test.elf");
     let o = zynqsim(&[
@@ -87,14 +87,14 @@ fn an_unmodelled_ip_is_reported_and_stops_the_run() {
     ]);
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     let v: Value = serde_json::from_str(&stdout(&o)).unwrap();
-    assert_eq!(v["design"], "design_dma");
+    assert_eq!(v["design"], "design_vdma");
     assert_eq!(v["testbench_module"], "my_math_ip");
     assert_eq!(v["runnable"], false);
     let un = v["unmodelled"].as_array().unwrap();
     assert_eq!(un.len(), 1);
-    assert_eq!(un[0]["instance"], "axi_dma_0");
-    assert_eq!(un[0]["vlnv"], "xilinx.com:ip:axi_dma:7.1");
-    assert_eq!(un[0]["base"], "0x40400000");
+    assert_eq!(un[0]["instance"], "axi_vdma_0");
+    assert_eq!(un[0]["vlnv"], "xilinx.com:ip:axi_vdma:6.3");
+    assert_eq!(un[0]["base"], "0x43000000");
     assert!(
         un[0]["reason"]
             .as_str()
@@ -108,7 +108,7 @@ fn an_unmodelled_ip_is_reported_and_stops_the_run() {
         "{toml}"
     );
     assert!(
-        toml.contains("\"axi_dma_0.mm2s_introut\" = \"IRQ_F2P[0]\""),
+        toml.contains("\"axi_vdma_0.mm2s_introut\" = \"IRQ_F2P[0]\""),
         "{toml}"
     );
     assert!(
@@ -117,7 +117,7 @@ fn an_unmodelled_ip_is_reported_and_stops_the_run() {
     );
     let report = std::fs::read_to_string(d.join("xsa-report.md")).unwrap();
     assert!(report.contains("NOT RUNNABLE"), "{report}");
-    assert!(report.contains("xilinx.com:ip:axi_dma:7.1"), "{report}");
+    assert!(report.contains("xilinx.com:ip:axi_vdma:6.3"), "{report}");
     assert!(report.contains("0x43C00000"), "{report}");
     assert!(report.contains("IRQ_F2P[0]"), "{report}");
     assert!(d.join("tb/cosim_top.sv").is_file());
@@ -133,9 +133,9 @@ fn an_unmodelled_ip_is_reported_and_stops_the_run() {
     assert_eq!(r.status.code(), Some(1), "{}", stderr(&r));
     let e = stderr(&r);
     assert!(
-        e.contains("axi_dma_0")
-            && e.contains("xilinx.com:ip:axi_dma:7.1")
-            && e.contains("0x40400000"),
+        e.contains("axi_vdma_0")
+            && e.contains("xilinx.com:ip:axi_vdma:6.3")
+            && e.contains("0x43000000"),
         "{e}"
     );
 

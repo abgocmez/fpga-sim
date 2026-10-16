@@ -1,0 +1,51 @@
+# AXI DMA in scatter-gather mode (C_INCLUDE_SG = 1), loopback on the AXI4-Stream, no RTL: the
+# Xilinx IP runs as a vendor-ip model (crates/vendor-ip, ADR-021) on the native PL. There is no
+# Vivado handoff for the SG configuration; the direct-register-mode design is
+# fixtures/xsa/zs_dma_loopback.xsa (examples/dma-loopback).
+#
+# Firmware: firmware/dma_sg (Rust, no_std). A 64-byte packet goes out as two MM2S descriptors
+# (SOF, EOF), comes back through the loopback and fills two S2MM descriptors (48 + 16 bytes); each
+# channel interrupts once, after both of its descriptors (IRQThreshold = 2). The descriptors'
+# status words are checked.
+#
+#   zynqsim run --project examples/dma-sg/project.toml --for 3ms
+#   expect on UART1: "rx status: 0x88000030 0x84000010" (Cmplt+SOF+48, Cmplt+EOF+16), "RESULT: ALL PASS"
+#
+# Needs: the Xilinx QEMU (Vitis). No Vivado is needed to RUN this.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "native"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_dma_sg.elf"
+
+[native]
+axi_dma_0 = "axi_dma"
+
+[native_params.axi_dma_0]
+C_INCLUDE_SG = 1
+C_SG_LENGTH_WIDTH = 23
+CLK_FREQ_HZ = 100000000
+PS_PORT = "S_AXI_HP0"
+STREAM_LOOPBACK = 1
+ADDRESS_SIZE = "0x10000"
+
+[connect]
+"axi_dma_0.S_AXI_LITE" = "M_AXI_GP0@0x40400000"
+"axi_dma_0.M_AXI_SG" = "S_AXI_HP0"
+"axi_dma_0.M_AXI_MM2S" = "S_AXI_HP0"
+"axi_dma_0.M_AXI_S2MM" = "S_AXI_HP0"
+"axi_dma_0.mm2s_introut" = "IRQ_F2P[0]"
+"axi_dma_0.s2mm_introut" = "IRQ_F2P[1]"

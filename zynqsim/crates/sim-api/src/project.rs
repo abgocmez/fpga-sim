@@ -613,6 +613,32 @@ impl Project {
         })
     }
 
+    /// The interrupt outputs of a native instance: `[connect]` entries
+    /// `"<instance>.<port>" = "IRQ_F2P[<n>]"` or `"<instance>.<port>" = "<intc>.intr[<k>]"` as
+    /// `(port, destination)`, in key order.
+    pub fn native_irqs(&self, instance: &str) -> Vec<(String, String)> {
+        let prefix = format!("{instance}.");
+        self.connect
+            .iter()
+            .filter_map(|(k, v)| {
+                let port = k.strip_prefix(&prefix)?;
+                vendor_ip::parse_irq_dest(v)?;
+                Some((port.to_string(), v.trim().to_string()))
+            })
+            .collect()
+    }
+
+    /// True when a `[connect]` entry binds a native model (an AXI GPIO channel, an AXI IIC)
+    /// to Pmod port `port` (0 = JA).
+    pub fn native_drives_pmod(&self, port: u8) -> bool {
+        let want = format!("board.pmod_j{}", char::from(b'a' + port));
+        self.connect.iter().any(|(k, v)| {
+            v.trim().eq_ignore_ascii_case(&want)
+                && k.split_once('.')
+                    .is_some_and(|(inst, _)| self.native.contains_key(inst))
+        })
+    }
+
     /// The board bindings of a native instance: `[connect]` entries
     /// `"<instance>.GPIO" = "board.leds"` as `(interface, signal)`.
     pub fn native_bindings(&self, instance: &str) -> BTreeMap<String, String> {
@@ -711,6 +737,7 @@ impl Project {
                         base: addr,
                         size,
                         irq: self.native_irq(name),
+                        irqs: self.native_irqs(name),
                         params,
                         bindings: self.native_bindings(name),
                     });
@@ -1110,6 +1137,42 @@ impl Project {
         }
 
         for (key, value) in &self.connect {
+            // A native model's interrupt routed to an interrupt controller input.
+            if let Some(vendor_ip::IrqDest::Block { block, input }) =
+                vendor_ip::parse_irq_dest(value)
+            {
+                let source = key.split_once('.').map(|(i, _)| i).unwrap_or("");
+                let field = format!("connect.\"{key}\"");
+                if !self.native.contains_key(source) {
+                    d.push(err(
+                        &field,
+                        format!(
+                            "`{source}` is not a `[native]` instance: only native models can \
+                             drive an interrupt controller input"
+                        ),
+                    ));
+                } else if self.native.get(&block).map(String::as_str) != Some("axi_intc") {
+                    d.push(err(
+                        &field,
+                        format!("`{block}` is not an `axi_intc` instance in `[native]`"),
+                    ));
+                } else if let Some(n) = self
+                    .native_params
+                    .get(&block)
+                    .and_then(|m| m.get("C_NUM_INTR_INPUTS"))
+                    .and_then(|v| vendor_ip::parse_number(&v.to_string()))
+                {
+                    if u64::from(input) >= n {
+                        d.push(err(
+                            &field,
+                            format!(
+                                "`{block}` has {n} interrupt input(s): intr[{input}] does not exist"
+                            ),
+                        ));
+                    }
+                }
+                continue;
+            }
             if let Some(msg) = check_connection(value, board.as_ref()) {
                 d.push(err(&format!("connect.\"{key}\""), msg));
             }
@@ -1145,10 +1208,11 @@ impl Project {
                                 devices::KINDS.join(", ")
                             ),
                         ));
-                    } else if self.backends.pl != "xsim" {
+                    } else if self.backends.pl != "xsim" && !self.native_drives_pmod(port) {
                         d.push(warn(
                             &field,
-                            "Pmod pins are driven only by an RTL design in XSim (backends.pl = \"xsim\")",
+                            "Pmod pins are driven only by an RTL design in XSim (backends.pl = \"xsim\") \
+                             or by a native model bound to the port (`\"axi_iic_0.IIC\" = \"board.pmod_ja\"`)",
                         ));
                     }
                 }

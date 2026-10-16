@@ -45,6 +45,18 @@ pub fn ranged(p: &Params, key: &str, default: u64, lo: u64, hi: u64) -> Result<u
     }
 }
 
+/// `old` with the byte lanes of `new` selected by `strobe` (bit *n* = lane *n*) written in.
+pub fn merge(old: u32, new: u32, strobe: u8) -> u32 {
+    let mut v = old;
+    for lane in 0..4 {
+        if strobe & (1 << lane) != 0 {
+            let m = 0xFFu32 << (8 * lane);
+            v = (v & !m) | (new & m);
+        }
+    }
+    v
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

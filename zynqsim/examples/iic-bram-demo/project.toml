@@ -1,0 +1,59 @@
+# AXI IIC master reading a Digilent Pmod TMP2 (ADT7420, I2C 0x4B) on Pmod JA, and an AXI BRAM
+# Controller with 8 KiB of block memory: both are vendor-ip models (crates/vendor-ip, ADR-021) on
+# the native PL, no RTL. The same design as a Vivado handoff is fixtures/xsa/zs_iic_bram.xsa
+# (fixtures/xsa/make_iic_bram_xsa.tcl); `zynqsim init --xsa` makes the model part of this file
+# from it (the TMP2 on JA is added here).
+#
+# The IIC master bit-bangs SCL (Pmod pin 3) and SDA (pin 4) at 100 kHz on the port's pins; the ADT7420
+# model of crates/devices answers every pin change, as it does for RTL designs. The temperature
+# the sensor measures is yours:
+#
+#   zynqsim run --project examples/iic-bram-demo/project.toml --for 8ms
+#   zynqsim run --project examples/iic-bram-demo/project.toml --for 8ms --device-set JA.temperature=-12.25
+#
+# Firmware: firmware/iic_bram_demo (Rust, no_std). expect on UART1: "bram test ok", "ID 0xCB",
+# "T raw=0x0BC0 mC=23500", "absent device: tx error irqs=1", "RESULT: ALL PASS".
+#
+# Needs: the Xilinx QEMU (Vitis). No Vivado is needed to RUN this.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "native"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_iic_bram.elf"
+
+[native]
+axi_iic_0 = "axi_iic"
+axi_bram_ctrl_0 = "axi_bram_ctrl"
+
+[native_params.axi_iic_0]
+C_SCL_CLK_FREQ_KHZ = 100
+ADDRESS_SIZE = "0x10000"
+
+[native_params.axi_bram_ctrl_0]
+C_ECC = 0
+ADDRESS_SIZE = "0x2000"
+
+[connect]
+"axi_iic_0.S_AXI" = "M_AXI_GP0@0x41600000"
+"axi_iic_0.IIC" = "board.pmod_ja"
+"axi_iic_0.iic2intc_irpt" = "IRQ_F2P[0]"
+"axi_bram_ctrl_0.S_AXI" = "M_AXI_GP0@0x40000000"
+
+[devices]
+pmod_ja = "tmp2"
+
+[device_values.pmod_ja]
+temperature = 23.5

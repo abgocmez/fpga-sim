@@ -10,4 +10,4 @@ mod math_ip;
 mod regs;
 
 pub use math_ip::MathIp;
-pub use regs::{Mapped, NativePl, RegisterBlock};
+pub use regs::{IrqDest, Mapped, NativePl, RegisterBlock};

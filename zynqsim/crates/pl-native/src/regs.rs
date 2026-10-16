@@ -25,6 +25,22 @@ pub trait RegisterBlock: Send {
     fn irq_level(&self) -> bool {
         false
     }
+
+    /// Level of interrupt output `output`: 0 is [`RegisterBlock::irq_level`]; a block with more
+    /// outputs (the AXI DMA has two) overrides this.
+    fn irq_output(&self, output: usize) -> bool {
+        output == 0 && self.irq_level()
+    }
+
+    /// Lets the block act as a bus master (a DMA engine): called after every bus access and
+    /// on every lock-step `advance`, with the PS port, so the block can read and write PS
+    /// memory and finish a transfer whose time has come. The default does nothing.
+    fn service(&mut self, _now_ns: u64, _ps: &mut dyn PsPort) {}
+
+    /// Another block's interrupt output, routed to this block with
+    /// [`NativePl::route_irq`], changed to `level` (input number `input`). An interrupt
+    /// controller implements it. The default ignores the input.
+    fn set_irq_input(&mut self, _input: u32, _level: bool, _now_ns: u64) {}
 }
 
 /// A register block placed at a base address on one GP port.
@@ -39,6 +55,29 @@ pub struct Mapped {
     pub irq: Option<u32>,
     /// Level last reported to the PS on `irq`.
     irq_state: bool,
+    /// Further interrupt outputs (a DMA's second one) and routes to other blocks, see
+    /// [`NativePl::route_irq`].
+    outs: Vec<IrqOut>,
+}
+
+/// Where a block's interrupt output goes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IrqDest {
+    /// An `IRQ_F2P` line (0..=15).
+    F2p(u32),
+    /// Input `input` of the block named `block` (an interrupt controller).
+    Block {
+        /// Name of the target block ([`RegisterBlock::name`]).
+        block: String,
+        /// Its input number.
+        input: u32,
+    },
+}
+
+struct IrqOut {
+    output: usize,
+    dest: IrqDest,
+    state: bool,
 }
 
 /// A PL made of native register blocks.
@@ -50,6 +89,8 @@ pub struct Mapped {
 pub struct NativePl {
     blocks: Vec<Mapped>,
     in_reset: bool,
+    /// Some block's interrupt output is routed to another block.
+    has_routes: bool,
     /// Number of bus accesses served, for statistics.
     pub accesses: u64,
 }
@@ -79,7 +120,69 @@ impl NativePl {
             block,
             irq: None,
             irq_state: false,
+            outs: Vec::new(),
         });
+    }
+
+    /// Sends interrupt output `output` (0 is [`RegisterBlock::irq_level`]) of the already mapped
+    /// block named `block` to `dest`: an `IRQ_F2P` line, or an input of another block (an
+    /// interrupt controller, through [`RegisterBlock::set_irq_input`]; the target may be mapped
+    /// before or after). Returns false when there is no block of that name.
+    pub fn route_irq(&mut self, block: &str, output: usize, dest: IrqDest) -> bool {
+        let Some(m) = self.blocks.iter_mut().find(|m| m.block.name() == block) else {
+            return false;
+        };
+        if matches!(dest, IrqDest::Block { .. }) {
+            self.has_routes = true;
+        }
+        m.outs.push(IrqOut {
+            output,
+            dest,
+            state: false,
+        });
+        true
+    }
+
+    /// Delivers every changed block-to-block interrupt level. Two passes, so a chain of two
+    /// controllers settles.
+    fn route_irqs(&mut self, now_ns: u64) {
+        if !self.has_routes {
+            return;
+        }
+        for _ in 0..2 {
+            let mut changes: Vec<(usize, usize, usize, u32, bool)> = Vec::new();
+            for (i, m) in self.blocks.iter().enumerate() {
+                for (k, o) in m.outs.iter().enumerate() {
+                    let IrqDest::Block { block, input } = &o.dest else {
+                        continue;
+                    };
+                    let level = m.block.irq_output(o.output);
+                    if level != o.state {
+                        if let Some(t) = self.blocks.iter().position(|b| b.block.name() == block) {
+                            changes.push((i, k, t, *input, level));
+                        }
+                    }
+                }
+            }
+            if changes.is_empty() {
+                break;
+            }
+            for (i, k, t, input, level) in changes {
+                self.blocks[i].outs[k].state = level;
+                self.blocks[t].block.set_irq_input(input, level, now_ns);
+            }
+        }
+    }
+
+    /// Brings every block up to `now_ns` and delivers routed interrupts, so a controller read
+    /// sees what its sources did before the access.
+    fn refresh_routes(&mut self, now_ns: u64) {
+        if self.has_routes {
+            for m in &mut self.blocks {
+                m.block.advance(now_ns);
+            }
+            self.route_irqs(now_ns);
+        }
     }
 
     /// Like [`NativePl::map`], and drives `IRQ_F2P[irq]` from the block's
@@ -109,6 +212,11 @@ impl NativePl {
     /// the PS while an access is outstanding) is what lets a level interrupt fall before the
     /// guest's handler returns; waiting for the next sync would make it fire again.
     fn sync_irqs(&mut self, now_ns: u64, ps: &mut dyn PsPort) {
+        // Bus masters (DMA) first: a transfer may finish and raise an interrupt.
+        for m in &mut self.blocks {
+            m.block.service(now_ns, ps);
+        }
+        self.route_irqs(now_ns);
         for m in &mut self.blocks {
             if let Some(line) = m.irq {
                 let level = m.block.irq_level();
@@ -116,6 +224,15 @@ impl NativePl {
                     m.irq_state = level;
                     // A PS that rejects the update is not the model's problem.
                     let _ = ps.irq(line, level, now_ns);
+                }
+            }
+            for o in &mut m.outs {
+                if let IrqDest::F2p(line) = o.dest {
+                    let level = m.block.irq_output(o.output);
+                    if level != o.state {
+                        o.state = level;
+                        let _ = ps.irq(line, level, now_ns);
+                    }
                 }
             }
         }
@@ -149,6 +266,7 @@ impl PlTarget for NativePl {
         ps: &mut dyn PsPort,
     ) -> BusResult<()> {
         self.accesses += 1;
+        self.refresh_routes(now_ns);
         let mut done = 0usize;
         while done < buf.len() {
             let a = addr + done as u64;
@@ -173,6 +291,7 @@ impl PlTarget for NativePl {
         ps: &mut dyn PsPort,
     ) -> BusResult<()> {
         self.accesses += 1;
+        self.refresh_routes(now_ns);
         let mut done = 0usize;
         while done < data.len() {
             let a = addr + done as u64;

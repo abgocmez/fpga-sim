@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no" ?>
 <!--
   HAND-WRITTEN handoff in Vivado's HWH schema (NOT Vivado output): the user's math IP plus an
-  AXI DMA, which has no vendor-ip model. It exists so the "unmodelled IP stops the run" path is
-  tested now that the AXI GPIO of zs_math_gpio.xsa has a model.
+  AXI VDMA, which has no vendor-ip model. It exists so the "unmodelled IP stops the run" path is
+  tested now that the AXI GPIO, Timer, UART Lite, DMA, IIC, BRAM controller and interrupt
+  controller have models. (It was an AXI DMA until that got a model.)
 -->
 <EDKSYSTEM EDWVERSION="1.2" VIVADOVERSION="2022.1">
-  <SYSTEMINFO ARCH="zynq" DEVICE="7z020" NAME="design_dma"/>
+  <SYSTEMINFO ARCH="zynq" DEVICE="7z020" NAME="design_vdma"/>
   <MODULES>
     <MODULE INSTANCE="processing_system7_0" MODTYPE="processing_system7" VLNV="xilinx.com:ip:processing_system7:5.5">
       <PARAMETERS>
@@ -17,13 +18,13 @@
       </PARAMETERS>
       <PORTS>
         <PORT DIR="I" LEFT="0" NAME="IRQ_F2P" RIGHT="0" SENSITIVITY="LEVEL_HIGH" SIGIS="INTERRUPT">
-          <CONNECTIONS><CONNECTION INSTANCE="axi_dma_0" PORT="mm2s_introut"/></CONNECTIONS>
+          <CONNECTIONS><CONNECTION INSTANCE="axi_vdma_0" PORT="mm2s_introut"/></CONNECTIONS>
         </PORT>
         <PORT CLKFREQUENCY="100000000" DIR="O" NAME="FCLK_CLK0" SIGIS="clk"/>
       </PORTS>
       <MEMORYMAP>
         <MEMRANGE ADDRESSBLOCK="Reg" BASEVALUE="0x43C00000" HIGHVALUE="0x43C00FFF" INSTANCE="u_math" MASTERBUSINTERFACE="M_AXI_GP0" MEMTYPE="REGISTER" SLAVEBUSINTERFACE="S_AXI"/>
-        <MEMRANGE ADDRESSBLOCK="Reg" BASEVALUE="0x40400000" HIGHVALUE="0x4040FFFF" INSTANCE="axi_dma_0" MASTERBUSINTERFACE="M_AXI_GP0" MEMTYPE="REGISTER" SLAVEBUSINTERFACE="S_AXI_LITE"/>
+        <MEMRANGE ADDRESSBLOCK="Reg" BASEVALUE="0x43000000" HIGHVALUE="0x4300FFFF" INSTANCE="axi_vdma_0" MASTERBUSINTERFACE="M_AXI_GP0" MEMTYPE="REGISTER" SLAVEBUSINTERFACE="S_AXI_LITE"/>
       </MEMORYMAP>
     </MODULE>
     <MODULE INSTANCE="u_math" MODTYPE="my_math_ip" VLNV="xilinx.com:module_ref:my_math_ip:1.0">
@@ -33,7 +34,7 @@
         </PORT>
       </PORTS>
     </MODULE>
-    <MODULE INSTANCE="axi_dma_0" MODTYPE="axi_dma" VLNV="xilinx.com:ip:axi_dma:7.1">
+    <MODULE INSTANCE="axi_vdma_0" MODTYPE="axi_vdma" VLNV="xilinx.com:ip:axi_vdma:6.3">
       <PORTS>
         <PORT CLKFREQUENCY="100000000" DIR="I" NAME="s_axi_lite_aclk" SIGIS="clk">
           <CONNECTIONS><CONNECTION INSTANCE="processing_system7_0" PORT="FCLK_CLK0"/></CONNECTIONS>

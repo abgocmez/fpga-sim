@@ -62,9 +62,13 @@ pub struct NativeInstance {
     pub size: Option<u64>,
     /// `IRQ_F2P` bit the instance's interrupt output drives.
     pub irq: Option<u32>,
+    /// Interrupt outputs by port name with their destination (`IRQ_F2P[n]`, or an interrupt
+    /// controller input `axi_intc_0.intr[k]`); when not empty it replaces `irq`.
+    pub irqs: Vec<(String, String)>,
     /// IP parameters by Vivado name (`C_GPIO_WIDTH`), plus `CLK_FREQ_HZ`.
     pub params: std::collections::BTreeMap<String, String>,
-    /// Board bindings: GPIO interface (`GPIO`, `GPIO2`) to board signal (`board.leds`).
+    /// Board bindings: GPIO interface (`GPIO`, `GPIO2`) to board signal (`board.leds`); the AXI
+    /// IIC's `IIC` to a Pmod port.
     pub bindings: std::collections::BTreeMap<String, String>,
 }
 
@@ -351,7 +355,16 @@ fn model(name: &str) -> Option<Box<dyn RegisterBlock>> {
 }
 
 /// Names accepted for `[native]` models.
-pub const NATIVE_MODELS: &[&str] = &["my_math_ip", "axi_gpio", "axi_timer", "axi_uartlite"];
+pub const NATIVE_MODELS: &[&str] = &[
+    "my_math_ip",
+    "axi_gpio",
+    "axi_timer",
+    "axi_uartlite",
+    "axi_dma",
+    "axi_iic",
+    "axi_bram_ctrl",
+    "axi_intc",
+];
 
 /// Gives the PL adapter access to the devices on the Pmod ports.
 struct BankSink(Arc<Mutex<devices::Bank>>);
@@ -783,6 +796,7 @@ impl QemuEngine {
             // Native models (the prototype's math IP, the vendor-ip library), next to the
             // RTL design when there is one.
             let mut vp = VendorPl::new(rtl_pl);
+            let mut vendor: Vec<VendorInstance> = Vec::new();
             for n in &spec.natives {
                 if n.gp > 1 {
                     return Err(ApiError::invalid_argument(format!(
@@ -791,17 +805,19 @@ impl QemuEngine {
                     )));
                 }
                 if vendor_ip::is_model(&n.model) {
-                    vp.add(&VendorInstance {
+                    let inst = VendorInstance {
                         name: n.name.clone(),
                         model: n.model.clone(),
                         gp: n.gp,
                         base: n.base,
                         size: n.size,
                         irq: n.irq,
+                        irqs: n.irqs.clone(),
                         params: n.params.clone(),
                         bindings: n.bindings.clone(),
-                    })
-                    .map_err(ApiError::invalid_argument)?;
+                    };
+                    vp.add(&inst).map_err(ApiError::invalid_argument)?;
+                    vendor.push(inst);
                 } else {
                     let block = model(&n.model).ok_or_else(|| {
                         ApiError::invalid_argument(format!(
@@ -815,6 +831,8 @@ impl QemuEngine {
                         .map_err(ApiError::invalid_argument)?;
                 }
             }
+            vp.check_routes(&vendor)
+                .map_err(ApiError::invalid_argument)?;
             Box::new(vp)
         };
 

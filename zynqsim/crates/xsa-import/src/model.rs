@@ -143,6 +143,15 @@ impl IrqLink {
     }
 }
 
+/// A PL interrupt source wired to an input of an interrupt controller (`axi_intc`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct IntcLink {
+    /// The controller instance.
+    pub intc: String,
+    /// The source; `link.bit` is the controller's input number.
+    pub link: IrqLink,
+}
+
 /// A PL clock input and where it comes from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ClockLink {
@@ -309,6 +318,9 @@ pub struct Design {
     pub memory_map: Vec<AddrRange>,
     /// PL interrupts wired to `IRQ_F2P`, resolved through `xlconcat`.
     pub interrupts: Vec<IrqLink>,
+    /// PL interrupts wired to the `intr` input of an AXI interrupt controller, resolved
+    /// through `xlconcat`.
+    pub intc_inputs: Vec<IntcLink>,
     /// PL clock inputs.
     pub clocks: Vec<ClockLink>,
     /// PL reset inputs.
@@ -328,6 +340,16 @@ impl Design {
         self.interrupts
             .iter()
             .filter(move |l| l.instance == instance)
+    }
+
+    /// Controller inputs driven by `instance`.
+    pub fn intc_inputs_of<'a>(
+        &'a self,
+        instance: &'a str,
+    ) -> impl Iterator<Item = &'a IntcLink> + 'a {
+        self.intc_inputs
+            .iter()
+            .filter(move |l| l.link.instance == instance)
     }
 
     /// Clock inputs of `instance`.
