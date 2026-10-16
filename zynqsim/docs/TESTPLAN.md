@@ -195,3 +195,31 @@ archive. Windows is the only one run so far.
   access (`Z4`) and RAM watchpoints firing; debug sessions' trace digests (not reproducible). Snapshot, restore, reset and replay are covered, by re-execution, on the
   native-PL math project and (replay only) on the RTL board demo by hand.
 * **Verilator / Icarus backends** and **Linux / macOS XSim**: not implemented.
+
+## Native PS memory and peripherals (P5, optional; ADR-031)
+
+Run: `cargo test -p mem-sys -p ps-periph` (no external tools, no QEMU, no XSim). Clippy and fmt
+are checked on the two crates only. The firmware checks in `firmware/conf_*` are encoded as host
+tests against the bus; they are not run on the native engine.
+
+| Requirement | Test binary / name | Where |
+|---|---|---|
+| Address map as data, overlaps, MPCore containment, firmware literals | `mem-sys` unit `map::tests::*` | `crates/mem-sys/src/map.rs` |
+| Bus: DDR and OCM bounds, straddling, sizes, overlap refusal | `mem-sys` unit `bus::tests::*` | `crates/mem-sys/src/bus.rs` |
+| Unmapped policy (fault, RAZ/WI) and the log | `mem-sys` unit `bus::tests::{unmapped_*, raz_wi_*}` | `crates/mem-sys/src/bus.rs` |
+| Sparse DDR pages | `mem-sys` unit `ram::tests::*` | `crates/mem-sys/src/ram.rs` |
+| Register lanes and merge | `mem-sys` unit `device::tests::*` | `crates/mem-sys/src/device.rs` |
+| RAM snapshot round trip, state hash | `mem-sys` unit `bus::tests::{ram_snapshot_*, state_hash_*}` | `crates/mem-sys/src/bus.rs` |
+| UART register model, FIFOs, baud pacing, RX injection, IRQ | `ps-periph` unit `uart::tests::*` (10) | `crates/ps-periph/src/uart.rs` |
+| SLCR lock and reset table | `ps-periph` unit `slcr::tests::*` (8) | `crates/ps-periph/src/slcr.rs` |
+| GIC: enable, pending, priority, targets, SGI, edge, ack, EOI | `ps-periph` unit `gic::tests::*` (8) | `crates/ps-periph/src/gic.rs` |
+| Countdown timers, watchdog, global timer | `ps-periph` unit `timers::tests::*` (9) | `crates/ps-periph/src/timers.rs` |
+| TTC counters, interval, match, prescaler | `ps-periph` unit `ttc::tests::*` (7) | `crates/ps-periph/src/ttc.rs` |
+| Firmware `conf_scutimer` checks 1-17 (PASS) | `cargo test -p ps-periph --test conf_scutimer -- --nocapture` | `crates/ps-periph/tests/conf_scutimer.rs` |
+| Firmware `conf_ttc` checks 1-14 (PASS) | `cargo test -p ps-periph --test conf_ttc -- --nocapture` | `crates/ps-periph/tests/conf_ttc.rs` |
+| PPI 29 through the distributor, ICCIAR, ICCEOIR, auto-reload period | `ps-periph --test gic_timer` (3) | `crates/ps-periph/tests/gic_timer.rs` |
+| Determinism: same session, same hashes; five runs in one process; RAM snapshot; unmapped count | `ps-periph --test determinism` (5) | `crates/ps-periph/tests/determinism.rs` |
+| Mapped system builds, stubs, QSPI image, UART handles through the bus | `ps-periph` unit `system::tests::*` (4) | `crates/ps-periph/src/system.rs` |
+
+Not covered: determinism across processes; any comparison with QEMU or a board; the interrupt
+path through a real core (the core is the other engineer's crate).

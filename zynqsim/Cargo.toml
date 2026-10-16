@@ -5,6 +5,8 @@ exclude = ["fuzz"]
 members = [
     "crates/sim-core",
     "crates/ps-bus",
+    "crates/mem-sys",
+    "crates/ps-periph",
     "crates/trace",
     "crates/xsa-import",
     "crates/boot",
@@ -28,6 +30,8 @@ members = [
 default-members = [
     "crates/sim-core",
     "crates/ps-bus",
+    "crates/mem-sys",
+    "crates/ps-periph",
     "crates/trace",
     "crates/xsa-import",
     "crates/boot",
