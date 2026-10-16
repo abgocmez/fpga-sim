@@ -200,7 +200,10 @@ fn inspect_lists_backends_without_claiming_unbuilt_ones() {
         .filter(|b| b["implemented"] == true)
         .map(|b| b["name"].as_str().unwrap())
         .collect();
-    assert_eq!(implemented, ["demo", "qemu", "demo", "native", "xsim"]);
+    assert_eq!(
+        implemented,
+        ["demo", "qemu", "demo", "native", "verilator", "xsim"]
+    );
 }
 
 /// Prompt §14.6: every integration test runs 5x with identical trace hashes.

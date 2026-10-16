@@ -497,6 +497,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "backend-rtl-verilator"
+version = "0.1.0"
+dependencies = [
+ "backend-qemu",
+ "interop",
+ "pl-api",
+]
+
+[[package]]
 name = "backend-rtl-xsim"
 version = "0.1.0"
 dependencies = [
@@ -3096,6 +3105,7 @@ name = "sim-api"
 version = "0.1.0"
 dependencies = [
  "backend-qemu",
+ "backend-rtl-verilator",
  "backend-rtl-xsim",
  "board-zybo",
  "boot",

@@ -217,9 +217,10 @@ impl App {
                     ui.selectable_value(&mut self.draft.pl, PlKind::None, "none");
                     ui.selectable_value(&mut self.draft.pl, PlKind::Native, "native Rust models");
                     ui.selectable_value(&mut self.draft.pl, PlKind::Xsim, "RTL in Vivado XSim");
+                    ui.selectable_value(&mut self.draft.pl, PlKind::Verilator, "RTL in Verilator");
                 });
                 match self.draft.pl {
-                    PlKind::Xsim => {
+                    PlKind::Xsim | PlKind::Verilator => {
                         ui.label("RTL sources, one per line (Verilog / SystemVerilog):");
                         ui.add(
                             egui::TextEdit::multiline(&mut self.draft.rtl_files)

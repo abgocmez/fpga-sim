@@ -45,6 +45,7 @@ control plane drive it). Caveats are listed under *Known limits of the P1 engine
 | UART1 `file` mode (deterministic output) / `tcp` mode (input, best-effort timing) | verified | `backend-qemu::tests::e2e::*` |
 | Native PL models (`my_math_ip`) with lanes/strobes, reset wire | verified | `pl-native::*::tests`, CLI/MCP QEMU tests. **Transaction level, no cycle timing** |
 | XSim backend: build (xvlog/xelab), run, lock-step, PS access, DMA master, IRQ forwarding | verified | `backend-rtl-xsim::tests::math::*`, `dma_golden` against real XSim |
+| Verilator backend (`backends.pl = "verilator"`, ADR-027): translate and compile with `--binary --timing`, build cache, run with the same `xsim-dpi` archive, PS access, lock-step, IRQ forwarding, DMA master | verified (math design, Windows, 2-state) | `backend-rtl-verilator::tests::math::rtl_math_ip_answers_ps_accesses_through_verilator` (7 writes, 14 reads, cached second start), `cli::verilator::math_firmware_passes_through_verilator_and_matches_xsim` (real QEMU: ALL PASS, 21 bus accesses, same UART and trace digest as XSim). **Not verified**: the DMA regression and the board/media/pin models under Verilator. Limits: 2-state (no X/Z), no `[rtl] waves`, no VHDL, no Vivado exports (`export_dir`/`filelist`), `interface` declared inside a module is refused, `specify` blocks are ignored with a warning; see `docs/RTL_SUBSET.md` |
 | `xsim-dpi`: `no_std` Rust static library XSim links (`<name>.a`), Winsock bound at run time, prototype `rp_*` ABI | verified | `xsim-dpi::core::tests::*` (protocol, host) and the XSim runs above (link + run) |
 | Board pins: switches/buttons into the RTL (`tel_ctrl`), LED pins out of it (`tel_event`), prototype testbench unchanged | verified | `backend-rtl-xsim::tests::board::shell_leds_switches_and_buttons`, `zynqsim::board_demo_shell_leds_switches_and_button_interrupt`, `mcp::board_demo_through_mcp` |
 | Interactive UART shell on the Cortex-A9 (`help`, `status`, `led`, `img`, `run`, `bright`, `contrast`, `end`) | verified | same tests; `[host] uart1 = "tcp"` |
@@ -60,7 +61,7 @@ control plane drive it). Caveats are listed under *Known limits of the P1 engine
 | Every example, 5 separate processes each: trace hash, end time and UART text identical (§14.6). 26 examples run (25 identical; `board-demo` is known non-deterministic, see FINDING below); `hdmi-demo` not run | verified for 25 examples; board-demo **not** deterministic | `zynqsim::every_example_runs_five_times_with_identical_trace_hashes` (`crates/cli/tests/determinism.rs`). FINDING: `board-demo` drives its shell over UART1 TCP (`[host] uart1 = "tcp"`), best-effort timing: 3 distinct hashes in 5 runs in one full run of the test and 5 in 5 in another, end times 15.000116..15.000652 ms, the firmware's PL tick count differs (300145..328234). Not fixed; the scripted inputs are not reproducible on this path. `rust-debug` and `math-debug` stop at their first breakpoint, so they compare the stop state only (rust-debug at 0 ps); math-debug was identical in 5 runs although its project header warns that debugger timing can vary. `hdmi-demo` needs a host video image and is covered by `zynqsim::hdmi_demo_scans_out_a_frame_and_captures_the_host_image` |
 | `zynqsim bench --project P --for T`: wall time, simulated time, sim/wall ratio, PL cycles per wall second (XSim, nominal 100 MHz), approximate guest instruction rate (QEMU) | verified for the numbers in `docs/PERFORMANCE.md` (single runs, 2026-10-16); no test asserts them | `docs/PERFORMANCE.md` |
 | 5 identical trace digests of the DMA regression | verified | run manually 5x (`fnv1a64:4137e81608225a53`, 3.000836 ms, 687 bus accesses); CLI test runs 3 processes |
-| Verilator, Icarus, native RTL engine, Questa DPI cdylib | stub | not built; `backends.pl` rejects them with a precise message |
+| Icarus Verilog, native RTL engine, Questa DPI cdylib | stub | not built; `backends.pl` rejects them with a precise message. Icarus has no DPI-C: it would need a VPI module in Rust (ADR-027) |
 | XSim build cache: a design with the same sources, defines, top, DPI library and Vivado is not compiled again (cached start ~4.6 s vs ~11 s for the math design) | verified | `backend-rtl-xsim::math::compiled_snapshots_are_cached_by_content` |
 | `-d NAME=VALUE` defines reach xvlog (quoted for `cmd`) | verified | same test (a define with a value builds) |
 | A request stamped after the run target is held, not served: a firmware that polls a PL register cannot make one `run` call overshoot its target | verified | found by the audio demo (a poll loop ran 9.4 ms of virtual time inside a 0.6 ms call); `backend-qemu::e2e` and `sim-api::qemu_play` still pass; `zynqsim::audio_demo_*` |
@@ -482,7 +483,8 @@ testbench; ~150 KB). The VHDL design file in `fixtures/export/vhdl` is hand-writ
 | Encrypted IP / `secureip`, `xpm` and other Xilinx simulation libraries | implemented-untested | named in `-L` and left to Vivado's own `xsim.ini`; no design using them was run |
 | Timing / SDF simulation (`simprims_ver`, `write_verilog -mode timesim`) | stub | not read specially; would compile without SDF and say nothing |
 | The export's own DPI libraries (`-sv_lib`), library search (`-y`, `-v`), simulator scripts of other simulators (`.do`, Questa/VCS) | stub | reported as unsupported, never executed |
-| Verilator / Icarus on an export | stub | no such backend (P4) |
+| Verilator on an export | refused | `export_dir` / `filelist` are XSim-only; the project is refused with that message (`sim-api::project::tests::verilator_refuses_what_only_xsim_can_run`) |
+| Icarus on an export | stub | no such backend (ADR-027) |
 | GUI import of an export | stub | the project window lists `files` only |
 
 ## P3 exit demonstration: a Vivado design and its BOOT.BIN (milestone P3)
@@ -578,7 +580,8 @@ run unmodified; GPIO, SPI, CAN, USB, devcfg and the watchdog fail because the ma
 | `qemu` (PS) | verified, F0 |
 | `native` (PL) | verified, transaction level |
 | `xsim` (PL) | verified, Windows + Vivado (build cache) |
-| `verilator`, `icarus` (PL) | stub, P4 |
+| `verilator` (PL) | verified, Windows, 2-state (ADR-027) |
+| `icarus` (PL) | stub (no DPI-C; ADR-027) |
 | `native` PS / RTL engine | stub, P5 / P6 (optional) |
 
 ## Robustness fuzzing (spec §14.8, §14.10)
@@ -633,8 +636,8 @@ They show that inputs do not panic or hang. They do not show that the answers ar
   `backend-qemu` is a concrete adapter. The `PsBackend` trait is extracted when a second PS
   engine exists (P5).
 * The RTL adapter's simulator-side library is a static archive (`xsim-dpi`), not the prompt's
-  `cdylib`, because XSim on Windows links DPI statically (ADR-002). A DPI `cdylib` for Questa /
-  Verilator remains future work.
+  `cdylib`, because XSim on Windows links DPI statically (ADR-002). Verilator links the same
+  archive (ADR-027). A DPI `cdylib` for Questa remains future work.
 * The workspace sets `panic = "abort"` for `dev` and `release` because the freestanding DPI
   library cannot unwind. Tests still unwind (cargo ignores the setting for them).
 * Dockable GUI panels (egui_dock) are not used; the layout is fixed.

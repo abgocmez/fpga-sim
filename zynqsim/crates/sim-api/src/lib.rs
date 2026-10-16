@@ -41,7 +41,7 @@ pub use project::{
 };
 pub use protocol::{ProtocolSummary, protocol_summary};
 pub use qemu_engine::{
-    ImageSource, NATIVE_MODELS, NativeInstance, QemuEngine, QemuSpec, RtlSpec, StorageSpec,
+    ImageSource, NATIVE_MODELS, NativeInstance, QemuEngine, QemuSpec, RtlSpec, RtlTool, StorageSpec,
 };
 pub use recording::{
     RecEntry, Recording, ReplayReport, SimConfig, replay_engine, replay_recording,

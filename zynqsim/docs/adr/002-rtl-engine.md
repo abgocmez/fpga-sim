@@ -70,3 +70,9 @@ Two constraints interact with the choice:
 To get a verifiable PS+PL path early and without any RTL simulator, P1 first runs QEMU against
 **native Rust PL models** (`pl-native`), which also gives CI a PL path on every OS where QEMU is
 installed. The XSim adapter follows, then Icarus.
+
+## Update (ADR-027)
+
+The second RTL backend is **Verilator**, not Icarus: Icarus has no DPI-C, so its adapter would
+need a VPI glue written in Rust first, while Verilator runs the same `xsim-dpi` archive. Icarus
+stays a stub. See `027-verilator.md`.

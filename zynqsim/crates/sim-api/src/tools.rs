@@ -289,14 +289,23 @@ pub fn detect_backends() -> Vec<BackendInfo> {
             true,
             "native Rust register-level PL models (transaction level, not cycle-accurate)",
         ),
-        external(
-            "verilator",
-            BackendRole::Pl,
-            &["verilator"],
-            false,
-            false,
-            "RTL adapter: milestone P1, not in this build",
-        ),
+        {
+            // Located by the adapter crate: `verilator_bin` (the `verilator` launcher is Perl).
+            let found = backend_rtl_verilator::tools::find();
+            BackendInfo {
+                name: "verilator".to_string(),
+                role: BackendRole::Pl,
+                kind: BackendKind::External,
+                implemented: true,
+                found: Some(found.is_some()),
+                path: found.as_ref().map(|t| t.verilator.display().to_string()),
+                executables: vec!["verilator_bin".to_string(), "verilator".to_string()],
+                note:
+                    "RTL in Verilator (--binary --timing) through the Rust DPI library; also needs \
+                       make, a C++ compiler and sh; 2-state (docs/INSTALL.md)"
+                        .to_string(),
+            }
+        },
         external(
             "icarus",
             BackendRole::Pl,
@@ -335,6 +344,7 @@ mod tests {
                 ("qemu", BackendRole::Ps),
                 ("demo", BackendRole::Pl),
                 ("native", BackendRole::Pl),
+                ("verilator", BackendRole::Pl),
                 ("xsim", BackendRole::Pl),
             ]
         );

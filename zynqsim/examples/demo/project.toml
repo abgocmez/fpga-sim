@@ -1,5 +1,6 @@
 # Starter project for the built-in demo backend. See docs/DESIGN.md.
-# `qemu`, `verilator`, `icarus`, `xsim` and `native` backends are not implemented yet.
+# Other backends: `qemu` (PS), `verilator` / `xsim` (RTL, need `[rtl]`), `native` (PL models).
+# `icarus` is not implemented.
 schema_version = 1
 
 [board]

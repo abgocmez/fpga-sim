@@ -16,6 +16,8 @@ pub enum PlKind {
     Native,
     /// RTL simulated in Vivado XSim.
     Xsim,
+    /// RTL simulated in Verilator (same sources and top as XSim).
+    Verilator,
 }
 
 /// The fields of a project the GUI edits. Everything else in the project
@@ -67,6 +69,7 @@ impl ProjectDraft {
     pub fn from_project(base: Project, dir: PathBuf, file: Option<PathBuf>) -> ProjectDraft {
         let pl = match base.backends.pl.as_str() {
             "xsim" => PlKind::Xsim,
+            "verilator" => PlKind::Verilator,
             "native" => PlKind::Native,
             _ => PlKind::None,
         };
@@ -139,6 +142,7 @@ impl ProjectDraft {
             PlKind::None => "demo",
             PlKind::Native => "native",
             PlKind::Xsim => "xsim",
+            PlKind::Verilator => "verilator",
         }
         .to_string();
         if self.use_qemu {
@@ -164,7 +168,7 @@ impl ProjectDraft {
             p.cpu1 = None;
             p.boot = None;
         }
-        if self.pl == PlKind::Xsim {
+        if matches!(self.pl, PlKind::Xsim | PlKind::Verilator) {
             let files: Vec<String> = self
                 .rtl_files
                 .lines()

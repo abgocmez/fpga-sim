@@ -72,11 +72,23 @@ pub struct NativeInstance {
     pub bindings: std::collections::BTreeMap<String, String>,
 }
 
-/// An RTL design to run in XSim as the PL.
+/// The RTL simulator a design runs in.
+#[derive(Clone, Debug)]
+pub enum RtlTool {
+    /// Vivado XSim in this Vivado install directory.
+    Xsim {
+        /// Vivado install directory (contains `settings64.bat`).
+        vivado_root: PathBuf,
+    },
+    /// Verilator (`--binary --timing`), located by `backend_rtl_verilator::tools::find`.
+    Verilator(backend_rtl_verilator::VerilatorTools),
+}
+
+/// An RTL design to run as the PL (XSim or Verilator).
 #[derive(Clone, Debug)]
 pub struct RtlSpec {
-    /// Vivado install directory.
-    pub vivado_root: PathBuf,
+    /// The simulator and where it is installed.
+    pub tool: RtlTool,
     /// Sources, testbench included.
     pub sources: Vec<PathBuf>,
     /// Top module.
@@ -766,6 +778,59 @@ struct Snapshot {
     trace_hash: String,
 }
 
+/// Builds and starts the RTL of a project in its simulator. The build cache sits next to
+/// the run directory (`ZYNQSIM_NO_BUILD_CACHE` disables it).
+fn start_rtl(
+    rtl: &RtlSpec,
+    run_dir: &std::path::Path,
+) -> Result<Box<dyn PlTarget + Send>, ApiError> {
+    let cache = std::env::var_os("ZYNQSIM_NO_BUILD_CACHE")
+        .is_none()
+        .then(|| run_dir.parent().map(|p| p.to_path_buf()))
+        .flatten();
+    match &rtl.tool {
+        RtlTool::Xsim { vivado_root } => {
+            let cfg = backend_rtl_xsim::XsimConfig {
+                vivado_root: vivado_root.clone(),
+                sources: rtl.sources.clone(),
+                top: rtl.top.clone(),
+                defines: rtl.defines.clone(),
+                dpi_lib: rtl.dpi_lib.clone(),
+                work_dir: run_dir.join("xsim"),
+                waves: rtl.waves,
+                connect_timeout: std::time::Duration::from_secs(300),
+                cache_dir: cache.map(|p| p.join("xsim-cache")),
+            };
+            Ok(Box::new(
+                backend_rtl_xsim::XsimPl::start_with(&cfg, rtl.export.as_ref()).map_err(|e| {
+                    ApiError::io(e.to_string())
+                        .with_hint("see build.log / xsim.out.log in the run directory")
+                })?,
+            ))
+        }
+        RtlTool::Verilator(tools) => {
+            let cfg = backend_rtl_verilator::VerilatorConfig {
+                verilator: tools.verilator.clone(),
+                root: tools.root.clone(),
+                tool_dirs: tools.tool_dirs.clone(),
+                sources: rtl.sources.clone(),
+                top: rtl.top.clone(),
+                defines: rtl.defines.clone(),
+                dpi_lib: rtl.dpi_lib.clone(),
+                work_dir: run_dir.join("verilator"),
+                connect_timeout: std::time::Duration::from_secs(300),
+                cache_dir: cache.map(|p| p.join("verilator-cache")),
+            };
+            Ok(Box::new(
+                backend_rtl_verilator::VerilatorPl::start(&cfg).map_err(|e| {
+                    ApiError::io(e.to_string())
+                        .with_hint("see build.log / sim.out.log in the run directory (verilator/)")
+                })?,
+            ))
+        }
+    }
+}
+
 impl QemuEngine {
     /// Starts QEMU with `spec` and places the native models.
     pub fn new(spec: &QemuSpec) -> Result<QemuEngine, ApiError> {
@@ -775,30 +840,7 @@ impl QemuEngine {
                 .ok_or_else(|| ApiError::not_found(format!("unknown board `{}`", spec.board)))?,
         };
         let rtl_pl: Option<Box<dyn PlTarget + Send>> = match &spec.rtl {
-            Some(rtl) => {
-                let cfg = backend_rtl_xsim::XsimConfig {
-                    vivado_root: rtl.vivado_root.clone(),
-                    sources: rtl.sources.clone(),
-                    top: rtl.top.clone(),
-                    defines: rtl.defines.clone(),
-                    dpi_lib: rtl.dpi_lib.clone(),
-                    work_dir: spec.work_dir.join("xsim"),
-                    waves: rtl.waves,
-                    connect_timeout: std::time::Duration::from_secs(300),
-                    cache_dir: std::env::var_os("ZYNQSIM_NO_BUILD_CACHE")
-                        .is_none()
-                        .then(|| spec.work_dir.parent().map(|p| p.join("xsim-cache")))
-                        .flatten(),
-                };
-                Some(Box::new(
-                    backend_rtl_xsim::XsimPl::start_with(&cfg, rtl.export.as_ref()).map_err(
-                        |e| {
-                            ApiError::io(e.to_string())
-                                .with_hint("see build.log / xsim.out.log in the run directory")
-                        },
-                    )?,
-                ))
-            }
+            Some(rtl) => Some(start_rtl(rtl, &spec.work_dir)?),
             None => None,
         };
         let pl: Box<dyn PlTarget + Send> = if spec.natives.is_empty() {
