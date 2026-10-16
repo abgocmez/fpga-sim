@@ -226,6 +226,7 @@ pub fn plan_project(bin: &Path) -> Result<BootInit, ApiError> {
         device_values: BTreeMap::new(),
         host: BTreeMap::new(),
         native: BTreeMap::new(),
+        native_params: BTreeMap::new(),
         media: None,
         debug: None,
         network: None,
