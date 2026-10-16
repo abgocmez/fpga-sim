@@ -1,0 +1,30 @@
+[package]
+name = "dpi-cdylib"
+version.workspace = true
+# 2021: the DPI exports are plain `#[no_mangle]` functions (see xsim-dpi::abi).
+edition = "2021"
+license.workspace = true
+rust-version.workspace = true
+description = "Shared object exporting the remote-port DPI-C ABI, for simulators that load shared objects"
+
+[lib]
+# The file is zynqsim_dpi.dll / libzynqsim_dpi.so / libzynqsim_dpi.dylib.
+name = "zynqsim_dpi"
+crate-type = ["cdylib"]
+
+# An FFI boundary that must use `unsafe`, so it does not inherit the workspace
+# `unsafe_code = "forbid"`, the same exemption as `xsim-dpi`. The unsafe is the
+# single-instance cell in `lib.rs` and the export layer in `xsim_dpi::abi`.
+[lints.rust]
+missing_docs = "deny"
+
+[dependencies]
+xsim-dpi = { path = "../xsim-dpi" }
+
+[dev-dependencies]
+# Tests only: the shared object is loaded the way a simulator loads it.
+libloading = "0.8"
+# The fake remote-port peer.
+interop = { path = "../interop", features = ["std"] }
+# The generated testbench, whose DPI imports the exports must cover.
+sim-api = { path = "../sim-api" }

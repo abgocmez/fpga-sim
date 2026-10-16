@@ -60,6 +60,7 @@ is `true` (warnings), `false` (off) or `"strict"` (errors fail the run). See
 
 ```
 cargo xtask dpi                                    # once: the XSim DPI library
+cargo xtask dpi-shared                             # optional: the shared-object DPI library (Questa, VCS, Xcelium; ADR-028)
 zynqsim run --project examples/math-qemu/project.toml --for 20ms        # QEMU + native PL
 zynqsim run --project examples/dma-regression/project.toml --for 3ms    # QEMU + RTL in XSim
 ```
@@ -422,7 +423,7 @@ licences: [docs/CORPUS.md](docs/CORPUS.md); decision: [docs/adr/020-corpus.md](d
 
 | Path | Contents |
 |---|---|
-| `crates/` | `sim-core`, `trace`, `board-zybo`, `devices`, `sim-api`, `mcp`, `cli`, `gui`, `xtask`, `interop`, `pl-api`, `pl-native`, `backend-qemu`, `backend-rtl-xsim`, `xsim-dpi` |
+| `crates/` | `sim-core`, `trace`, `board-zybo`, `devices`, `sim-api`, `mcp`, `cli`, `gui`, `xtask`, `interop`, `pl-api`, `pl-native`, `backend-qemu`, `backend-rtl-xsim`, `xsim-dpi`, `dpi-cdylib` |
 | `boards/` | board descriptions (TOML) |
 | `docs/` | `DESIGN.md`, `STATUS.md`, `TESTPLAN.md`, `adr/` |
 | `examples/` | `demo`, `custom-board`, `zedboard-demo`, `math-qemu`, `math-debug`, `dma-regression`, `board-demo`, `audio-demo`, `hdmi-demo`, `irq-demo`, `oled-demo`, `rgb-demo`, `rust-hello`, `rust-debug`, `net-demo`, `sd-demo`, `qspi-demo`, `bsp-hello`, `bsp-peripherals` (Xilinx's own BSP templates, unmodified), `gpio-timer-uart`, `timer-modes`, `dma-loopback`, `dma-sg`, `iic-bram-demo`, `intc-demo` projects |

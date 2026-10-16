@@ -12,7 +12,8 @@ description = "no_std static library: the PL side of remote-port, loaded into Vi
 crate-type = ["staticlib", "rlib"]
 
 # This crate is an FFI boundary and must be able to use `unsafe`, so it does not
-# inherit the workspace `unsafe_code = "forbid"`. All unsafe is in `win.rs`.
+# inherit the workspace `unsafe_code = "forbid"`. The unsafe is the export layer
+# (`abi.rs`, shared with `dpi-cdylib`) and the Windows glue (`win.rs`).
 [lints.rust]
 missing_docs = "deny"
 

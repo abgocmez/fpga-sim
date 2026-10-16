@@ -22,6 +22,7 @@ members = [
     "crates/vendor-ip",
     "crates/backend-qemu",
     "crates/xsim-dpi",
+    "crates/dpi-cdylib",
     "crates/backend-rtl-xsim",
 ]
 default-members = [
