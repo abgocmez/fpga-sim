@@ -72,6 +72,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
+name = "conf_dmaps"
+version = "0.1.0"
+dependencies = [
+ "rt",
+]
+
+[[package]]
 name = "conf_gpiops"
 version = "0.1.0"
 dependencies = [
@@ -79,7 +86,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "conf_iicps"
+version = "0.1.0"
+dependencies = [
+ "rt",
+]
+
+[[package]]
 name = "conf_scutimer"
+version = "0.1.0"
+dependencies = [
+ "rt",
+]
+
+[[package]]
+name = "conf_spips"
+version = "0.1.0"
+dependencies = [
+ "rt",
+]
+
+[[package]]
+name = "conf_ttc"
+version = "0.1.0"
+dependencies = [
+ "rt",
+]
+
+[[package]]
+name = "conf_xadcps"
 version = "0.1.0"
 dependencies = [
  "rt",

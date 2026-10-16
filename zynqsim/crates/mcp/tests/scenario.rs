@@ -552,13 +552,28 @@ fn board_demo_through_mcp() {
             u["structuredContent"]["text"].as_str().unwrap().to_string()
         };
 
+    // Bytes the host writes to the TCP UART reach the guest at a wall-clock
+    // dependent virtual time, so wait for the answer in steps of 6 ms.
+    let until = |call: &mut dyn FnMut(&str, serde_json::Value) -> serde_json::Value,
+                 needle: &str|
+     -> String {
+        let mut all = String::new();
+        for _ in 0..10 {
+            all.push_str(&text(call, "6ms"));
+            if all.contains(needle) {
+                break;
+            }
+        }
+        all
+    };
+
     // Boot, then drive the shell.
-    let boot = text(&mut call, "6ms");
+    let boot = until(&mut call, "ready");
     assert!(boot.contains("ready"), "{boot}");
 
     let w = call("uart_write", json!({ "port": 1, "text": "led 10\r" }));
     assert_eq!(w["isError"], false, "{w}");
-    let out = text(&mut call, "6ms");
+    let out = until(&mut call, "LED=A");
     assert!(out.contains("LED=A"), "{out}");
     let leds = call("board_get_leds", json!({}))["structuredContent"]["leds"].clone();
     let on: Vec<bool> = leds
@@ -584,7 +599,7 @@ fn board_demo_through_mcp() {
     assert_eq!(r["isError"], false, "{r}");
     let _ = text(&mut call, "6ms");
     call("uart_write", json!({ "port": 1, "text": "status\r" }));
-    let out = text(&mut call, "6ms");
+    let out = until(&mut call, "SW=8");
     assert!(out.contains("SW=8"), "{out}");
 
     // Memory: read the firmware's image, write a pattern and read it back.

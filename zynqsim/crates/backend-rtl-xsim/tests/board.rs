@@ -156,6 +156,12 @@ impl Board {
     }
 
     /// Runs until `needle` appears in the UART output after `from`, or fails.
+    ///
+    /// Callers allow tens of milliseconds of virtual time although the
+    /// firmware answers in microseconds: bytes the host writes to the TCP
+    /// UART reach the guest at a wall-clock dependent virtual time (QEMU's
+    /// main loop reads them only between lock-step holds), and with 5 ms the
+    /// tests failed in about one run of three.
     fn run_until_output(&mut self, from: usize, needle: &str, max_us: u64) {
         let mut spent = 0;
         while !self.uart[from..].contains(needle) {
@@ -209,15 +215,15 @@ fn shell_leds_switches_and_buttons() {
     let mut b = board_or_skip!("shell");
 
     // Boot: banner and prompt.
-    b.run_until_output(0, "> ", 5_000);
+    b.run_until_output(0, "> ", 50_000);
     assert!(b.uart.contains("virtual Zybo Z7-20 ready"), "{}", b.uart);
 
     // `status` shows the power-on state.
-    let out = b.shell("status", 5_000);
+    let out = b.shell("status", 50_000);
     assert!(out.contains("LED=0 SW=0 BTN=0"), "{out}");
 
     // `led 5`: the shell echoes the register, and the RTL's LED pins reach us.
-    let out = b.shell("led 5", 5_000);
+    let out = b.shell("led 5", 50_000);
     assert!(out.contains("LED=5"), "{out}");
     b.run_us(50);
     assert_eq!(b.leds, 0b0101, "LED pins from the RTL");
@@ -225,7 +231,7 @@ fn shell_leds_switches_and_buttons() {
     // Switches reach the RTL and are visible to the firmware.
     b.pl.set_board_inputs(0b0110, 0, b.m.now_ns());
     b.run_us(50);
-    let out = b.shell("status", 5_000);
+    let out = b.shell("status", 50_000);
     assert!(out.contains("SW=6"), "{out}");
 
     // Button 2 pressed and released: GPIO event -> IRQ_F2P[1] -> ISR -> main
@@ -234,7 +240,7 @@ fn shell_leds_switches_and_buttons() {
     b.pl.set_board_inputs(0b0110, 0b0100, b.m.now_ns());
     b.run_us(200);
     b.pl.set_board_inputs(0b0110, 0, b.m.now_ns());
-    b.run_until_output(before, "[button event 0x4, total", 5_000);
+    b.run_until_output(before, "[button event 0x4, total", 50_000);
     b.run_us(100);
     assert_eq!(
         b.leds, 0b0001,
@@ -261,7 +267,7 @@ fn shell_leds_switches_and_buttons() {
     // `end` stops the simulation from the firmware.
     let from = b.uart.len();
     b.m.uart_write(b"end\r").unwrap();
-    b.run_until_output(from, "COSIM_DONE", 5_000);
+    b.run_until_output(from, "COSIM_DONE", 50_000);
     b.run_us(200);
     assert!(b.pl.finished(), "the testbench should have ended the run");
 }
@@ -270,7 +276,7 @@ fn shell_leds_switches_and_buttons() {
 #[test]
 fn image_filters_match_the_golden_model_pixel_for_pixel() {
     let mut b = board_or_skip!("img");
-    b.run_until_output(0, "> ", 5_000);
+    b.run_until_output(0, "> ", 50_000);
 
     // The disc image the firmware generates at boot, and the Rust model of it.
     let src = b.mem(IMG_SRC, PIXELS);
