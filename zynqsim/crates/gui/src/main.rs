@@ -27,6 +27,7 @@ Options for automated checks:
   --uart TEXT      send TEXT (with \\r \\n escapes) to UART1, then run 5 ms; repeatable
   --mem ADDR       open the memory viewer at ADDR as a 64x64 image
   --view3d         start on the 3D board view
+  --wave NAME      open the Waveforms tab with this signal shown; repeatable
   --project-window open the project window
 ";
 
@@ -75,6 +76,7 @@ fn main() -> eframe::Result {
             "--screenshot" => opts.screenshot = Some(PathBuf::from(value("--screenshot"))),
             "--uart" => uart_lines.push(value("--uart")),
             "--view3d" => opts.view_3d = true,
+            "--wave" => opts.waves.push(value("--wave")),
             "--project-window" => opts.project_window = true,
             "--mem" => {
                 let v = value("--mem");

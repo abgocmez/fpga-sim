@@ -28,6 +28,8 @@ pub struct Opts {
     pub mem: Option<u64>,
     /// Open on the 3D board view.
     pub view_3d: bool,
+    /// Open on the Waveforms tab, with these signals shown.
+    pub waves: Vec<String>,
     /// Open the project window.
     pub project_window: bool,
     /// Where relative paths of the project that was opened resolve, and the
@@ -108,6 +110,9 @@ impl App {
             None => ProjectDraft::demo(),
         };
         let view_3d = opts.view_3d;
+        let waves = !opts.waves.is_empty();
+        let mut model = model;
+        model.waves.selected.extend(opts.waves.iter().cloned());
         let opts_project_window = opts.project_window;
         App {
             model,
@@ -152,7 +157,10 @@ impl App {
             autoplay: false,
             seen_generation: 0,
             media: media::MediaUi::default(),
-            wave_ui: wave_view::WaveUi::default(),
+            wave_ui: wave_view::WaveUi {
+                tab: waves,
+                ..Default::default()
+            },
         }
     }
 
@@ -294,6 +302,20 @@ impl App {
     }
 
     fn side_panel(&mut self, ui: &mut egui::Ui) {
+        // The sections scroll, so a long one (Source, HDMI) cannot push the
+        // trace off the bottom of the window; the trace keeps a strip of its own.
+        let trace_h = (ui.available_height() * 0.2).clamp(120.0, 180.0);
+        egui::ScrollArea::vertical()
+            .id_salt("side_sections")
+            .max_height((ui.available_height() - trace_h).max(120.0))
+            .auto_shrink([false, false])
+            .show(ui, |ui| self.side_sections(ui));
+        ui.separator();
+        self.trace_panel(ui);
+    }
+
+    /// Everything above the trace.
+    fn side_sections(&mut self, ui: &mut egui::Ui) {
         ui.heading("System");
         self.badge(ui);
         let s = &self.model.status;
@@ -316,6 +338,13 @@ impl App {
             .default_open(stopped)
             .show(ui, |ui| match &self.model.cpu_regs[core] {
                 Some(r) => {
+                    if r.r.iter().all(|v| *v == 0) {
+                        ui.label(
+                            RichText::new("all registers are zero: nothing has run on this core")
+                                .color(Color32::GRAY)
+                                .small(),
+                        );
+                    }
                     if let Some(s) = &r.pc_symbol {
                         ui.label(RichText::new(format!("pc in {s}")).strong());
                     }
@@ -441,11 +470,15 @@ impl App {
                 .small(),
             );
         });
-        ui.separator();
+    }
+
+    /// The newest trace records, in the bottom strip of the side panel.
+    fn trace_panel(&self, ui: &mut egui::Ui) {
         ui.strong(format!("Trace ({} records)", self.model.trace_total));
         ui.add_space(4.0);
         egui::ScrollArea::vertical()
             .id_salt("trace")
+            .auto_shrink([false, false])
             .stick_to_bottom(true)
             .show(ui, |ui| {
                 for r in &self.model.trace_tail {
