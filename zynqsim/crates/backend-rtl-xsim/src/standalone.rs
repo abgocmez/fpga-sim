@@ -302,7 +302,7 @@ fn runtime_file_warning(body: &str) -> Option<(String, String, u32)> {
     let name_start = body.strip_prefix("File ")?;
     let r = name_start.find(" referenced ")?;
     let name = name_start[..r].to_string();
-    let after = &name_start[r + " referenced ".len()..];
+    let after = &name_start[r + " referenced".len()..];
     let on = after.find(" on ")? + " on ".len();
     let rest = &after[on..];
     let b = rest.find(" at line ")?;
