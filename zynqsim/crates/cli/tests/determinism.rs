@@ -68,6 +68,19 @@ const CASES: &[Case] = &[
         qemu: false,
         ..case("native-hello", "10ms")
     },
+    Case {
+        qemu: false,
+        ..case("native-thumb", "5ms")
+    },
+    Case {
+        qemu: false,
+        ..case("native-gpio-timer-uart", "60ms")
+    },
+    Case {
+        qemu: false,
+        ..case("dual-core-native", "20ms")
+    },
+    case("dual-core-qemu", "80ms"),
     // Unmodified Xilinx BSP applications (fixtures/bsp); bsp-peripherals ends in the SCU
     // watchdog test that never returns (no watchdog in this QEMU machine), which is deterministic too.
     case("bsp-hello", "15ms"),
@@ -185,10 +198,16 @@ const KNOWN_NONDETERMINISTIC: &[(&str, &str)] = &[
 ];
 
 /// Examples this file does not run, with the reason.
-const EXCLUDED: &[(&str, &str)] = &[(
-    "hdmi-demo",
-    "needs a host video image as input (--video-in); covered by hdmi_demo_scans_out_a_frame_and_captures_the_host_image in cli.rs",
-)];
+const EXCLUDED: &[(&str, &str)] = &[
+    (
+        "hdmi-demo",
+        "needs a host video image as input (--video-in); covered by hdmi_demo_scans_out_a_frame_and_captures_the_host_image in cli.rs",
+    ),
+    (
+        "native-math",
+        "does not run yet: the Xilinx boot code reads 0xF800D010, which the native PS does not map (ADR-035); nothing to compare",
+    ),
+];
 
 /// What one run is compared by.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
