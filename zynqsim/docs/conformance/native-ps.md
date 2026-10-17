@@ -83,3 +83,14 @@ native run prints nothing and reports no fault. That is a missing device model, 
 BSP enables no translation before this point. The BSP ELFs also contain VFP instructions
 (`vmrs`/`vmsr fpexc`, `vmov`) and the MMU setup code (TTBR0, DACR, SCTLR writes), so a run past
 the device reads is limited by VFP as well. No BSP ELF was compared with QEMU here.
+* Firmware that needs a PL or the MMU, Thumb or VFP: refused by the native engine (ADR-033).
+
+## Batch 2 blocks on the native engine (ps-periph)
+
+The new register models (GPIO, SPI0/1, I2C0/1, XADC, devcfg, CAN0/1, the watchdog reset request)
+are checked by the firmware-derived tests in `crates/ps-periph/tests/conf_*.rs` and the BSP
+sequences in `bsp_periph2.rs`. They do not run the firmware on the native engine: the conformance
+firmware is run by the QEMU tests only. The table in this file is unchanged; see *Native PS
+peripherals, batch 2* in `STATUS.md` for the per-block results (GPIO 12/12, SPI 28/28, I2C 22/22,
+XADC 15/15 checks PASS; the XADC temperature finding is documented there).
+Running the BSP driver ELFs on the native engine was not attempted (ADR-033 refuses VFP and MMU).

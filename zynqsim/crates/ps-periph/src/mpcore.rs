@@ -69,6 +69,17 @@ impl MpCore {
     pub fn private_timer(&self, cpu: usize) -> &Countdown {
         &self.pt[cpu.min(NCPU - 1)]
     }
+
+    /// The watchdog of `cpu`, for tests and the host.
+    pub fn watchdog(&self, cpu: usize) -> &Watchdog {
+        &self.wd[cpu.min(NCPU - 1)]
+    }
+
+    /// Takes the watchdog reset requests of all cores (the `WdtReset` events) made since the
+    /// last call. The host turns a nonzero result into a system reset.
+    pub fn take_wdt_resets(&mut self) -> u32 {
+        self.wd.iter_mut().map(Watchdog::take_reset_requests).sum()
+    }
 }
 
 impl Device for MpCore {
@@ -174,6 +185,7 @@ impl Device for MpCore {
             self.pt[c].save_state(out);
             self.wd[c].cd.save_state(out);
             out.extend_from_slice(&self.wd[c].reset_status.to_le_bytes());
+            out.extend_from_slice(&self.wd[c].reset_requests.to_le_bytes());
         }
     }
 }

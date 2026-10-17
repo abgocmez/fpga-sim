@@ -834,3 +834,22 @@ self-checking testbenches. Those are the only evidence that the results match a 
 (names are not resolved; a wildcard import disables the undeclared-name check), type parameters,
 multi-dimensional packed arrays, `$` queues, `fork`, real arithmetic, and the elaboration of
 instance arrays, `defparam` and hierarchical references into other instances.
+
+## Native PS peripherals, batch 2 (ps-periph, ADR-031 appendix)
+
+Register-level models for the native engine. Status words per block: **verified** means a named
+test proves the stated behaviour against the model; it never means it matches hardware. Register
+facts marked `VERIFY:` are from memory unless the note says the BSP ELF was disassembled.
+
+| Feature | Status | Evidence / note |
+|---|---|---|
+| GPIO xgpiops (0xE000A000, IRQ 52): DATA, masked LSW/MSW writes, DATA_RO, DIRM, OEN, INT_MASK/EN/DIS/STAT/TYPE/POLARITY/ANY, host pin inputs, output sink. Pins 0..85 (MIO 0..53, EMIO 54..85); pins 86..117 are **not** modelled (4 banks of 32 bits) | verified | `conf_gpiops` (12 of 12 checks PASS, incl. pin event on GIC 52), `ps-periph::gpio::tests::*` |
+| SPI0/SPI1 xspips (0xE0006000/0xE0007000, IRQ 58/81): Config, Enable, Delay, TXD/RXD 128-word FIFOs, thresholds, Slave_Idle_count, ISR/IER/IDR/IMR, manual start, chip select, `SpiPeer` host trait (NoSlave, Loopback) | verified | `conf_spips` (28 of 28 PASS: the firmware's 27 plus a no-slave variant), `ps-periph::spi::tests::*` |
+| I2C0/I2C1 xiicps (0xE0004000/0xE0005000, IRQ 57/80): master write and read transfers to an `I2cPeer`, NACK for absent devices, data FIFO, ISR/IER/IDR/IMR | verified | `conf_iicps` (22 of 22 PASS; check 18 run with an attached EEPROM), `ps-periph::i2c::tests::*`. The `crates/devices` TMP2/ADT7420 model is **not** attached (needs an adapter in the integrator's code) |
+| XADC (0xF8007100) with CMDFIFO/RDFIFO, DRP sensors, host temperature and VCCINT, INT_STS/INT_MASK/MSTS/MCTL/CFG | verified (with a documented firmware finding) | `conf_xadcps` (15 PASS). **Finding**: `firmware/conf_xadcps` check 10 applies the 12-bit formula to the 16-bit left-aligned UG480 value and is out of range; the test documents that and runs the check on `raw >> 4` |
+| Devcfg (0xF8007000): CTRL (NIDEN), LOCK/UNLOCK, CFG, INT_STS/INT_MASK, STATUS, DMA registers stored only, MCTRL. No bitstream, no DMA | verified (SelfTest sequence); register reset values `VERIFY:` | `bsp_periph2::xdcfg_selftest_passes_when_nidien_reads_back_set` (sequence from `XDcfg_SelfTest`, disassembled from `fixtures/bsp/bsp_devcfg_selftest.elf`) |
+| CAN0/CAN1 xcanps (0xE0008000/0xE0009000, IRQ 19/46 VERIFY): reset, configuration/loopback/normal/sleep/listen modes, TX/RX FIFOs, RXOK interrupt, host sink and injection | verified (BSP self test sequence) | `bsp_periph2::xcanps_selftest_sequence_passes_in_loopback` (sequence from `XCanPs_SelfTest`, `EnterMode`, `GetMode`, `Send`, `Recv`, disassembled from `fixtures/bsp/bsp_canps_polled.elf`); `ps-periph::can::tests::*`. Mode codes are the ones the BSP decodes (1 config, 2 normal, 4 loopback, 8 listen, 16 sleep) |
+| SCU watchdog (0xF8F00620, per core): watchdog mode expiry sets RESET_STATUS and queues a reset request (`MpCore::take_wdt_resets`, the host turns it into a system reset); timer mode only flags the event | verified | `bsp_periph2::a_watchdog_in_watchdog_mode_requests_one_reset_per_expiry_and_the_host_takes_it`, `...timer_mode...` |
+| A9 private timer rate 333.33 MHz (CPU clock / 2) | verified | `bsp_periph2::the_private_timer_counts_at_333_mhz`. No separate "flush-to-zero" behaviour was found in the sources, so none is modelled |
+| Determinism of the new blocks: same stimulus, same state hash at every step; a different pin level changes it | verified | `determinism_periph2::{the_same_session_gives_the_same_hash_at_every_step, a_different_stimulus_gives_a_different_hash}` |
+| Native engine running the BSP driver examples (GPIO, SPI, I2C, XADC, devcfg, CAN ELFs) | **not run** | ADR-033 refuses VFP/NEON, the MMU and Thumb; the Xilinx standalone boot uses them. The integrator must decide this |

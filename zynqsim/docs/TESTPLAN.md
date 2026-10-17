@@ -319,3 +319,11 @@ Run: `cargo test -p rtl-engine` (60 tests, about 20 s). The XSim test needs Viva
 Not covered: 4-state behaviour (none exists); the `backends.pl = "rtl-native"` switch (not wired); a
 differential run against XSim for any design but `my_math_ip`; `$readmemb`; performance; Windows-only
 checks of the XSim path on other hosts.
+
+## ps-periph batch 2 (GPIO, SPI, I2C, XADC, devcfg, CAN, watchdog)
+
+* `cargo test -p ps-periph -p mem-sys`: unit tests of each new model, `conf_gpiops`, `conf_spips`,
+  `conf_iicps`, `conf_xadcps` (firmware checks encoded), `bsp_periph2` (CAN and devcfg BSP
+  sequences, watchdog reset and timer modes, private timer rate), `determinism_periph2`.
+* `cargo clippy -p ps-periph -p mem-sys --all-targets -- -D warnings`.
+* Not in the gate: the QEMU BSP examples are unchanged; no native-engine run of BSP ELFs.
