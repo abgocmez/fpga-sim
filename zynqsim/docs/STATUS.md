@@ -723,10 +723,13 @@ The native ARMv7-A core `crates/cpu-a9` (ADR-030). Integer A32 only; the MMU, Th
 | WFI, WFE, SEV, interrupt wake from WFI while masked | verified | `isa::wfi_waits_then_resumes_after_the_wakeup_even_when_masked`, `isa::sev_wakes_wfe_and_the_event_register_is_consumed` |
 | CP15: MIDR, MPIDR, ACTLR, cache and TLB no-ops | verified (the other registers implemented-untested) | `isa::cp15_identification_control_and_maintenance_registers` |
 | UDIV, SDIV are undefined (no integer divide on Cortex-A9) | verified for the permanently undefined encoding | `isa::undefined_instruction_takes_the_undef_exception` |
-| MMU: setting SCTLR.M stops the core, never runs untranslated | verified (no translation exists) | `isa::enabling_the_mmu_stops_the_core_rather_than_running_untranslated` |
+| MMU, short-descriptor VMSA: sections, supersections, coarse tables, large and small pages, TTBR0/1 split, DACR domains, AP/APX/XN/PXN, XP=0 subpages, DFSR/IFSR/DFAR/IFAR status codes with WnR, LDRT/STRT, data and prefetch abort entry and retry | verified (against the tests' own reading of the ARM ARM; not against hardware) | `cpu-a9/tests/mmu.rs` (28 tests, incl. the permission matrix and a property test against an independent reference walk); `isa::enabling_the_mmu_with_no_tables_takes_a_prefetch_abort` |
+| MMU TLB: invalidate by TLBIALL, TLBIMVA, TLBIMVAA, TLBIASID (c8); stale until invalidated, faults not cached | verified | `mmu::the_tlb_serves_the_old_walk_until_it_is_invalidated`, `mmu::tlb_invalidate_operations_remove_what_their_operand_names`, `mmu::a_remapped_page_is_seen_only_after_tlb_maintenance` |
+| MMU ATS1CPR/CPW/CUR/CUW and PAR | verified (PAR fault FST simplified: no domain) | `mmu::ats_writes_par_for_a_mapped_and_for_an_unmapped_address` |
+| MMU caches: TEX/C/B/S/NS recorded only; TEX remap, access flag, LPAE, Hyp not modelled | not-planned here (TEX/C/B recorded) | `mmu::texture_cacheability_and_sharing_bits_are_recorded_for_every_descriptor_type` |
 | Thumb (T=1, BX to an odd address): reported, not run | stub | `isa::bx_to_an_odd_address_enters_thumb_which_is_reported` |
 | VFP, NEON, coprocessor 10/11 | stub (`Unimplemented`) | `isa::vfp_is_reported_unimplemented_and_nothing_changes` |
-| MMU walk, TLB, the `Translate` hook beyond identity | stub (identity translation only) | `Translate` / `Identity` in `cpu-a9::xlate` |
+| MMU walk, TLB, the `Translate` hook | verified (short-descriptor; see the MMU rows above) | `cpu-a9::mmu`, `cpu-a9::xlate` |
 | GIC, timers, SCU, caches, peripherals | not in this crate | `mem-sys`, `ps-periph` (other crates) |
 | Rust firmware: `rust_hello.elf` runs to completion, UART text equals QEMU | verified | `cpu-a9/tests/rust_firmware.rs::rust_hello_runs_to_completion_and_prints_its_message`, `cli/tests/cpu_a9_diff.rs::rust_hello_prints_the_same_text_in_qemu_and_in_the_interpreter` (skips without QEMU) |
 | Every distinct instruction word of the 31 Rust firmware images decodes to an implemented class | verified (decode, not behaviour) | `cpu-a9/tests/rust_firmware.rs::every_instruction_word_of_the_firmware_decodes` |
@@ -761,7 +764,7 @@ pinned in `docs/conformance/native-ps.md`.
 | Project validation: `[cpu1]`, `backends.pl` other than `demo`, `[native]`, `[devices]`, `[media]`, `boot_bin` refused with the reason | verified | `zynqsim::native_ps_diff::a_native_project_with_a_second_core_is_refused_with_the_reason`; the rest in `sim-api::native_ps::tests::validation_*` |
 | CLI: `zynqsim run` on a native project; `inspect` lists `native` as an available PS | verified | `zynqsim::native_ps_diff::{five_processes_give_one_trace_digest, inspect_lists_the_native_ps_as_available}`; `examples/native-hello` |
 | GUI project window: "native Rust" PS choice | implemented-untested | `crates/gui/src/app/project.rs`, `loader.rs`; no GUI test drives it |
-| Thumb, VFP and NEON, the MMU | stub | reported as `Unimplemented`; the engine stops with a message (see the cpu-a9 table above) |
+| Thumb, VFP and NEON | stub | reported as `Unimplemented`; the engine stops with a message (see the cpu-a9 table above). The MMU is implemented (`cpu-a9` table) |
 | PL attachment through remote-port (native PL models, RTL) | not-planned | out of scope for P5; `backends.pl` must be `demo` |
 | Dual core (`[cpu1]`) | not-planned | refused by validation: core 1 is parked |
 | Board switches, buttons, LEDs; Pmod devices; HDMI and audio; Ethernet; screenshots on the native PS | not-planned | refused with the reason; `qemu` has them |
