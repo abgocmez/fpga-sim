@@ -156,7 +156,7 @@ fn unsupported_features_exit_3_with_a_clear_message() {
     let p = d.join("qemu.toml");
     std::fs::write(
         &p,
-        "schema_version = 1\n[board]\nname = \"zybo-z7-20\"\n[backends]\nps = \"native\"\n",
+        "schema_version = 1\n[board]\nname = \"zybo-z7-20\"\n[backends]\npl = \"icarus\"\n",
     )
     .unwrap();
     let r = zynqsim(&["run", "--project", p.to_str().unwrap()]);
@@ -202,7 +202,7 @@ fn inspect_lists_backends_without_claiming_unbuilt_ones() {
         .collect();
     assert_eq!(
         implemented,
-        ["demo", "qemu", "demo", "native", "verilator", "xsim"]
+        ["demo", "qemu", "native", "demo", "native", "verilator", "xsim"]
     );
 }
 
