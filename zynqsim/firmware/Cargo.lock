@@ -415,6 +415,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "timer_rate"
+version = "0.1.0"
+dependencies = [
+ "rt",
+]
+
+[[package]]
 name = "tmp2_demo"
 version = "0.1.0"
 dependencies = [

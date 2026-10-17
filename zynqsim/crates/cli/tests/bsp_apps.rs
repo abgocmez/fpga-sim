@@ -228,6 +228,12 @@ const PASS: &[App] = &[
         "15ms",
         &["Successfully ran IIC Self Test Example Test"],
     ),
+    // CAN0 (0xE0008000) is mapped since ADR-029 (`dtb::DEFAULT_EDITS`).
+    app(
+        "bsp_canps_polled",
+        "15ms",
+        &["Successfully ran CAN Polled Mode Example Test"],
+    ),
     // The example addresses sector 204800 (100 MiB): the default 8 MiB card from `sd_dir` is
     // too small and the read-back differs, so the card is made 128 MiB.
     App {
@@ -261,7 +267,8 @@ const DEVIATIONS: &[App] = &[
             ],
         )
     },
-    // No device-configuration block: CTRL.NIDEN (bit 4) reads back 0 after the write.
+    // No device-configuration block: CTRL.NIDEN (bit 4) reads back 0 after the write. The FDT
+    // machine has no compatible string for the devcfg model (ADR-029).
     app(
         "bsp_devcfg_selftest",
         "15ms",
@@ -284,12 +291,6 @@ const DEVIATIONS: &[App] = &[
         "bsp_spips_selftest",
         "15ms",
         &["SPIPS Selftest Example Failed"],
-    ),
-    // No CAN controller.
-    app(
-        "bsp_canps_polled",
-        "15ms",
-        &["CAN Polled Mode Example Test Failed"],
     ),
     // No SCU watchdog (0xF8F00620): the timer never expires and the example spins forever.
     App {
@@ -371,20 +372,17 @@ fn bsp_peripheral_tests_report_what_the_model_implements() {
         "QspiPsSelfTestExample PASSED",
         "ScuTimerPolledExample PASSED",
         "ScuTimerIntrExample PASSED",
+        // CAN0 is mapped (ADR-029): polled and interrupt tests pass.
+        "CanPsPolledExample PASSED",
+        "CanPsIntrExample PASSED",
     ] {
         assert!(out.contains(line), "missing {line:?} in:\n{out}");
     }
     // DEVIATION: peripherals this QEMU machine does not have (docs/conformance/bsp-apps.md).
-    for line in [
-        "CanPsPolledExample FAILED",
-        "CanPsIntrExample FAILED",
-        "DcfgSelfTestExample FAILED",
-    ] {
-        assert!(
-            out.contains(line),
-            "missing recorded deviation {line:?} in:\n{out}"
-        );
-    }
+    assert!(
+        out.contains("DcfgSelfTestExample FAILED"),
+        "missing recorded deviation \"DcfgSelfTestExample FAILED\" in:\n{out}"
+    );
     // DEVIATION: the SCU watchdog does not exist, so its interrupt test never returns.
     assert!(
         out.contains("Running Interrupt Test  for ps7_scuwdt_0"),

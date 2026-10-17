@@ -58,8 +58,11 @@ control plane drive it). Caveats are listed under *Known limits of the P1 engine
 | DMA image filters equal a Rust golden model pixel for pixel (3 filters, 3 patterns, 4096 px) | verified | `board::image_filters_match_the_golden_model_pixel_for_pixel`, `zynqsim::board_demo_image_filter_matches_golden_through_the_cli` (via `--dump-mem`) |
 | Guest memory read **and write** while paused, through the remote-port memory path (not the QEMU monitor) | verified | `backend-qemu::memory_is_readable_and_writable_while_the_machine_is_paused`, MCP `mem_read`/`mem_write`, CLI `--dump-mem`/`--dump-image` |
 | PS I2C, SPI and XADC conformance (`firmware/conf_*`): I2C and XADC partly modelled, SPI not modelled by default (mapped with `[ps] extra_blocks = true`, see ADR-024) | verified (partly / not modelled) | `conformance_iic_spi_xadc::iic_spi_xadc_firmware_passes_with_the_listed_na_checks`; opt-in: `conformance_ps_blocks::spi_mapped_model_passes_most_checks_and_fails_three`; table in `docs/conformance/iic-spi-xadc.md` |
-| PS GPIO, SPI0/1, devcfg: mapped by renaming their compatible strings in the co-sim tree (`[ps] extra_blocks = true`, default off) | verified (opt-in; findings recorded) | `conformance_ps_blocks` (GPIO: 9 PASS, 2 FAIL, 1 N/A; SPI: 20 PASS, 3 FAIL, 4 N/A); `dtb::the_ps_block_edits_are_applied_to_the_real_cosim_tree`; devcfg not mapped (`xlnx,ps7-dev-cfg` guess fails its selftest). ADR-024 |
-| A9 timers' rate (333 MHz CPU clock / 2 vs measured 100 MHz) | not fixed | ADR-024: the rate comes from the SLCR clock tree (clkc index 4); no DTB property or QEMU option was found that changes it |
+| PS GPIO, SPI0/1: mapped by renaming their compatible strings in the co-sim tree (`[ps] extra_blocks = true`, default off) | verified (opt-in; findings recorded) | `conformance_ps_blocks` (GPIO: 9 PASS, 2 FAIL, 1 N/A; SPI: 20 PASS, 3 FAIL, 4 N/A); `dtb::the_ps_block_edits_are_applied_to_the_real_cosim_tree`. ADR-024 |
+| A9 global timer rate: 333.33 MHz by default (`[ps] cpu_clock = "666.667MHz"`, the tree's `clock-frequency` on the global timer node; `"reset"` keeps QEMU's 100 MHz) | verified | `a9_timer_rate::the_global_timer_ticks_at_the_bsp_rate_by_default`, `a9_timer_rate::the_reset_value_keeps_the_global_timer_at_100_mhz`, `dtb::a_u32_property_is_set_on_the_real_global_timer_and_nothing_else_moves`. The ADR-024 claim that the rate comes from the SLCR is wrong (ADR-029) |
+| A9 private timer rate: 100 MHz (the BSP assumes 333 MHz) | not fixed (deviation) | `a9_timer_rate::the_private_timer_still_ticks_at_100_mhz_a_known_deviation`; no tree property, timer clock index, CPU clock or SLCR setting changed it (ADR-029) |
+| Xilinx CAN0 (`0xE0008000`): mapped by default (tree compatible renamed to `xlnx,ps7-can-1.00.a`, the ZynqMP CAN model) | verified (BSP examples; the register map equality with Zynq CAN is VERIFY) | `bsp_apps::bsp_canps_polled` (PASS), `bsp_apps::bsp_peripheral_tests_report_what_the_model_implements` (CAN polled and interrupt PASSED); `dtb::the_default_can_edit_is_applied_to_the_real_cosim_tree`. ADR-029 |
+| devcfg (`0xF8007000`), SCU watchdog (`0xF8F00620`): not mapped | not fixed | no FDT compatible string for the devcfg model in this build (the `xlnx,ps7-dev-cfg` guess reads 0, ADR-029); no SCU watchdog model (`arm_mptimer` has none). `bsp_devcfg_selftest` and `bsp_scuwdt_polled` keep their recorded failures |
 | `Play`/`Pause` on a QEMU engine, queries stay responsive | verified | `sim-api::tests::qemu_play` |
 | Prototype DMA regression: 6 cases PASS, 2 cores, IRQ | verified | `zynqsim::dma_regression_passes_and_is_deterministic_across_processes` |
 | DMA results equal a Rust golden model (4,337 words) | verified | `backend-rtl-xsim::dma_golden`; mutation-checked (a deliberately wrong model fails) |
@@ -240,8 +243,9 @@ front-end table's `unsupported` row.
   and would make only frame content/order, not arrival instruction, reproducible.
 * Not exercised: interrupt-driven RX/TX, jumbo frames, checksum offload, priority queues, TCP
   and UDP application traffic, port forwarding (`hostfwd`), the second GEM, IPv6.
-* The A9 global timer ticks at 100 MHz in this QEMU (silicon: 333 MHz at stock clocking,
-  `VERIFY:` UG585); the demo firmware's microsecond figures use the QEMU value (`GT_HZ`).
+* The A9 global timer ticks at 333 MHz by default since ADR-029 (`[ps] cpu_clock`; QEMU's reset value is
+  100 MHz). The demo firmware's microsecond figures use `GT_HZ`, which still assumes the QEMU value
+  (VERIFY: the demo's `GT_HZ` constant is not yet changed to the default rate).
 * Timestamps have QEMU's 1 us resolution. The capture retains the newest 8192 frames (counters
   and the trace digest cover all of them).
 * The Ethernet link/activity LEDs on the board picture and the 3D view are not driven.

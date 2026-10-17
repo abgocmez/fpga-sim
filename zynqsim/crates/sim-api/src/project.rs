@@ -467,16 +467,73 @@ pub struct Project {
     pub ps: Option<PsSection>,
 }
 
+/// The CPU clock the Xilinx BSP and `ps7_init` of the reference board set
+/// (ARM PLL 1333.33 MHz, CPU_6x4x divided by 2), see ADR-029.
+pub const DEFAULT_CPU_CLOCK: &str = "666.667MHz";
+
+fn default_cpu_clock() -> String {
+    DEFAULT_CPU_CLOCK.to_string()
+}
+
 /// `[ps]`: PS peripheral options of the QEMU backend.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PsSection {
-    /// Map the PS GPIO, SPI0/1 and devcfg blocks by renaming their compatible
-    /// strings in the device tree (`dtb::patch_ps_blocks`, ADR-024). Off by
+    /// Map the PS GPIO and SPI0/1 blocks by renaming their compatible strings
+    /// in the device tree (`dtb::patch_ps_blocks`, ADR-024). Off by
     /// default: the mapped models fail some checks of the conformance firmware
     /// (see docs/conformance/gpio-timer.md and iic-spi-xadc.md).
     #[serde(default)]
     pub extra_blocks: bool,
+    /// The CPU clock the firmware runs at, for example `"666.667MHz"` or
+    /// `"666666687Hz"`. The A9 global timer ticks at half of it (CPU_3x2x),
+    /// as the BSP assumes; QEMU's reset value is 100 MHz (ADR-029). The
+    /// default is [`DEFAULT_CPU_CLOCK`]; `"reset"` keeps the tree as shipped.
+    #[serde(default = "default_cpu_clock")]
+    pub cpu_clock: String,
+}
+
+impl Default for PsSection {
+    fn default() -> Self {
+        PsSection {
+            extra_blocks: false,
+            cpu_clock: default_cpu_clock(),
+        }
+    }
+}
+
+/// The timer clock for a `[ps]` section: `None` for `"reset"` (QEMU's own
+/// rate), otherwise [`parse_cpu_clock`] of the value.
+pub fn cpu_clock_of(ps: Option<&PsSection>) -> Result<Option<u32>, ApiError> {
+    let text = ps.map_or(DEFAULT_CPU_CLOCK, |p| p.cpu_clock.as_str());
+    if text.trim().eq_ignore_ascii_case("reset") {
+        return Ok(None);
+    }
+    parse_cpu_clock(text).map(Some)
+}
+
+/// Parses a `[ps] cpu_clock` value (`MHz` or `Hz` suffix, decimal number) into
+/// whole hertz. Rejects values outside 1 MHz to 4 GHz.
+pub fn parse_cpu_clock(text: &str) -> Result<u32, ApiError> {
+    let t = text.trim();
+    let (number, scale) = if let Some(n) = t.strip_suffix("MHz") {
+        (n, 1_000_000.0)
+    } else if let Some(n) = t.strip_suffix("Hz") {
+        (n, 1.0)
+    } else {
+        return Err(ApiError::invalid_argument(format!(
+            "[ps] cpu_clock `{text}` needs an Hz or MHz suffix"
+        )));
+    };
+    let hz = number.trim().parse::<f64>().map_err(|_| {
+        ApiError::invalid_argument(format!("[ps] cpu_clock `{text}` is not a number"))
+    })? * scale;
+    if !(1.0e6..=4.0e9).contains(&hz) {
+        return Err(ApiError::invalid_argument(format!(
+            "[ps] cpu_clock `{text}` is outside 1 MHz to 4 GHz"
+        )));
+    }
+    Ok(hz.round() as u32)
 }
 
 /// One IP parameter value in `[native_params.<instance>]`: a number, a boolean or text.
@@ -893,6 +950,7 @@ impl Project {
                     },
                     storage: self.storage_spec(base)?,
                     ps_extra_blocks: self.ps.as_ref().is_some_and(|p| p.extra_blocks),
+                    cpu_clock_hz: cpu_clock_of(self.ps.as_ref())?,
                 };
                 let mut engine = crate::QemuEngine::new(&spec)?;
                 if let Some(m) = &self.media {

@@ -47,11 +47,12 @@ const GT_LO: usize = GT;
 const GT_HI: usize = GT + 0x04;
 const GT_CTRL: usize = GT + 0x08;
 /// Global timer tick rate. The Xilinx QEMU 6.1 model counts one tick per
-/// 10 ns of virtual time; measured by comparing the counter with the host's
-/// virtual-time stamps of the frames (ADR-011). VERIFY: real silicon counts
-/// at PERIPHCLK = CPU_3x2x (333.3 MHz with the stock Zybo clocking, UG585
-/// clocking chapter), so a hardware build must change this constant.
-const GT_HZ: u64 = 100_000_000;
+/// The counter's rate in the simulator: the global timer is clocked at
+/// CPU_3x2x, 333.33 MHz, since ADR-029 (`[ps] cpu_clock`, default
+/// 666.667 MHz). Before that it was QEMU's 100 MHz reset value, measured by
+/// comparing the counter with the host's virtual-time stamps (ADR-011). Silicon
+/// with the stock Zybo clocking also counts at CPU_3x2x (UG585 clocking chapter).
+const GT_HZ: u64 = 333_333_333;
 
 fn ticks() -> u64 {
     loop {

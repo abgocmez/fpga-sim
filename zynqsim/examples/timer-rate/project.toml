@@ -1,0 +1,30 @@
+# Tick rate of the Cortex-A9 global timer and private timer (ADR-029) from
+# ../../firmware/timer_rate. Each timer prints DONE_GT / DONE_PT once its
+# counter has advanced by 1,000,000 ticks. With the default `[ps] cpu_clock`
+# (666.667 MHz, so the timers run at 333.33 MHz) DONE_GT appears after about
+# 3 ms of simulated time; the private timer is still at QEMU's 100 MHz.
+#
+#   zynqsim run --project examples/timer-rate/project.toml --for 8ms
+#
+# Needs: the Xilinx QEMU (Vitis). No PL and no Vivado.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "demo"          # no PL
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[ps]
+cpu_clock = "666.667MHz"
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_timer_rate.elf"
