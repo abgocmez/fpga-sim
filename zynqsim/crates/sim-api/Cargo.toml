@@ -13,6 +13,7 @@ devices = { path = "../devices" }
 backend-qemu = { version = "0.1.0", path = "../backend-qemu" }
 backend-rtl-xsim = { version = "0.1.0", path = "../backend-rtl-xsim" }
 backend-rtl-verilator = { version = "0.1.0", path = "../backend-rtl-verilator" }
+backend-rtl-icarus = { version = "0.1.0", path = "../backend-rtl-icarus" }
 cpu-a9 = { path = "../cpu-a9" }
 mem-sys = { path = "../mem-sys" }
 ps-periph = { path = "../ps-periph" }

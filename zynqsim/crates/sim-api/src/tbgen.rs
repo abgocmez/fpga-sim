@@ -1014,45 +1014,47 @@ pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
 /// wrapped instead (see [`RP_NEXT_CALL`]).
 const RP_IMPORTS: &str = r#"`ifdef ZS_ICARUS
     // Icarus Verilog has no DPI-C (ADR-037): each import is a wrapper of the VPI system call
-    // `$zs_<name>` of zynqsim.vpi.
-    function automatic int rp_open(input string descr);
+    // `$zs_<name>` of zynqsim.vpi. A `$time` passed straight to a system call reads as 0 in
+    // vvp, so the time of `$zs_rp_next` goes through `zs_now` (see RP_NEXT_CALL).
+    longint zs_now;
+    function int rp_open(input string descr);
         rp_open = $zs_rp_open(descr);
     endfunction
-    task automatic rp_done_t(input int rdata, input int ok, input longint now_ns);
+    task rp_done_t(input int rdata, input int ok, input longint now_ns);
         $zs_rp_done_t(rdata, ok, now_ns);
     endtask
-    task automatic rp_close();
+    task rp_close();
         $zs_rp_close();
     endtask
-    task automatic rp_lockstep(input int on);
+    task rp_lockstep(input int on);
         $zs_rp_lockstep(on);
     endtask
-    function automatic longint rp_sync_target();
+    function longint rp_sync_target();
         rp_sync_target = $zs_rp_sync_target();
     endfunction
-    task automatic rp_sync_ack(input longint now_ns);
+    task rp_sync_ack(input longint now_ns);
         $zs_rp_sync_ack(now_ns);
     endtask
-    function automatic longint rp_req_ts();
+    function longint rp_req_ts();
         rp_req_ts = $zs_rp_req_ts();
     endfunction
-    task automatic rp_irq(input longint now_ns, input int line, input int val);
+    task rp_irq(input longint now_ns, input int line, input int val);
         $zs_rp_irq(now_ns, line, val);
     endtask
-    task automatic rp_mem_put(input int idx, input int word);
+    task rp_mem_put(input int idx, input int word);
         $zs_rp_mem_put(idx, word);
     endtask
-    function automatic int rp_mem_start(input longint now_ns, input int dev,
+    function int rp_mem_start(input longint now_ns, input int dev,
                                         input int is_write, input int addr, input int len);
         rp_mem_start = $zs_rp_mem_start(now_ns, dev, is_write, addr, len);
     endfunction
-    function automatic int rp_mem_wait(input int slot);
+    function int rp_mem_wait(input int slot);
         rp_mem_wait = $zs_rp_mem_wait(slot);
     endfunction
-    function automatic int rp_mem_get(input int slot, input int idx);
+    function int rp_mem_get(input int slot, input int idx);
         rp_mem_get = $zs_rp_mem_get(slot, idx);
     endfunction
-    task automatic rp_mem_free(input int slot);
+    task rp_mem_free(input int slot);
         $zs_rp_mem_free(slot);
     endtask
 `else
@@ -1079,7 +1081,8 @@ const RP_IMPORTS: &str = r#"`ifdef ZS_ICARUS
 /// The call of `rp_next` in the testbench's loop, with its Icarus form: the system function
 /// writes its outputs itself (Icarus functions cannot have output arguments).
 const RP_NEXT_CALL: &str = "`ifdef ZS_ICARUS
-            st = $zs_rp_next($time, -1, a_i, wd_i, ws_i, iw_i);
+            zs_now = $time;
+            st = $zs_rp_next(zs_now, -1, a_i, wd_i, ws_i, iw_i);
 `else
             st = rp_next($time, -1, a_i, wd_i, ws_i, iw_i);
 `endif
@@ -1087,13 +1090,13 @@ const RP_NEXT_CALL: &str = "`ifdef ZS_ICARUS
 
 /// The pin-group DPI imports of the testbench, with their Icarus wrappers (ADR-037).
 const PIN_IMPORTS: &str = r#"`ifdef ZS_ICARUS
-    task automatic zs_pin_out(input int group, input int levels, input longint now_ns);
+    task zs_pin_out(input int group, input int levels, input longint now_ns);
         $zs_pin_out(group, levels, now_ns);
     endtask
-    function automatic int zs_pin_in(input int group);
+    function int zs_pin_in(input int group);
         zs_pin_in = $zs_pin_in(group);
     endfunction
-    function automatic int zs_pin_xchg(input int group, input int levels, input longint now_ns);
+    function int zs_pin_xchg(input int group, input int levels, input longint now_ns);
         zs_pin_xchg = $zs_pin_xchg(group, levels, now_ns);
     endfunction
 `else
@@ -1586,7 +1589,7 @@ mod tests {
             assert!(icarus.contains(&format!("$zs_{name}(")), "{name} has no $zs_ call");
         }
         // rp_next has output arguments: its call site calls the system function instead.
-        assert!(tb.contains("st = $zs_rp_next($time, -1, a_i, wd_i, ws_i, iw_i);"), "{tb}");
+        assert!(tb.contains("st = $zs_rp_next(zs_now, -1, a_i, wd_i, ws_i, iw_i);"), "{tb}");
         assert!(tb.contains("st = rp_next($time, -1, a_i, wd_i, ws_i, iw_i);"), "{tb}");
         // The pin imports of the testbench have the same two forms.
         assert!(tb.contains("$zs_pin_out(group, levels, now_ns);"), "the pin wrapper is written");

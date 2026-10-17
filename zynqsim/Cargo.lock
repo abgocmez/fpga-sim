@@ -3163,6 +3163,7 @@ name = "sim-api"
 version = "0.1.0"
 dependencies = [
  "backend-qemu",
+ "backend-rtl-icarus",
  "backend-rtl-verilator",
  "backend-rtl-xsim",
  "board-zybo",

@@ -52,33 +52,8 @@ impl Call {
         };
         // SAFETY: `arg` is a live argument handle; the buffers hold the words.
         unsafe {
-            // A time-typed argument (`$time`) answers only the time format; its
-            // 64 bits are the simulation time in the module's unit.
-            let kind = (self.api.get)(vpi::TYPE, arg);
-            let is_time = kind == vpi::TIME_VAR
-                || (kind == vpi::SYS_FUNC_CALL && vpi_name(self.api, arg) == b"$time");
-            if is_time {
-                let mut t = vpi::Time {
-                    kind: vpi::SIM_TIME,
-                    high: 0,
-                    low: 0,
-                    real: 0.0,
-                };
-                let mut v = Value {
-                    format: vpi::TIME_VAL,
-                    value: ValueUnion { time: &mut t },
-                };
-                (self.api.get_value)(arg, &mut v);
-                buf[0] = VecVal {
-                    aval: t.low as i32,
-                    bval: 0,
-                };
-                buf[1] = VecVal {
-                    aval: t.high as i32,
-                    bval: 0,
-                };
-                return (buf, 2);
-            }
+            // A `$time` argument reads as 0 in vvp (in every format), so the Icarus testbench
+            // passes the time through a `longint` variable (see `sim-api::tbgen`).
             let size = (self.api.get)(vpi::SIZE, arg).max(1) as usize;
             let n = size.div_ceil(32).min(2);
             let mut v = Value {
@@ -88,6 +63,14 @@ impl Call {
                 },
             };
             (self.api.get_value)(arg, &mut v);
+            // vvp answers a vector with its own storage and puts that pointer in the value
+            // (writing into the buffer we passed reads back as 0).
+            let src = v.value.vector;
+            if !src.is_null() {
+                for (k, word) in buf.iter_mut().enumerate().take(n) {
+                    *word = *src.add(k);
+                }
+            }
             (buf, n)
         }
     }
@@ -177,19 +160,6 @@ impl Call {
         // SAFETY: the result handle of this call; the words live for the call.
         unsafe {
             (self.api.put_value)(self.handle, &mut v, ptr::null_mut(), vpi::NO_DELAY);
-        }
-    }
-}
-
-/// The `vpiName` of a handle (empty when it has none).
-fn vpi_name(api: &vpi::Api, h: Handle) -> Vec<u8> {
-    // SAFETY: `h` is a live handle; vvp returns a NUL-terminated string it owns, copied here.
-    unsafe {
-        let p = (api.get_str)(vpi::NAME, h);
-        if p.is_null() {
-            Vec::new()
-        } else {
-            CStr::from_ptr(p).to_bytes().to_vec()
         }
     }
 }
@@ -455,3 +425,42 @@ pub const TABLE: &[Def] = &[
     Def { name: c"$zs_pin_xchg", ret: Ret::Int, calltf: zs_pin_xchg },
     Def { name: c"$zs_pin_in", ret: Ret::Int, calltf: zs_pin_in },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::TABLE;
+    use std::collections::BTreeSet;
+
+    /// Every system task or function is registered once, with its `$zs_` name.
+    #[test]
+    fn the_names_are_unique_and_prefixed() {
+        let names: BTreeSet<String> = TABLE
+            .iter()
+            .map(|d| d.name.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names.len(), TABLE.len());
+        assert_eq!(TABLE.len(), 31, "the DPI export table has 31 functions");
+        assert!(names.iter().all(|n| n.starts_with("$zs_")));
+    }
+
+    /// Every `$zs_` call of the math testbench (the fixture the Icarus example runs) is registered.
+    #[test]
+    fn the_math_testbench_calls_are_all_registered() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/rtl/math/cosim_top.sv");
+        let text = std::fs::read_to_string(path).unwrap();
+        let mut calls = 0;
+        for part in text.split("$zs_").skip(1) {
+            let name: String = part
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            calls += 1;
+            let full = format!("$zs_{name}");
+            assert!(
+                TABLE.iter().any(|d| d.name.to_bytes() == full.as_bytes()),
+                "{full} is not registered"
+            );
+        }
+        assert!(calls >= 4, "the testbench calls the DPI functions");
+    }
+}

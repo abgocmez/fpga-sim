@@ -31,18 +31,6 @@ pub const INT_VAL: i32 = 6;
 pub const STRING_VAL: i32 = 8;
 /// `vpiVectorVal`.
 pub const VECTOR_VAL: i32 = 9;
-/// `vpiTimeVal`: a time value; vvp accepts it only for time-typed objects (`$time`).
-pub const TIME_VAL: i32 = 11;
-/// `vpiSimTime`: the time type to ask for in a [`Time`].
-pub const SIM_TIME: i32 = 2;
-/// `vpiType`.
-pub const TYPE: i32 = 1;
-/// `vpiName`: the name of a handle (for a system call, its `$name`).
-pub const NAME: i32 = 2;
-/// `vpiSysFuncCall`: a call of a system function, such as `$time` used as an argument.
-pub const SYS_FUNC_CALL: i32 = 56;
-/// `vpiTimeVar`: a `time` variable.
-pub const TIME_VAR: i32 = 63;
 /// `vpiSysTfCall`: the handle of the system task or function being called.
 pub const SYS_TF_CALL: i32 = 85;
 /// `vpiArgument`: the arguments of a system call, through `vpi_iterate`.
@@ -131,8 +119,6 @@ pub struct Api {
     pub scan: unsafe extern "C" fn(Handle) -> Handle,
     /// `vpi_get`: an integer property of a handle.
     pub get: unsafe extern "C" fn(i32, Handle) -> i32,
-    /// `vpi_get_str`: a string property of a handle (NUL-terminated, owned by vvp).
-    pub get_str: unsafe extern "C" fn(i32, Handle) -> *const c_char,
     /// `vpi_get_value`.
     pub get_value: unsafe extern "C" fn(Handle, *mut Value),
     /// `vpi_put_value`.
@@ -154,6 +140,7 @@ const ROUTINES_VERSION: u32 = 2;
 /// the compile-time loader) passes to a VPI module on Windows. Every entry is a function
 /// pointer; the order is the header's. Only the entries in [`Api`] are read.
 #[repr(C)]
+#[allow(dead_code)] // The table's layout; only some entries are read.
 struct Routines {
     register_cb: *const c_void,
     remove_cb: *const c_void,
@@ -219,7 +206,6 @@ pub unsafe extern "C" fn vpip_set_callback(routines: *const c_void, version: u32
         iterate: std::mem::transmute(r.iterate),
         scan: std::mem::transmute(r.scan),
         get: std::mem::transmute(r.get),
-        get_str: std::mem::transmute(r.get_str),
         get_value: std::mem::transmute(r.get_value),
         put_value: std::mem::transmute(r.put_value),
     };
@@ -275,7 +261,6 @@ pub fn load() -> Result<(), String> {
             iterate: std::mem::transmute::<*mut c_void, _>(p(c"vpi_iterate")?),
             scan: std::mem::transmute::<*mut c_void, _>(p(c"vpi_scan")?),
             get: std::mem::transmute::<*mut c_void, _>(p(c"vpi_get")?),
-            get_str: std::mem::transmute::<*mut c_void, _>(p(c"vpi_get_str")?),
             get_value: std::mem::transmute::<*mut c_void, _>(p(c"vpi_get_value")?),
             put_value: std::mem::transmute::<*mut c_void, _>(p(c"vpi_put_value")?),
         }

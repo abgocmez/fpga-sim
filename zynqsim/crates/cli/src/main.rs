@@ -1719,7 +1719,7 @@ fn cmd_bench(json: bool, project: Option<&Path>, duration: &str) -> Result<u8, F
     let ratio = sim_s / wall;
     // Cycles of the nominal 100 MHz PL clock in the simulated time (the RTL backends only:
     // the native PL models have no cycle timing).
-    let pl_cycles = matches!(st.pl_backend.as_str(), "xsim" | "verilator")
+    let pl_cycles = matches!(st.pl_backend.as_str(), "xsim" | "verilator" | "icarus")
         .then(|| st.now_ps as f64 * PL_CLOCK_HZ / 1e12);
     // Approximate guest rate (QEMU only): every virtual ns is 2^-shift instructions.
     // This counts time the guest spends idle in WFI as instructions, so it is an
