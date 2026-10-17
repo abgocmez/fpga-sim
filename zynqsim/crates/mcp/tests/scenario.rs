@@ -283,12 +283,13 @@ fn project_diagnostics_do_not_replace_a_running_simulation() {
     h.ok("sim_run", json!({ "duration": "1ms" }));
     std::fs::write(
         h.root.join("p").join("bad.toml"),
-        "schema_version = 1\n[board]\nname = \"zybo-z7-20\"\n[backends]\nps = \"native\"\n",
+        "schema_version = 1\n[board]\nname = \"zybo-z7-20\"\n[backends]\nps = \"qemu\"\npl = \"icarus\"\n",
     )
     .unwrap();
     let open = h.ok("project_open", json!({ "path": "p/bad.toml" }));
     assert_eq!(open["simulation_started"], false);
-    assert_eq!(open["errors"], 2); // backend not implemented + cpu0.elf required
+    // Icarus is not implemented + cpu0.elf is required (the native PS exists now, so QEMU is used here).
+    assert_eq!(open["errors"], 2);
     let fields: Vec<&str> = open["diagnostics"]
         .as_array()
         .unwrap()
@@ -296,7 +297,7 @@ fn project_diagnostics_do_not_replace_a_running_simulation() {
         .map(|d| d["field"].as_str().unwrap())
         .collect();
     assert!(
-        fields.contains(&"backends.ps") && fields.contains(&"cpu0.elf"),
+        fields.contains(&"backends.pl") && fields.contains(&"cpu0.elf"),
         "{fields:?}"
     );
     // Time was not reset.
