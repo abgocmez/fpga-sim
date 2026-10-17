@@ -46,11 +46,23 @@ for now, and **2-state**: there is no X or Z, an uninitialised variable starts a
 The messages are `%Error` / `%Warning` lines of Verilator, parsed by `backend-rtl-verilator::diag`;
 the adapter prints the first errors with file, line and construct when the build fails.
 
-## `icarus`
+## `icarus` (Icarus Verilog 14, `iverilog -g2012` and `vvp`; ADR-037)
 
-Not built, and not planned for now. Icarus Verilog has no DPI-C: the testbench's `rp_*` imports
-would need a VPI module written in Rust (a second `cdylib` with the VPI entry points), which is
-not done (ADR-027). `backends.pl = "icarus"` is refused with a message.
+Icarus has no DPI-C. The testbench's `rp_*` and `zs_*` functions are the VPI system functions
+`$zs_<name>` of `zynqsim.vpi` (crate `vpi-icarus`, `cargo xtask vpi`), compiled with `-DZS_ICARUS`.
+Windows only for now. 4-state, event-driven.
+
+| Input | Support | Evidence |
+|---|---|---|
+| Verilog-2001 and SystemVerilog as Icarus 14 reads them with `-g2012`, `` `include ``, `-D` defines | yes | `cli::icarus` (`cosim_top` + `my_math_ip`) |
+| Behavioural testbench: `initial`, `#` delays, `$display`, `$finish` | yes | `cosim_top` |
+| DPI imports (`import "DPI-C"`) | **not accepted**; the testbench's `ZS_ICARUS` branch replaces them with wrappers of `$zs_` system calls, and `rp_next`'s call sites call `$zs_rp_next` (`sim-api::tbgen`, `fixtures/rtl/math/cosim_top.sv`) | `tbgen::tests::the_icarus_form_wraps_every_dpi_import_and_the_dpi_form_is_kept` |
+| A `$time` passed directly to a `$zs_` system call | reads **0** in vvp; the testbench passes time through a `longint` variable | ADR-037 |
+| `output` arguments of a function | **refused** by Icarus ("Function arguments must be input ports"); such calls use the system function | probe |
+| Syntax errors and unsupported constructs | refused with `file:line: error: text` (`backend-rtl-icarus::diag`) | `diag` unit tests |
+| Board, media, Pmod pins, protocol checkers, DMA | the wrappers exist in the generator; **not run** under Icarus | not tested |
+| VHDL, `[rtl] waves`, `export_dir`, `filelist` | refused by the project check (as for Verilator) | `sim-api::project` |
+| Design-side VPI/DPI (`-sv_lib`) | no | not tested |
 
 ## `native` (Rust PL models)
 
