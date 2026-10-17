@@ -196,10 +196,10 @@ pub struct Cpu {
     pub(crate) cp15: Cp15,
     /// The virtual-to-physical hook (the MMU by default).
     pub(crate) xlate: Box<dyn Translate + Send>,
-    /// Set around an LDRT/STRT-style access: it is translated with unprivileged permissions.
-    pub(crate) unpriv: bool,
     /// The VFP register file, FPSCR and FPEXC.
     pub(crate) vfp: crate::vfp::Vfp,
+    /// Set around an LDRT/STRT-style access: it is translated with unprivileged permissions.
+    pub(crate) unpriv: bool,
 }
 
 impl Cpu {
@@ -222,9 +222,8 @@ impl Cpu {
             excl: None,
             cp15: Cp15::new(cpu_id),
             xlate: Box::new(Mmu::new()),
-            unpriv: false,
-            xlate: Box::new(Identity),
             vfp: crate::vfp::Vfp::new(),
+            unpriv: false,
         }
     }
 
@@ -378,11 +377,9 @@ impl Cpu {
         bus.read32(pa).map_err(|_| crate::mem::FSR_EXTERNAL)
     }
 
-    fn fetch16(&mut self, bus: &mut dyn Bus, pc: u32) -> Result<u16, u16> {
+    pub(crate) fn fetch16(&mut self, bus: &mut dyn Bus, pc: u32) -> Result<u16, u16> {
         let regs = self.xlate_regs(self.mode() != Mode::User);
         let pa = self.xlate.translate(bus, &regs, pc, Access::Fetch)?;
-    pub(crate) fn fetch16(&mut self, bus: &mut dyn Bus, pc: u32) -> Result<u16, u8> {
-        let pa = self.xlate.translate(pc, crate::xlate::Access::Fetch)?;
         bus.read(pa, 2)
             .map(|v| v as u16)
             .map_err(|_| crate::mem::FSR_EXTERNAL)

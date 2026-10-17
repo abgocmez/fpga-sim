@@ -22,7 +22,7 @@ impl Cpu {
         first: u32,
         count: u32,
         load: bool,
-    ) -> Result<(), (u32, u8)> {
+    ) -> Result<(), (u32, u16)> {
         if addr % 4 != 0 {
             return Err((addr, FSR_ALIGN));
         }
