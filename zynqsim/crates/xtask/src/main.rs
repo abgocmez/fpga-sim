@@ -169,6 +169,7 @@ const FIRMWARE: &[(&str, &str)] = &[
     ("conf_gpiops", "rust_conf_gpiops.elf"),
     ("conf_scutimer", "rust_conf_scutimer.elf"),
     ("timer_rate", "rust_timer_rate.elf"),
+    ("dual_core_demo", "rust_dual_core.elf"),
     ("conf_ttc", "rust_conf_ttc.elf"),
     ("conf_dmaps", "rust_conf_dmaps.elf"),
     ("conf_iicps", "rust_conf_iicps.elf"),

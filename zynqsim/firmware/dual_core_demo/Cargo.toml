@@ -1,0 +1,8 @@
+[package]
+name = "dual_core_demo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rt = { path = "../rt" }

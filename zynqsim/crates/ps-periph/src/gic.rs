@@ -670,6 +670,43 @@ mod tests {
     }
 
     #[test]
+    fn sgi_filters_pick_the_cores_and_priorities_order_sgi_against_a_ppi() {
+        let mut g = Gic::new();
+        g.write_dist(0x000, 4, 1).unwrap();
+        for core in [0usize, 1] {
+            g.set_cpu(core);
+            g.write_cpu(0x00, 4, 1).unwrap();
+            g.write_cpu(0x04, 4, 0xF0).unwrap();
+            // SGI 5 and PPI 29 enabled for this core; SGI 5 at 0x60, PPI 29 at 0x20.
+            g.write_dist(0x100, 4, (1 << 5) | (1 << 29)).unwrap();
+            g.write_dist(0x400 + 5, 1, 0x60).unwrap();
+            g.write_dist(0x400 + 29, 1, 0x20).unwrap();
+        }
+        // Core 0 sends SGI 5 to all other CPUs (filter 0b01): core 1 only.
+        g.set_cpu(0);
+        g.write_dist(0xF00, 4, (0b01 << 24) | 5).unwrap();
+        assert!(!g.signal(0), "the 'all other CPUs' filter excludes the sender");
+        assert!(g.signal(1));
+        // The PPI is more urgent than the SGI, so it is acknowledged first.
+        g.accept(&[level(29, Some(1), true)]);
+        g.set_cpu(1);
+        assert_eq!(g.read_cpu(0x0C, 4).unwrap(), 29);
+        g.write_cpu(0x10, 4, 29).unwrap();
+        let iar = g.read_cpu(0x0C, 4).unwrap();
+        assert_eq!(iar & 0x3FF, 5, "then the SGI");
+        assert_eq!((iar >> 10) & 7, 0, "from core 0");
+        g.write_cpu(0x10, 4, iar).unwrap();
+        // The self filter (0b10) delivers to the sender alone.
+        g.set_cpu(0);
+        g.write_dist(0xF00, 4, (0b10 << 24) | 5).unwrap();
+        assert!(g.signal(0));
+        assert_eq!(g.read_cpu(0x0C, 4).unwrap() & 0x3FF, 5);
+        // A target list naming no core sends nothing.
+        g.write_dist(0xF00, 4, 5).unwrap();
+        assert!(!g.signal(0) && !g.signal(1));
+    }
+
+    #[test]
     fn register_readback_and_byte_lanes() {
         let mut g = Gic::new();
         g.write_dist(0x400 + 33, 1, 0xA5).unwrap();

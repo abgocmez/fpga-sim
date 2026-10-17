@@ -314,6 +314,27 @@ impl Cpu {
         self.wait.is_some()
     }
 
+    /// The core number (MPIDR affinity 0, bits 1:0).
+    pub fn core_id(&self) -> u32 {
+        self.cp15.cpu_id
+    }
+
+    /// The event register: SEV sets it on every core, WFE consumes it.
+    pub fn event_register(&self) -> bool {
+        self.event_reg
+    }
+
+    /// The address the local exclusive monitor is armed on by an LDREX, if any.
+    pub fn exclusive_address(&self) -> Option<u32> {
+        self.excl
+    }
+
+    /// Disarms the exclusive monitor. The PS's global monitor calls it on the other cores
+    /// when a core writes the reserved granule.
+    pub fn clear_exclusive(&mut self) {
+        self.excl = None;
+    }
+
     /// Executes one instruction (or takes one pending interrupt, or idles in WFI/WFE).
     pub fn step(&mut self, bus: &mut dyn Bus) -> StepResult {
         let pc = self.pc;

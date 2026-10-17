@@ -1,0 +1,27 @@
+# The dual-core demo (`firmware/dual_core_demo`) on the native PS engine (ADR-033, ADR-035 section
+# "Two cores"): the pure-Rust Cortex-A9 interpreter, two cores on one bus. The same ELF is both
+# core images: core 1 starts in the boot ROM's parking loop and runs the software only after
+# core 0 releases it through the mailbox at 0xFFFFFFF0. Core 0 prints on UART1, core 1 on UART0.
+# The same firmware runs on the QEMU engine too (`examples/dual-core-qemu`).
+#
+#   zynqsim run --project examples/dual-core-native/project.toml --for 20ms
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "native"
+pl = "demo"          # no PL: the native PS attaches none
+
+[sim]
+quantum_ns = 1000
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_dual_core.elf"
+
+[cpu1]
+elf = "../../fixtures/elf/rust_dual_core.elf"

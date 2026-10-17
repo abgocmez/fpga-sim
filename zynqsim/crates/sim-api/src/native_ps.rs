@@ -1,14 +1,27 @@
 //! The native PS engine (`backends.ps = "native"`, milestone P5, ADR-033).
 //!
 //! The PS is the pure-Rust Cortex-A9 interpreter `cpu-a9` on the address map and the
-//! peripheral models of `mem-sys` and `ps-periph`. Core 0 runs the project's `[cpu0] elf`;
-//! core 1 stays parked (it is never stepped, as the boot ROM leaves it). There is no PL: the
+//! peripheral models of `mem-sys` and `ps-periph`. Core 0 runs the project's `[cpu0] elf`.
+//! With a `[cpu1] elf` there is a second core (MPIDR 1). It starts in the boot ROM's parking
+//! loop (see [`PARK_LOOP`]) and runs its own software only after core 0 writes that software's
+//! entry address to the mailbox at [`CPU1_MAILBOX`] and sends an event (SEV), as the boot code
+//! of the Xilinx BSP does. Without `[cpu1]` core 1 is not instantiated. There is no PL: the
 //! native PS attaches no programmable logic, so `backends.pl` must be `demo`.
 //!
 //! **Fidelity F0.** One instruction is one CPU cycle at 666.67 MHz, so one cycle is 1500 ps
-//! exactly. Peripherals tick every [`BATCH_CYCLES`] cycles, and the core samples its interrupt
-//! line before every instruction, so an interrupt is taken at most 48 ns after its device
-//! raised it. This is not cycle-accurate: no caches, no bus contention, no DDR timing.
+//! exactly. Peripherals tick every [`BATCH_CYCLES`] cycles, and each core samples its interrupt
+//! line before every instruction after a device access, so an interrupt is taken at most 48 ns
+//! after its device raised it. This is not cycle-accurate: no caches, no bus contention, no DDR
+//! timing.
+//!
+//! **Two cores.** The cores share one bus (coherent memory). Within each device-tick window the
+//! scheduler gives the core with the fewest elapsed cycles the next batch of at most
+//! [`SCHED_BATCH`] cycles (ties go to the lower core number), so the cores interleave
+//! round-robin and the interleaving depends only on the inputs. Every core spends one cycle per
+//! step, executed or waiting. Cross-core effects happen at the step that causes them: a store
+//! clears the other cores' exclusive reservations on the granule it hits ([`EXCL_GRANULE`]),
+//! and SEV sets the event register of every core. Breakpoints are global addresses; a stop
+//! names the core that reached one.
 //!
 //! Determinism: the engine reads no clock and no host input, so a session gives the same trace
 //! digest in every process. Snapshots are re-execution from the journal (as on the QEMU
@@ -26,8 +39,8 @@ use crate::types::{
     Input, Query, Response, SourceLine, Status, SymbolInfo, TraceFormat,
 };
 use board_zybo::{BoardDef, BoardState};
-use cpu_a9::{Cpu, Mode, StepResult};
-use mem_sys::{Bus, BusResult, OCM_BASE, OCM_SIZE, SystemBus, fnv1a64};
+use cpu_a9::{Cpu, Event, Mode, StepResult};
+use mem_sys::{Bus, BusResult, CoreBus, OCM_BASE, OCM_SIZE, SystemBus, fnv1a64};
 use object::{Object, ObjectSegment};
 use ps_periph::system::{PsConfig, zynq_system};
 use ps_periph::uart::Uart;
@@ -45,6 +58,29 @@ pub const BATCH_CYCLES: u64 = 128;
 /// The interrupt latency bound: a device tick every `BATCH_CYCLES` cycles, which must stay under
 /// the 1 us the native PS promises for timer interrupts (checked at compile time).
 const _: () = assert!(BATCH_CYCLES * PS_PER_CYCLE < 1_000_000);
+/// Cycles one core runs in a turn before the scheduler gives the other core its turn.
+pub const SCHED_BATCH: u64 = 8;
+/// Where core 1 starts: the boot ROM's parking loop, written into the top of the on-chip RAM
+/// at reset (`VERIFY:` the boot ROM's own mapping; the model keeps the loop in OCM).
+pub const BOOT_ROM_PARK: u32 = 0xFFFF_FE00;
+/// The mailbox the parking loop polls. Core 0 writes the entry address of core 1's software here
+/// and sends an event; the Zynq boot code and the FSBL use the same word.
+pub const CPU1_MAILBOX: u32 = 0xFFFF_FFF0;
+/// Reservation granule of the global exclusive monitor, in bytes (`VERIFY:`; the architecture
+/// leaves it to the implementation, and a granule of one cache line is the usual choice).
+pub const EXCL_GRANULE: u64 = 8;
+/// The parking loop, A32, at [`BOOT_ROM_PARK`]:
+/// `0x00 wfe; 0x04 ldr r0,[pc,#12]; 0x08 ldr r1,[r0]; 0x0C cmp r1,#0; 0x10 beq 0x00;
+/// 0x14 bx r1; 0x18 .word CPU1_MAILBOX`.
+const PARK_LOOP: [u32; 7] = [
+    0xE320_F002,
+    0xE59F_000C,
+    0xE590_1000,
+    0xE351_0000,
+    0x0AFF_FFFA,
+    0xE12F_FF11,
+    CPU1_MAILBOX,
+];
 /// Trace records kept in memory; older ones are dropped (the digest keeps counting).
 const TRACE_RETAIN: usize = 1_000_000;
 /// Journal limits, as the QEMU engine has them: beyond them snapshots and recordings say so.
@@ -66,6 +102,9 @@ const CR_TX_EN: u32 = 1 << 4;
 pub struct NativeSpec {
     /// Core 0 software: a 32-bit little-endian ARM ELF whose loadable segments lie in DDR or OCM.
     pub elf: PathBuf,
+    /// Core 1 software, if there is a second core. Its segments are loaded; the core starts in
+    /// the boot ROM's parking loop and runs this software only after the mailbox release.
+    pub cpu1: Option<PathBuf>,
     /// The board description (it names the board; the native PS drives none of its pins yet).
     pub board_def: BoardDef,
     /// The quantum `Step` advances by, in nanoseconds.
@@ -136,7 +175,15 @@ struct NativeSnapshot {
     state_hash: u64,
 }
 
-/// The native PS engine: core 0 on the PS bus, no PL. See the module documentation.
+/// A store a core made in its last step, for the global exclusive monitor and the mailbox.
+#[derive(Clone, Copy, Debug)]
+struct Store {
+    addr: u64,
+    size: u8,
+    value: u64,
+}
+
+/// The native PS engine: one or two cores on the PS bus, no PL. See the module documentation.
 pub struct NativePsEngine {
     spec: NativeSpec,
     def: BoardDef,
@@ -144,9 +191,21 @@ pub struct NativePsEngine {
     bus: SystemBus,
     uart0: Arc<Mutex<Uart>>,
     uart1: Arc<Mutex<Uart>>,
-    cpu: Cpu,
-    /// CPU cycles executed so far.
+    /// Core 0, and core 1 if `[cpu1]` is present.
+    cpus: Vec<Cpu>,
+    /// Cycles each core has run (executed or waiting), indexed like `cpus`.
+    cyc: Vec<u64>,
+    /// The fewest cycles any core has run: the session's time in cycles.
     cycle: u64,
+    /// Cycles the devices have been ticked through.
+    ticked: u64,
+    /// Set after a device access or a tick: every core re-samples its interrupt line.
+    dirty: bool,
+    /// The stores of the step in progress.
+    stores: Vec<Store>,
+    /// The core that stopped at a breakpoint: its first instruction after the resume is not
+    /// checked against breakpoints (the stop happened before it).
+    resume_past: Option<usize>,
     /// The virtual time requested so far; the cycle count never passes it.
     target_ps: u64,
     quantum_ps: u64,
@@ -158,9 +217,6 @@ pub struct NativePsEngine {
     breakpoints: Vec<BreakpointInfo>,
     stop: Option<StopNote>,
     stops: u32,
-    /// The first instruction after a resume is not checked against breakpoints (the stop
-    /// happened before it).
-    resume_past_break: bool,
     /// An unimplemented instruction stopped the run; every later run reports it again.
     fault: Option<String>,
     /// Every state-changing request applied so far, run targets normalised to `RunUntil`.
@@ -176,14 +232,25 @@ impl NativePsEngine {
         let image = load_image(&spec.elf)?;
         let (mut bus, handles) = zynq_system(&PsConfig::default())
             .map_err(|e| ApiError::internal(format!("the PS address map: {e}")))?;
-        for (addr, data) in &image.segments {
-            bus.load(*addr, data).map_err(|_| {
-                ApiError::invalid_argument(format!(
-                    "{}: a segment at {addr:#010x} ({} bytes) is not in DDR or OCM",
-                    spec.elf.display(),
-                    data.len()
-                ))
-            })?;
+        let cpu1_image = spec.cpu1.as_deref().map(load_image).transpose()?;
+        for (path, img) in std::iter::once((&spec.elf, &image))
+            .chain(spec.cpu1.as_ref().zip(cpu1_image.as_ref()))
+        {
+            for (addr, data) in &img.segments {
+                bus.load(*addr, data).map_err(|_| {
+                    ApiError::invalid_argument(format!(
+                        "{}: a segment at {addr:#010x} ({} bytes) is not in DDR or OCM",
+                        path.display(),
+                        data.len()
+                    ))
+                })?;
+            }
+        }
+        if spec.cpu1.is_some() {
+            for (i, word) in PARK_LOOP.iter().enumerate() {
+                bus.load(u64::from(BOOT_ROM_PARK) + 4 * i as u64, &word.to_le_bytes())
+                    .map_err(|_| ApiError::internal("the boot ROM parking loop does not fit"))?;
+            }
         }
         // Power-up bring-up of both UARTs: 115200 8N1 (BAUDGEN 124, BDIV 6 from the 100 MHz
         // reference), both directions enabled. On hardware the FSBL does this; the Xilinx QEMU
@@ -195,8 +262,15 @@ impl NativePsEngine {
             uart_write(&mut bus, base + UART_BAUDDIV, 6)?;
             uart_write(&mut bus, base + UART_CR, CR_TX_EN | CR_RX_EN)?;
         }
-        let mut cpu = Cpu::new(0);
-        cpu.reset(image.entry);
+        let mut cpus = vec![Cpu::new(0)];
+        cpus[0].reset(image.entry);
+        if spec.cpu1.is_some() {
+            // Core 1 is reset into the parking loop: it waits for the mailbox.
+            let mut core1 = Cpu::new(1);
+            core1.reset(BOOT_ROM_PARK);
+            cpus.push(core1);
+        }
+        let n_cores = cpus.len();
         let symbols = Symbols::load(&spec.elf).unwrap_or_default();
         let source = SourceMap::load(&spec.elf).unwrap_or_default();
         let mut breakpoints = Vec::new();
@@ -211,11 +285,18 @@ impl NativePsEngine {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
+        let core1 = match &spec.cpu1 {
+            None => "parked".to_string(),
+            Some(p) => format!(
+                "boot-rom elf={} sched_batch={SCHED_BATCH}",
+                p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+            ),
+        };
         trace.push(
             Ps::ZERO,
             TraceEvent::Marker {
                 text: format!(
-                    "native start elf={elf} core1=parked quantum_ns={} cycle_ps={PS_PER_CYCLE}",
+                    "native start elf={elf} core1={core1} quantum_ns={} cycle_ps={PS_PER_CYCLE}",
                     spec.quantum_ns
                 ),
             },
@@ -227,8 +308,13 @@ impl NativePsEngine {
             bus,
             uart0: handles.uart0,
             uart1: handles.uart1,
-            cpu,
+            cpus,
+            cyc: vec![0; n_cores],
             cycle: 0,
+            ticked: 0,
+            dirty: true,
+            stores: Vec::new(),
+            resume_past: None,
             target_ps: 0,
             quantum_ps: spec.quantum_ns.saturating_mul(1000),
             trace,
@@ -239,7 +325,6 @@ impl NativePsEngine {
             breakpoints,
             stop: None,
             stops: 0,
-            resume_past_break: false,
             fault: None,
             journal: Vec::new(),
             journal_bytes: 0,
@@ -252,46 +337,116 @@ impl NativePsEngine {
         Ps(self.cycle * PS_PER_CYCLE)
     }
 
-    /// Runs `n` cycles of core 0 with the peripherals ticked after them.
+    /// Runs the cores up to cycle `wend`, round-robin in batches of [`SCHED_BATCH`] cycles.
     ///
-    /// The interrupt line is sampled before an instruction whenever the bus was touched since
-    /// the last sample (a device changes state only on an access or a tick), so the core sees
+    /// The core with the fewest elapsed cycles goes next (ties: the lower number), so with two
+    /// cores each takes a batch in turn. The run stops early at a breakpoint or a fault.
+    fn run_window(&mut self, wend: u64) {
+        loop {
+            if self.stop.is_some() || self.fault.is_some() {
+                return;
+            }
+            let next = (0..self.cpus.len())
+                .filter(|&c| self.cyc[c] < wend)
+                .min_by_key(|&c| self.cyc[c]);
+            match next {
+                Some(c) => self.run_core(c, wend),
+                None => return,
+            }
+        }
+    }
+
+    /// One batch of core `c`: up to [`SCHED_BATCH`] cycles, never past `wend`.
+    ///
+    /// The interrupt lines are sampled before an instruction whenever the bus was touched since
+    /// the last sample (a device changes state only on an access or a tick), so each core sees
     /// every change before the instruction that follows it. Compute-only instructions do not
     /// pay for the sample.
-    fn run_batch(&mut self, n: u64) {
-        let mut done = 0u64;
-        let mut fault = None;
-        let mut watch = Watch {
-            bus: &mut self.bus,
-            dirty: true,
-        };
-        while done < n {
-            if watch.dirty {
-                let irq = watch.bus.core_irq(0);
-                self.cpu.irq(irq);
-                watch.dirty = false;
+    fn run_core(&mut self, c: usize, wend: u64) {
+        let budget = SCHED_BATCH.min(wend - self.cyc[c]);
+        for _ in 0..budget {
+            if self.dirty {
+                for i in 0..self.cpus.len() {
+                    let level = self.bus.core_irq(i);
+                    self.cpus[i].irq(level);
+                }
+                self.dirty = false;
             }
-            let pc = self.cpu.pc();
-            if !self.resume_past_break && self.breakpoints.iter().any(|b| b.addr == u64::from(pc)) {
-                self.halt(pc);
-                break;
+            let pc = self.cpus[c].pc();
+            let skip = self.resume_past == Some(c);
+            if !skip && self.breakpoints.iter().any(|b| b.addr == u64::from(pc)) {
+                self.halt(c, pc);
+                return;
             }
-            self.resume_past_break = false;
-            match self.cpu.step(&mut watch) {
-                StepResult::Executed { .. } => done += 1,
+            if skip {
+                self.resume_past = None;
+            }
+            let step = {
+                let NativePsEngine {
+                    bus,
+                    cpus,
+                    dirty,
+                    stores,
+                    ..
+                } = self;
+                let ddr_size = bus.ddr_size();
+                let mut view = CoreView {
+                    bus: bus.core(c),
+                    ddr_size,
+                    dirty,
+                    stores,
+                };
+                cpus[c].step(&mut view)
+            };
+            match step {
+                StepResult::Executed { event, .. } => {
+                    self.cyc[c] += 1;
+                    self.after_step(c, event);
+                }
                 StepResult::Unimplemented { pc, insn } => {
-                    fault = Some((pc, insn));
-                    break;
+                    self.fault_at(c, pc, insn);
+                    return;
                 }
             }
         }
-        if done > 0 {
-            self.bus.tick(done);
-            self.cycle += done;
+    }
+
+    /// The cross-core effects of the step core `c` just made: SEV reaches every core, a store
+    /// clears the other cores' reservations on the granule it hits, and a store to the mailbox
+    /// is traced (it releases core 1 when it is followed by a SEV).
+    fn after_step(&mut self, c: usize, event: Option<Event>) {
+        let cores = self.cpus.len();
+        if event == Some(Event::Sev) {
+            for d in (0..cores).filter(|&d| d != c) {
+                self.cpus[d].send_event();
+            }
         }
-        if let Some((pc, insn)) = fault {
-            self.fault_at(pc, insn);
+        for i in 0..self.stores.len() {
+            let st = self.stores[i];
+            let end = st.addr + u64::from(st.size);
+            let mailbox = u64::from(CPU1_MAILBOX);
+            if st.addr <= mailbox && mailbox < end {
+                let now = self.now_ps();
+                self.trace.push(
+                    now,
+                    TraceEvent::Marker {
+                        text: format!(
+                            "core {c} wrote the CPU1 mailbox {mailbox:#010x} = {:#x}",
+                            st.value
+                        ),
+                    },
+                );
+            }
+            for d in (0..cores).filter(|&d| d != c) {
+                if let Some(a) = self.cpus[d].exclusive_address() {
+                    let g = u64::from(a) & !(EXCL_GRANULE - 1);
+                    if st.addr < g + EXCL_GRANULE && g < end {
+                        self.cpus[d].clear_exclusive();
+                    }
+                }
+            }
         }
+        self.stores.clear();
     }
 
     /// Moves the UART output into the logs and the trace, stamped with the current time.
@@ -325,13 +480,13 @@ impl NativePsEngine {
         }
     }
 
-    /// Stops before the instruction at `pc` runs.
-    fn halt(&mut self, pc: u32) {
+    /// Stops core `core` before the instruction at `pc` runs.
+    fn halt(&mut self, core: usize, pc: u32) {
         let reason = describe_pc(pc, &self.symbols, &self.source);
         self.stops += 1;
-        let text = format!("core 0 stopped: breakpoint at {reason}");
+        let text = format!("core {core} stopped: breakpoint at {reason}");
         self.stop = Some(StopNote {
-            core: 0,
+            core: core as u8,
             pc,
             reason: text.clone(),
         });
@@ -341,15 +496,15 @@ impl NativePsEngine {
 
     /// An instruction this core does not implement stops the engine: a message names the
     /// address, the word and the state, and nothing wrong is computed.
-    fn fault_at(&mut self, pc: u32, insn: u32) {
-        let thumb = self.cpu.cpsr() & (1 << 5) != 0;
+    fn fault_at(&mut self, core: usize, pc: u32, insn: u32) {
+        let thumb = self.cpus[core].cpsr() & (1 << 5) != 0;
         let kind = if thumb {
             "Thumb halfword"
         } else {
             "A32 instruction word"
         };
         let msg = format!(
-            "native PS stopped at {}: unimplemented {kind} {insn:#010x} at cycle {} \
+            "native PS stopped at core {core}, {}: unimplemented {kind} {insn:#010x} at cycle {} \
              (Thumb, VFP/NEON and the MMU are not implemented; docs/adr/033-native-ps-engine.md). \
              The instruction was not executed and no state changed",
             describe_pc(pc, &self.symbols, &self.source),
@@ -365,17 +520,31 @@ impl NativePsEngine {
         self.fault = Some(msg);
     }
 
+    /// Ends a device window: the devices tick through the cycles every core has run since the
+    /// last tick (the fewest of them), the interrupt lines are re-sampled, and UART output is
+    /// moved to the logs. Called after every window, whether it ended early or not.
+    fn settle(&mut self) {
+        let m = self.cyc.iter().copied().min().unwrap_or(0);
+        self.cycle = m;
+        if m > self.ticked {
+            self.bus.tick(m - self.ticked);
+            self.ticked = m;
+        }
+        self.dirty = true;
+        self.flush_uart();
+    }
+
     fn advance_to_cycle(&mut self, end: u64) -> Result<(), ApiError> {
         if let Some(f) = &self.fault {
             return Err(ApiError::unsupported(f.clone()));
         }
-        if self.stop.take().is_some() {
-            self.resume_past_break = true;
+        if let Some(stop) = self.stop.take() {
+            self.resume_past = Some(usize::from(stop.core));
         }
         while self.cycle < end && self.stop.is_none() && self.fault.is_none() {
-            let n = (end - self.cycle).min(BATCH_CYCLES);
-            self.run_batch(n);
-            self.flush_uart();
+            let wend = end.min(self.cycle + BATCH_CYCLES);
+            self.run_window(wend);
+            self.settle();
         }
         match &self.fault {
             Some(f) => Err(ApiError::unsupported(f.clone())),
@@ -428,22 +597,28 @@ impl NativePsEngine {
         b.extend_from_slice(&self.bus.state_hash().to_le_bytes());
         b.extend_from_slice(&self.cycle.to_le_bytes());
         b.extend_from_slice(&self.target_ps.to_le_bytes());
-        for n in 0..16u8 {
-            b.extend_from_slice(&self.cpu.reg(n).to_le_bytes());
+        b.extend_from_slice(&self.ticked.to_le_bytes());
+        for (cpu, cyc) in self.cpus.iter().zip(&self.cyc) {
+            b.extend_from_slice(&cyc.to_le_bytes());
+            for n in 0..16u8 {
+                b.extend_from_slice(&cpu.reg(n).to_le_bytes());
+            }
+            b.extend_from_slice(&cpu.cpsr().to_le_bytes());
+            for mode in [
+                Mode::Fiq,
+                Mode::Irq,
+                Mode::Supervisor,
+                Mode::Abort,
+                Mode::Undefined,
+            ] {
+                b.extend_from_slice(&cpu.spsr(mode).to_le_bytes());
+            }
+            b.push(u8::from(cpu.is_waiting()));
+            b.push(u8::from(cpu.event_register()));
+            b.extend_from_slice(&cpu.exclusive_address().map_or(u64::MAX, u64::from).to_le_bytes());
         }
-        b.extend_from_slice(&self.cpu.cpsr().to_le_bytes());
-        for mode in [
-            Mode::Fiq,
-            Mode::Irq,
-            Mode::Supervisor,
-            Mode::Abort,
-            Mode::Undefined,
-        ] {
-            b.extend_from_slice(&self.cpu.spsr(mode).to_le_bytes());
-        }
-        b.push(u8::from(self.cpu.is_waiting()));
         b.extend_from_slice(&self.stops.to_le_bytes());
-        b.push(u8::from(self.resume_past_break));
+        b.push(u8::from(self.resume_past.is_some()));
         fnv1a64(&b)
     }
 
@@ -662,33 +837,38 @@ impl NativePsEngine {
     }
 }
 
-/// The core's view of the PS bus. Every access is forwarded to core 0. An access outside DDR
-/// and OCM may change device state (a read can too: an interrupt acknowledge does), so it marks
-/// the bus as changed; RAM accesses (instruction fetches included) cannot change a device.
-struct Watch<'a> {
-    bus: &'a mut SystemBus,
-    dirty: bool,
+/// The bus as one core sees it. An access outside DDR and OCM may change device state (a read
+/// can too: an interrupt acknowledge does), so it marks the bus as changed; RAM accesses
+/// (instruction fetches included) cannot change a device. Every successful store is recorded
+/// for the cross-core effects of the step ([`NativePsEngine::after_step`]).
+struct CoreView<'a> {
+    bus: CoreBus<'a>,
+    ddr_size: u64,
+    dirty: &'a mut bool,
+    stores: &'a mut Vec<Store>,
 }
 
-impl Watch<'_> {
+impl CoreView<'_> {
     fn touches_devices(&self, addr: u64) -> bool {
-        !(addr < self.bus.ddr_size() || (OCM_BASE..OCM_BASE + OCM_SIZE).contains(&addr))
+        !(addr < self.ddr_size || (OCM_BASE..OCM_BASE + OCM_SIZE).contains(&addr))
     }
 }
 
-impl Bus for Watch<'_> {
+impl Bus for CoreView<'_> {
     fn read(&mut self, addr: u64, size: u8) -> BusResult<u64> {
         if self.touches_devices(addr) {
-            self.dirty = true;
+            *self.dirty = true;
         }
-        Bus::read(self.bus, addr, size)
+        self.bus.read(addr, size)
     }
 
     fn write(&mut self, addr: u64, size: u8, value: u64) -> BusResult<()> {
         if self.touches_devices(addr) {
-            self.dirty = true;
+            *self.dirty = true;
         }
-        Bus::write(self.bus, addr, size, value)
+        self.bus.write(addr, size, value)?;
+        self.stores.push(Store { addr, size, value });
+        Ok(())
     }
 }
 
@@ -879,14 +1059,16 @@ impl NativePsEngine {
             }
             Query::Breakpoints => Ok(Response::Breakpoints(self.breakpoints.clone())),
             Query::CpuRegs { core } => {
-                if *core != 0 {
+                let Some(cpu) = self.cpus.get(usize::from(*core)) else {
                     return Err(unsupported(
                         "cpu_regs",
-                        "core 1 is parked and not modelled on the native PS",
+                        &format!(
+                            "core {core} does not exist: core 1 exists only with `[cpu1]`"
+                        ),
                     ));
-                }
-                let r: [u32; 16] = std::array::from_fn(|n| self.cpu.reg(n as u8));
-                let cpsr = self.cpu.cpsr();
+                };
+                let r: [u32; 16] = std::array::from_fn(|n| cpu.reg(n as u8));
+                let cpsr = cpu.cpsr();
                 let pc_symbol = self.symbols.containing(r[15]).map(|(s, off)| {
                     if off == 0 {
                         s.name.clone()
@@ -895,7 +1077,7 @@ impl NativePsEngine {
                     }
                 });
                 Ok(Response::CpuRegs(CpuRegs {
-                    core: 0,
+                    core: *core,
                     r,
                     cpsr,
                     mode: cpsr_mode(cpsr).to_string(),
@@ -1040,6 +1222,7 @@ mod tests {
     fn spec_for(elf: PathBuf) -> NativeSpec {
         NativeSpec {
             elf,
+            cpu1: None,
             board_def: BoardDef::builtin("zybo-z7-20").expect("built-in board"),
             quantum_ns: 1000,
             breakpoints: Vec::new(),
@@ -1194,9 +1377,9 @@ mod tests {
         let msg = err.message.clone();
         assert!(msg.contains("pc=0x00100004"), "{msg}");
         assert!(msg.contains("0xeeb00a40"), "{msg}");
-        assert_eq!(e.cpu.reg(0), 1, "the instruction before it ran");
+        assert_eq!(e.cpus[0].reg(0), 1, "the instruction before it ran");
         assert_eq!(
-            e.cpu.pc(),
+            e.cpus[0].pc(),
             0x0010_0004,
             "the faulting instruction did not run"
         );
@@ -1335,5 +1518,350 @@ mod tests {
         assert_eq!(st.ps_backend, "native");
         assert_eq!(st.fidelity, Fidelity::F0);
         assert_eq!(e.def().name, "zybo-z7-20");
+    }
+
+    // ---- two cores: hand-written A32 programs --------------------------------------------
+
+    const CORE0_BASE: u32 = 0x0010_0000;
+    const CORE1_BASE: u32 = 0x0010_1000;
+    /// Shared DDR words the programs use; `RESULT` is where core 0 records its STREX status.
+    const DATA: u32 = 0x0010_2000;
+    const RESULT: u32 = 0x0010_2100;
+    const FLAG: u32 = 0x0010_2200;
+    const GIC_DIST: u32 = 0xF8F0_1000;
+    const GIC_CPU: u32 = 0xF8F0_0100;
+
+    /// The encodings the dual-core programs use (A32, always-execute unless a condition is given).
+    mod a32 {
+        pub const NE: u32 = 0x1;
+        pub const AL: u32 = 0xE;
+        pub const WFE: u32 = 0xE320_F002;
+        pub const WFI: u32 = 0xE320_F003;
+        pub const SEV: u32 = 0xE320_F004;
+
+        pub fn movw(rd: u32, imm: u32) -> u32 {
+            0xE300_0000 | (((imm >> 12) & 0xF) << 16) | (rd << 12) | (imm & 0xFFF)
+        }
+        pub fn movt(rd: u32, imm: u32) -> u32 {
+            0xE340_0000 | (((imm >> 12) & 0xF) << 16) | (rd << 12) | (imm & 0xFFF)
+        }
+        /// MOV of an 8-bit immediate.
+        pub fn mov(rd: u32, imm: u32) -> u32 {
+            0xE3A0_0000 | (rd << 12) | (imm & 0xFF)
+        }
+        pub fn subs(rd: u32, rn: u32, imm: u32) -> u32 {
+            0xE250_0000 | (rn << 16) | (rd << 12) | (imm & 0xFF)
+        }
+        /// STR rt, [rn] (offset 0).
+        pub fn str(rt: u32, rn: u32) -> u32 {
+            0xE580_0000 | (rn << 16) | (rt << 12)
+        }
+        pub fn ldrex(rt: u32, rn: u32) -> u32 {
+            0xE190_0F9F | (rn << 16) | (rt << 12)
+        }
+        pub fn strex(rd: u32, rt: u32, rn: u32) -> u32 {
+            0xE180_0F90 | (rn << 16) | (rd << 12) | rt
+        }
+        /// A branch at `pc` to `target`.
+        pub fn b(pc: u32, target: u32, cond: u32) -> u32 {
+            let off = (i64::from(target) - (i64::from(pc) + 8)) >> 2;
+            (cond << 28) | 0x0A00_0000 | ((off as u32) & 0xFF_FFFF)
+        }
+    }
+
+    /// Words of code, built in order at `base`.
+    struct Asm {
+        base: u32,
+        words: Vec<u32>,
+    }
+
+    impl Asm {
+        fn new(base: u32) -> Asm {
+            Asm {
+                base,
+                words: Vec::new(),
+            }
+        }
+        /// The address of the next word.
+        fn pc(&self) -> u32 {
+            self.base + 4 * self.words.len() as u32
+        }
+        fn op(&mut self, w: u32) -> &mut Self {
+            self.words.push(w);
+            self
+        }
+        /// A 32-bit constant into `rd` (MOVW, MOVT).
+        fn li(&mut self, rd: u32, v: u32) -> &mut Self {
+            self.op(a32::movw(rd, v & 0xFFFF));
+            self.op(a32::movt(rd, v >> 16))
+        }
+        fn b(&mut self, cond: u32, target: u32) -> &mut Self {
+            let here = self.pc();
+            self.op(a32::b(here, target, cond))
+        }
+        /// Spins for `n` iterations of two instructions (uses r4).
+        fn delay(&mut self, n: u32) -> &mut Self {
+            self.li(4, n);
+            let top = self.pc();
+            self.op(a32::subs(4, 4, 1));
+            self.b(a32::NE, top)
+        }
+        /// Releases core 1: the entry address to the mailbox, then SEV. Uses r0 and r1.
+        fn release_core1(&mut self, entry: u32) -> &mut Self {
+            self.li(0, CPU1_MAILBOX).li(1, entry).op(a32::str(1, 0));
+            self.op(a32::SEV)
+        }
+    }
+
+    fn words_le(w: &[u32]) -> Vec<u8> {
+        w.iter().flat_map(|x| x.to_le_bytes()).collect()
+    }
+
+    /// Two cores: `c0` at CORE0_BASE, `c1` at CORE1_BASE (released by the program itself).
+    fn dual(name: &str, c0: &Asm, c1: &Asm) -> NativePsEngine {
+        let p0 = write_temp(
+            &format!("{name}-core0.elf"),
+            &tiny_elf(c0.base, c0.base, &words_le(&c0.words)),
+        );
+        let p1 = write_temp(
+            &format!("{name}-core1.elf"),
+            &tiny_elf(c1.base, c1.base, &words_le(&c1.words)),
+        );
+        let mut spec = spec_for(p0);
+        spec.cpu1 = Some(p1);
+        NativePsEngine::new(&spec).expect("two-core engine")
+    }
+
+    fn read_word(e: &mut NativePsEngine, addr: u32) -> u32 {
+        match e.query(
+            &Query::MemRead {
+                addr: u64::from(addr),
+                len: 4,
+            },
+            false,
+        ) {
+            Ok(Response::Memory { data, .. }) => {
+                u32::from_le_bytes(data[..4].try_into().expect("four bytes"))
+            }
+            other => panic!("mem_read: {other:?}"),
+        }
+    }
+
+    /// Core 1 starts in the boot ROM's parking loop and runs its software only after core 0
+    /// writes the entry address to the mailbox and sends an event.
+    #[test]
+    fn core1_stays_in_the_boot_rom_until_core0_writes_the_mailbox() {
+        let mut c0 = Asm::new(CORE0_BASE);
+        c0.delay(1000).release_core1(CORE1_BASE);
+        c0.b(a32::AL, c0.pc());
+        let mut c1 = Asm::new(CORE1_BASE);
+        c1.li(2, 0x55).li(3, FLAG).op(a32::str(2, 3));
+        c1.b(a32::AL, c1.pc());
+        let mut e = dual("boot-protocol", &c0, &c1);
+        e.run_for(Ps::from_us(1)).expect("run");
+        let parked = match e.query(&Query::CpuRegs { core: 1 }, false) {
+            Ok(Response::CpuRegs(r)) => r,
+            other => panic!("{other:?}"),
+        };
+        assert!(
+            (BOOT_ROM_PARK..BOOT_ROM_PARK + 0x18).contains(&parked.r[15]),
+            "core 1 is in the parking loop: pc {:#x}",
+            parked.r[15]
+        );
+        assert!(e.cpus[1].is_waiting(), "waiting in WFE");
+        assert_eq!(read_word(&mut e, FLAG), 0, "core 1 has not run its software");
+        e.run_for(Ps::from_us(20)).expect("run on");
+        assert_eq!(read_word(&mut e, FLAG), 0x55, "core 1 ran after the release");
+        let text = match e.query(&Query::Trace { from: 0, max: 1 << 20 }, false) {
+            Ok(Response::Trace { records, .. }) => format!("{records:?}"),
+            other => panic!("{other:?}"),
+        };
+        assert!(text.contains("wrote the CPU1 mailbox"), "the release is traced");
+        // The entry address written by core 0 is what core 1 jumped to.
+        let r1 = match e.query(&Query::CpuRegs { core: 1 }, false) {
+            Ok(Response::CpuRegs(r)) => r,
+            other => panic!("{other:?}"),
+        };
+        assert!(r1.r[15] >= CORE1_BASE && r1.r[15] < CORE1_BASE + 0x20, "{:#x}", r1.r[15]);
+    }
+
+    /// Core 0 takes the reservation with LDREX, core 1 stores to the same granule (or not),
+    /// then core 0's STREX succeeds or fails accordingly. A store to the same word or to the
+    /// same 8-byte granule clears it; a store to the next granule does not.
+    #[test]
+    fn a_store_by_another_core_clears_the_exclusive_reservation_of_its_granule() {
+        for (store_at, want_status, want_word) in [
+            (DATA, 1, 0xBB),
+            (DATA + 4, 1, 0),
+            (DATA + 8, 0, 0xAA),
+        ] {
+            let mut c0 = Asm::new(CORE0_BASE);
+            c0.release_core1(CORE1_BASE);
+            c0.li(0, DATA).op(a32::ldrex(1, 0));
+            c0.delay(200);
+            c0.li(2, 0xAA).op(a32::strex(3, 2, 0));
+            c0.li(5, RESULT).op(a32::str(3, 5));
+            c0.b(a32::AL, c0.pc());
+            let mut c1 = Asm::new(CORE1_BASE);
+            c1.delay(10);
+            c1.li(2, 0xBB).li(3, store_at).op(a32::str(2, 3));
+            c1.b(a32::AL, c1.pc());
+            let mut e = dual(&format!("excl-{:x}", store_at), &c0, &c1);
+            e.run_for(Ps::from_us(30)).expect("run");
+            assert_eq!(read_word(&mut e, RESULT), want_status, "STREX status at {store_at:#x}");
+            assert_eq!(read_word(&mut e, DATA), want_word, "the word after the race");
+        }
+    }
+
+    /// Core 1 waits in WFE; core 0 sends SEV later. The wake-up is an event, so core 1 runs on.
+    #[test]
+    fn sev_on_core0_wakes_a_wfe_on_core1() {
+        let mut c0 = Asm::new(CORE0_BASE);
+        c0.release_core1(CORE1_BASE);
+        c0.delay(500);
+        c0.op(a32::SEV);
+        c0.b(a32::AL, c0.pc());
+        let mut c1 = Asm::new(CORE1_BASE);
+        c1.op(a32::WFE);
+        c1.li(2, 0x77).li(3, FLAG).op(a32::str(2, 3));
+        c1.b(a32::AL, c1.pc());
+        let mut e = dual("sev-wfe", &c0, &c1);
+        e.run_for(Ps::from_us(1)).expect("run");
+        assert!(e.cpus[1].is_waiting(), "core 1 waits for the event");
+        assert_eq!(read_word(&mut e, FLAG), 0);
+        e.run_for(Ps::from_us(20)).expect("run on");
+        assert!(!e.cpus[1].is_waiting());
+        assert_eq!(read_word(&mut e, FLAG), 0x77);
+    }
+
+    /// Core 1 executes WFI with its IRQ masked. Core 0 raises SGI 0 for it through ICDSGIR; WFI
+    /// wakes on the pending interrupt even though it is not taken, so core 1 runs on.
+    #[test]
+    fn an_sgi_from_core0_wakes_a_wfi_on_core1_with_irqs_masked() {
+        let mut c0 = Asm::new(CORE0_BASE);
+        c0.li(0, GIC_DIST).op(a32::mov(1, 1)).op(a32::str(1, 0)); // distributor on
+        c0.release_core1(CORE1_BASE);
+        c0.delay(500);
+        // ICDSGIR: SGI 0 to core 1 (target list bit 1, filter 0).
+        c0.li(2, GIC_DIST + 0xF00).li(3, 0x0002_0000).op(a32::str(3, 2));
+        c0.b(a32::AL, c0.pc());
+        let mut c1 = Asm::new(CORE1_BASE);
+        // CPU interface on, priority mask open, SGI 0 enabled for this core.
+        c1.li(0, GIC_CPU).op(a32::mov(1, 1)).op(a32::str(1, 0));
+        c1.li(0, GIC_CPU + 4).op(a32::mov(1, 0xF0)).op(a32::str(1, 0));
+        c1.li(0, GIC_DIST + 0x100).op(a32::mov(1, 1)).op(a32::str(1, 0));
+        c1.op(a32::WFI);
+        c1.li(2, 0x33).li(3, FLAG).op(a32::str(2, 3));
+        c1.b(a32::AL, c1.pc());
+        let mut e = dual("sgi-wfi", &c0, &c1);
+        e.run_for(Ps::from_us(1)).expect("run");
+        assert!(e.cpus[1].is_waiting(), "core 1 is in WFI");
+        e.run_for(Ps::from_us(20)).expect("run on");
+        assert!(!e.cpus[1].is_waiting(), "the SGI woke the WFI");
+        assert_eq!(read_word(&mut e, FLAG), 0x33);
+    }
+
+    /// Both cores run for the same number of cycles, in batches of `SCHED_BATCH`: the
+    /// scheduler never lets one core get more than a batch ahead of the other.
+    #[test]
+    fn the_cores_interleave_round_robin_and_run_the_same_cycles() {
+        let mut c0 = Asm::new(CORE0_BASE);
+        c0.b(a32::AL, c0.pc());
+        let mut c1 = Asm::new(CORE1_BASE);
+        c1.b(a32::AL, c1.pc());
+        let mut spec = spec_for(write_temp(
+            "rr-core0.elf",
+            &tiny_elf(c0.base, c0.base, &words_le(&c0.words)),
+        ));
+        spec.cpu1 = Some(write_temp(
+            "rr-core1.elf",
+            &tiny_elf(c1.base, c1.base, &words_le(&c1.words)),
+        ));
+        let mut e = NativePsEngine::new(&spec).expect("engine");
+        e.run_for(Ps::from_us(3)).expect("run");
+        assert_eq!(e.cyc[0], e.cyc[1], "equal cycles");
+        assert_eq!(e.cycle, e.cyc[0]);
+        assert_eq!(e.now_ps().0, e.cycle * PS_PER_CYCLE);
+        assert!(SCHED_BATCH >= 1 && BATCH_CYCLES % SCHED_BATCH == 0);
+    }
+
+    /// A snapshot of a two-core session restores both cores: the run after the restore has the
+    /// trace digest and the time of the straight run.
+    #[test]
+    fn a_two_core_snapshot_restores_both_cores() {
+        let build = || {
+            let mut c0 = Asm::new(CORE0_BASE);
+            c0.release_core1(CORE1_BASE);
+            c0.li(0, DATA).op(a32::ldrex(1, 0));
+            c0.delay(200);
+            c0.li(2, 0xAA).op(a32::strex(3, 2, 0));
+            c0.b(a32::AL, c0.pc());
+            let mut c1 = Asm::new(CORE1_BASE);
+            c1.delay(50);
+            c1.li(2, 0xBB).li(3, DATA + 8).op(a32::str(2, 3));
+            c1.b(a32::AL, c1.pc());
+            dual("snap", &c0, &c1)
+        };
+        let mut straight = build();
+        straight.run_for(Ps::from_us(10)).expect("run");
+        let end = straight.status(false);
+        let mut e = build();
+        e.run_for(Ps::from_us(2)).expect("run");
+        e.command(Command::SnapshotSave {
+            name: "two".to_string(),
+        })
+        .expect("save");
+        e.run_for(Ps::from_us(5)).expect("run on");
+        e.command(Command::SnapshotRestore {
+            name: "two".to_string(),
+        })
+        .expect("restore");
+        e.run_for(Ps::from_us(8)).expect("run again");
+        let again = e.status(false);
+        assert_eq!(again.trace_hash, end.trace_hash);
+        assert_eq!(again.now_ps, end.now_ps);
+    }
+
+    /// The same two-core session in one process gives one trace digest and one state hash, five
+    /// times.
+    #[test]
+    fn a_two_core_session_gives_one_trace_digest_five_times() {
+        let mut digests = Vec::new();
+        for _ in 0..5 {
+            let mut c0 = Asm::new(CORE0_BASE);
+            c0.release_core1(CORE1_BASE);
+            c0.delay(100);
+            c0.op(a32::SEV);
+            c0.b(a32::AL, c0.pc());
+            let mut c1 = Asm::new(CORE1_BASE);
+            c1.op(a32::WFE);
+            c1.b(a32::AL, c1.pc());
+            let mut e = dual("five", &c0, &c1);
+            e.run_for(Ps::from_us(10)).expect("run");
+            digests.push((e.status(false).trace_hash, e.state_hash()));
+        }
+        assert!(digests.iter().all(|d| *d == digests[0]), "{digests:?}");
+    }
+
+    #[test]
+    fn cpu_regs_answers_for_core1_only_when_it_exists() {
+        let mut e = NativePsEngine::new(&hello()).expect("engine");
+        assert!(e.query(&Query::CpuRegs { core: 1 }, false).is_err());
+        let mut c0 = Asm::new(CORE0_BASE);
+        c0.b(a32::AL, c0.pc());
+        let mut c1 = Asm::new(CORE1_BASE);
+        c1.b(a32::AL, c1.pc());
+        let mut two = dual("regs", &c0, &c1);
+        match two.query(&Query::CpuRegs { core: 1 }, false) {
+            Ok(Response::CpuRegs(r)) => {
+                assert_eq!(r.core, 1);
+                assert_eq!(r.mode, "svc");
+                assert_eq!(r.cpsr & 0xC0, 0xC0, "IRQ and FIQ masked in the boot ROM");
+                assert_eq!(r.r[15], BOOT_ROM_PARK);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(two.cpus[1].core_id(), 1, "MPIDR of core 1");
+        assert_eq!(two.cpus[0].core_id(), 0, "MPIDR of core 0");
     }
 }
