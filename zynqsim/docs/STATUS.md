@@ -725,7 +725,8 @@ The native ARMv7-A core `crates/cpu-a9` (ADR-030). Integer A32 only; the MMU, Th
 | UDIV, SDIV are undefined (no integer divide on Cortex-A9) | verified for the permanently undefined encoding | `isa::undefined_instruction_takes_the_undef_exception` |
 | MMU: setting SCTLR.M stops the core, never runs untranslated | verified (no translation exists) | `isa::enabling_the_mmu_stops_the_core_rather_than_running_untranslated` |
 | Thumb (T=1, BX to an odd address): reported, not run | stub | `isa::bx_to_an_odd_address_enters_thumb_which_is_reported` |
-| VFP, NEON, coprocessor 10/11 | stub (`Unimplemented`) | `isa::vfp_is_reported_unimplemented_and_nothing_changes` |
+| VFPv3-D32 scalar, transfers, loads and stores | verified | `vfp_isa::*`, `vfp_props::*` (10000 cases per operation, all rounding modes, FZ, DN; mutation-checked) |
+| VFP short vectors, VCVTB/VCVTT, NEON | stub (`Unimplemented` with a reason) | `vfp_isa::unimplemented_features_are_reported_with_a_reason` |
 | MMU walk, TLB, the `Translate` hook beyond identity | stub (identity translation only) | `Translate` / `Identity` in `cpu-a9::xlate` |
 | GIC, timers, SCU, caches, peripherals | not in this crate | `mem-sys`, `ps-periph` (other crates) |
 | Rust firmware: `rust_hello.elf` runs to completion, UART text equals QEMU | verified | `cpu-a9/tests/rust_firmware.rs::rust_hello_runs_to_completion_and_prints_its_message`, `cli/tests/cpu_a9_diff.rs::rust_hello_prints_the_same_text_in_qemu_and_in_the_interpreter` (skips without QEMU) |
