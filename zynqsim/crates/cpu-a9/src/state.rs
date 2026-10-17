@@ -195,6 +195,8 @@ pub struct Cpu {
     pub(crate) cp15: Cp15,
     /// The virtual-to-physical hook.
     pub(crate) xlate: Box<dyn Translate + Send>,
+    /// The VFP register file, FPSCR and FPEXC.
+    pub(crate) vfp: crate::vfp::Vfp,
 }
 
 impl Cpu {
@@ -217,6 +219,7 @@ impl Cpu {
             excl: None,
             cp15: Cp15::new(cpu_id),
             xlate: Box::new(Identity),
+            vfp: crate::vfp::Vfp::new(),
         }
     }
 
@@ -316,6 +319,7 @@ impl Cpu {
 
     /// Executes one instruction (or takes one pending interrupt, or idles in WFI/WFE).
     pub fn step(&mut self, bus: &mut dyn Bus) -> StepResult {
+        self.vfp.why = None;
         let pc = self.pc;
         if self.cp15.sctlr & SCTLR_M != 0 {
             // The MMU is not implemented: refuse rather than run with physical addressing.

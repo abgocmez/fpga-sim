@@ -18,6 +18,9 @@ impl Cpu {
         if !self.cond_passed(cond) {
             return Flow::Done;
         }
+        if crate::vfp::is_fp_space(insn) {
+            return self.vfp_insn(bus, insn);
+        }
         match (insn >> 25) & 7 {
             0 => self.space_000(bus, insn),
             1 => self.space_001(insn),
@@ -486,6 +489,9 @@ impl Cpu {
 
     /// Instructions in the unconditional space (cond = 0b1111).
     fn uncond(&mut self, insn: u32) -> Flow {
+        if crate::vfp::is_fp_space(insn) {
+            return self.undefined();
+        }
         if insn & 0xFFFF_FFF0 == 0xF57F_F010 {
             self.excl = None; // CLREX
             return Flow::Done;
