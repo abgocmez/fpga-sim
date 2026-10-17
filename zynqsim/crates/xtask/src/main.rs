@@ -5,12 +5,27 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
+use std::time::Instant;
+use xtask::ci::{self, CiMode, StepRecord};
 use xtask::dist;
 
 const HELP: &str = "\
 cargo xtask <command>
 
-  ci            fmt --check, clippy -D warnings, all tests, release build
+  ci            fmt --check, clippy -D warnings (workspace and freestanding DPI), all tests,
+                release build: THE GATE TO RUN BEFORE MERGING (45-60 min). Prints the wall
+                time of each step and a summary table at the end, pass or fail.
+  ci --fast     fmt --check, clippy -D warnings (workspace), and the workspace tests with
+                ZYNQSIM_FAST=1: every test that needs QEMU, Vivado, Verilator or Icarus
+                prints SKIPPED and passes vacuously. Quick feedback while working; it does
+                NOT replace `cargo xtask ci` before merging.
+  ci --det-only name,name
+                only the determinism test (crates/cli/tests/determinism.rs), restricted to
+                the listed examples (ZYNQSIM_DET_ONLY). Every examples/ directory must still
+                be in its CASES or EXCLUDED tables. Unknown names fail the test.
+  changed-examples
+                the examples/<name> directories touched by `git diff origin/main...HEAD`,
+                comma-separated, for `ci --det-only \"$(cargo xtask changed-examples)\"`
   test          all tests
   golden        regenerate the golden board PNGs (review the diff before committing)
   release       cargo build --release (zynqsim, zynqsim-gui, zynqsim-mcp)
@@ -225,53 +240,170 @@ fn firmware() -> bool {
     true
 }
 
-fn main() -> ExitCode {
-    let cmd = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "help".to_string());
-    let ok = match cmd.as_str() {
-        "ci" => {
-            cargo(&["fmt", "--all", "--", "--check"], &[])
-                && cargo(
-                    &[
-                        "clippy",
-                        "--workspace",
-                        "--all-targets",
-                        "--",
-                        "-D",
-                        "warnings",
-                    ],
-                    &[],
-                )
-                && cargo(
-                    &[
-                        "clippy",
-                        "-p",
-                        "xsim-dpi",
-                        "--features",
-                        "freestanding",
-                        "--",
-                        "-D",
-                        "warnings",
-                    ],
-                    &[],
-                )
-                && cargo(
-                    &[
-                        "build",
-                        "--release",
-                        "-p",
-                        "xsim-dpi",
-                        "--features",
-                        "freestanding",
-                        "--target-dir",
-                        "target/dpi",
-                    ],
-                    &[],
-                )
-                && cargo(&["test", "--workspace"], &[])
-                && cargo(&["build", "--release"], &[])
+/// Runs the steps of one gate, timing each and recording the results for the summary.
+struct Gate {
+    started: Instant,
+    steps: Vec<StepRecord>,
+}
+
+impl Gate {
+    fn new() -> Self {
+        Gate {
+            started: Instant::now(),
+            steps: Vec::new(),
         }
+    }
+
+    /// Runs one step and prints its wall time when it ends. The caller chains steps
+    /// with `&&`, so the first failing step stops the gate.
+    fn step(&mut self, name: &str, run: impl FnOnce() -> bool) -> bool {
+        eprintln!("\n==> {name}");
+        let t = Instant::now();
+        let ok = run();
+        let elapsed = t.elapsed();
+        let verdict = if ok { "done in" } else { "FAILED after" };
+        eprintln!("==> {name} ... {verdict} {}", ci::fmt_duration(elapsed));
+        self.steps.push(StepRecord {
+            name: name.to_string(),
+            elapsed,
+            ok,
+        });
+        ok
+    }
+
+    fn finish(&self, ok: bool) -> bool {
+        eprint!(
+            "\n==> gate {}, summary:\n{}",
+            if ok { "passed" } else { "FAILED" },
+            ci::summary_table(&self.steps, self.started.elapsed())
+        );
+        ok
+    }
+}
+
+/// `cargo xtask ci [--fast | --det-only names]`.
+fn ci_gate(args: &[String]) -> bool {
+    let mode = match ci::parse_ci_args(args) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("xtask: {e}\n\n{HELP}");
+            return false;
+        }
+    };
+    let mut gate = Gate::new();
+    let ok = match mode {
+        CiMode::Full => {
+            gate.step("fmt", || cargo(&["fmt", "--all", "--", "--check"], &[]))
+                && gate.step("clippy workspace", || {
+                    cargo(
+                        &[
+                            "clippy",
+                            "--workspace",
+                            "--all-targets",
+                            "--",
+                            "-D",
+                            "warnings",
+                        ],
+                        &[],
+                    )
+                })
+                && gate.step("clippy xsim-dpi (freestanding)", || {
+                    cargo(
+                        &[
+                            "clippy",
+                            "-p",
+                            "xsim-dpi",
+                            "--features",
+                            "freestanding",
+                            "--",
+                            "-D",
+                            "warnings",
+                        ],
+                        &[],
+                    )
+                })
+                && gate.step("build xsim-dpi (freestanding)", || {
+                    cargo(
+                        &[
+                            "build",
+                            "--release",
+                            "-p",
+                            "xsim-dpi",
+                            "--features",
+                            "freestanding",
+                            "--target-dir",
+                            "target/dpi",
+                        ],
+                        &[],
+                    )
+                })
+                && gate.step("test --workspace", || cargo(&["test", "--workspace"], &[]))
+                && gate.step("build --release", || cargo(&["build", "--release"], &[]))
+        }
+        CiMode::Fast => {
+            gate.step("fmt", || cargo(&["fmt", "--all", "--", "--check"], &[]))
+                && gate.step("clippy workspace", || {
+                    cargo(
+                        &[
+                            "clippy",
+                            "--workspace",
+                            "--all-targets",
+                            "--",
+                            "-D",
+                            "warnings",
+                        ],
+                        &[],
+                    )
+                })
+                && gate.step("test --workspace (fast)", || {
+                    cargo(&["test", "--workspace"], &[("ZYNQSIM_FAST", "1")])
+                })
+        }
+        CiMode::DetOnly(names) => {
+            let list = names.join(",");
+            gate.step(&format!("determinism ({list})"), || {
+                cargo(
+                    &["test", "-p", "zynqsim", "--test", "determinism"],
+                    &[("ZYNQSIM_DET_ONLY", list.as_str())],
+                )
+            })
+        }
+    };
+    gate.finish(ok)
+}
+
+/// Prints the examples changed since `origin/main`, comma-separated.
+fn changed_examples() -> bool {
+    let out = Command::new("git")
+        .args(["diff", "--name-only", "--relative", "origin/main...HEAD"])
+        .current_dir(workspace_root())
+        .output();
+    let out = match out {
+        Ok(o) if o.status.success() => o,
+        Ok(o) => {
+            eprintln!(
+                "xtask: git diff failed:\n{}",
+                String::from_utf8_lossy(&o.stderr)
+            );
+            return false;
+        }
+        Err(e) => {
+            eprintln!("xtask: cannot run git: {e}");
+            return false;
+        }
+    };
+    let names = ci::changed_examples(&String::from_utf8_lossy(&out.stdout));
+    eprintln!("xtask: {} changed example(s)", names.len());
+    println!("{}", names.join(","));
+    true
+}
+
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().collect();
+    let cmd = args.get(1).cloned().unwrap_or_else(|| "help".to_string());
+    let ok = match cmd.as_str() {
+        "ci" => ci_gate(&args[2..]),
+        "changed-examples" => changed_examples(),
         "test" => cargo(&["test", "--workspace"], &[]),
         "golden" => cargo(
             &["test", "-p", "board-zybo", "render"],

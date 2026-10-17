@@ -28,6 +28,10 @@ fn stdout(o: &Output) -> String {
 
 /// `inspect` reports a backend as found when its program is located.
 fn backend_found(name: &str) -> bool {
+    if std::env::var("ZYNQSIM_FAST").as_deref() == Ok("1") {
+        eprintln!("SKIPPED: fast mode (ZYNQSIM_FAST=1)");
+        return false;
+    }
     let o = zynqsim(&["--json", "inspect"]);
     let v: Value = serde_json::from_str(&stdout(&o)).unwrap();
     v["backends"]

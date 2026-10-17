@@ -31,6 +31,10 @@ fn temp(tag: &str) -> PathBuf {
 }
 
 fn backend_found(name: &str) -> bool {
+    if std::env::var("ZYNQSIM_FAST").as_deref() == Ok("1") {
+        eprintln!("SKIPPED: fast mode (ZYNQSIM_FAST=1)");
+        return false;
+    }
     let o = zynqsim(&["--json", "inspect"]);
     let v: Value = serde_json::from_slice(&o.stdout).unwrap_or(Value::Null);
     v["backends"]
@@ -40,6 +44,10 @@ fn backend_found(name: &str) -> bool {
 
 /// True when the run can be made; prints the skip reason otherwise.
 fn tools_present() -> bool {
+    if std::env::var("ZYNQSIM_FAST").as_deref() == Ok("1") {
+        eprintln!("SKIPPED: fast mode (ZYNQSIM_FAST=1)");
+        return false;
+    }
     if !backend_found("qemu") || !backend_found("xsim") {
         eprintln!("SKIPPED: needs the Xilinx QEMU and Vivado XSim");
         return false;

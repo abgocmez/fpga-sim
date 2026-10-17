@@ -14,8 +14,19 @@ you can see, drive from a GUI, a CLI or an MCP server, and replay exactly.
 
 ```
 cargo build --release          # zynqsim, zynqsim-gui, zynqsim-mcp  (target/release)
-cargo xtask ci                 # fmt --check, clippy -D warnings, tests, release build
+cargo xtask ci                 # THE FULL GATE, run before merging (45-60 min): fmt --check,
+                               # clippy -D warnings, all tests, release build
+cargo xtask ci --fast          # quick feedback: fmt, clippy, tests with ZYNQSIM_FAST=1, where
+                               # every test that needs QEMU/Vivado/Verilator/Icarus prints
+                               # SKIPPED and passes. Does NOT replace the full gate
+cargo xtask ci --det-only a,b  # only the determinism test, for the listed examples
+                               # (ZYNQSIM_DET_ONLY); `cargo xtask changed-examples` lists the
+                               # examples changed since origin/main
 ```
+
+`cargo xtask ci` prints the wall time of each step as it ends and a table of the steps at the end,
+pass or fail. A skipped test is reported as passing: check for `SKIPPED:` lines when a tool-backed
+behaviour matters. See [docs/TESTPLAN.md](docs/TESTPLAN.md#gates).
 
 Needs a Rust toolchain (stable). No external simulator is required to build or test. The GUI
 links `cpal` (speaker; ALSA development files on Linux) and `rfd` (file dialogs); build with
