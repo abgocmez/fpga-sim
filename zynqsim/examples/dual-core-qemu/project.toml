@@ -1,0 +1,28 @@
+# The dual-core demo (`firmware/dual_core_demo`) on the Xilinx QEMU engine: the same ELF as
+# examples/dual-core-native. Core 1 begins at the ELF entry under QEMU, parks on the mailbox at
+# 0xFFFFFFF0 in the runtime's `_start`, and runs its software after core 0's release. QEMU
+# discards UART0 in this configuration (`-serial null`), so core 1's lines (UART0) are not
+# observable on this engine; UART1 carries the full RESULT line.
+# Needs the Xilinx QEMU (Vitis) only.
+#
+#   zynqsim run --project examples/dual-core-qemu/project.toml --for 80ms
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "demo"
+
+[sim]
+quantum_ns = 1000
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_dual_core.elf"
+
+[cpu1]
+elf = "../../fixtures/elf/rust_dual_core.elf"

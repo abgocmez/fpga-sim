@@ -70,4 +70,42 @@ the firmware shows up.
   (`native_ps_diff::five_processes_give_one_trace_digest`).
 * Anything the native engine does not drive yet: LEDs, Pmod devices, HDMI, Ethernet. The examples
   compared here use only the UART, SLCR, the private and global timers, TTC and the GIC.
+* Firmware that needs a PL, Thumb or VFP: refused by the native engine (ADR-033). The MMU is
+  implemented (ADR-030, `cpu-a9::mmu`); see the BSP section below.
+
+## Xilinx BSP ELFs on the native engine (2026-10-17)
+
+No `fixtures/bsp/bsp_*.elf` runs to its UART output natively yet. Probed with `bsp_hello_world.elf`
+(`backends.ps = "native"`, 15 ms): the core parks in **Abort mode** after the first instruction
+that reads a device window the native bus does not map. The faulting access is the `ldr r1, [r0]`
+at 0x100148 (`CheckEFUSE`), with r0 = 0xF800D010. The Xilinx abort handler then spins, so the
+native run prints nothing and reports no fault. That is a missing device model, not the MMU: the
+BSP enables no translation before this point. The BSP ELFs also contain VFP instructions
+(`vmrs`/`vmsr fpexc`, `vmov`) and the MMU setup code (TTBR0, DACR, SCTLR writes), so a run past
+the device reads is limited by VFP as well. No BSP ELF was compared with QEMU here.
 * Firmware that needs a PL or the MMU, Thumb or VFP: refused by the native engine (ADR-033).
+
+## Batch 2 blocks on the native engine (ps-periph)
+
+The new register models (GPIO, SPI0/1, I2C0/1, XADC, devcfg, CAN0/1, the watchdog reset request)
+are checked by the firmware-derived tests in `crates/ps-periph/tests/conf_*.rs` and the BSP
+sequences in `bsp_periph2.rs`. They do not run the firmware on the native engine: the conformance
+firmware is run by the QEMU tests only. The table in this file is unchanged; see *Native PS
+peripherals, batch 2* in `STATUS.md` for the per-block results (GPIO 12/12, SPI 28/28, I2C 22/22,
+XADC 15/15 checks PASS; the XADC temperature finding is documented there).
+Running the BSP driver ELFs on the native engine was not attempted (ADR-033 refuses VFP and MMU).
+
+## Two cores (`[cpu1]`)
+
+Checked with `examples/dual-core-native` and `examples/dual-core-qemu`: the same ELF
+(`firmware/dual_core_demo`) on both cores.
+
+| Item | QEMU | Native | Difference |
+|---|---|---|---|
+| UART1 (core 0): the lines and `RESULT: ALL PASS` | printed | printed | none (compared byte for byte) |
+| UART0 (core 1): its lines | discarded (`-serial null`) | printed | pinned: native-only; the test asserts QEMU reads nothing on port 0 |
+| Core 1 start | the loader sets its PC; `_start` parks it on the mailbox | boot-ROM loop at 0xFFFFFE00 polls the mailbox | both reach the same entry through the mailbox |
+| Timing | instruction count (icount) | one cycle per instruction, round-robin batches of 8 | not compared (F0 on both) |
+
+The native half always runs; the QEMU half skips without the Xilinx QEMU. Five processes give one
+trace digest (`cli/tests/native_ps_diff::dual_core_five_processes_give_one_trace_digest`).

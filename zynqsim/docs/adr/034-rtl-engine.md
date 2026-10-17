@@ -18,9 +18,8 @@ trusted once it agrees with the vendor simulator on something real.
    (`rtl_frontend::consteval::Ctx`). It has its own flattening elaboration, because the front end's
    `Design` has no bodies. The engine's `Design` is a flat netlist of signals, processes and
    functions (`ir.rs`).
-2. **Values.** Two-state. Every signal is a `u128` masked to its width; declarations wider than 128
-   bits are refused with a diagnostic naming the signal. x and z in a literal read as 0. This is a
-   deliberate limit, not a 4-state model (`docs/RTL_SUBSET.md`).
+2. **Values.** Superseded by ADR-036: the engine is 4-state (0, 1, X, Z). Declarations wider than
+   128 bits are still refused with a diagnostic naming the signal.
 3. **Sizing.** Each expression is lowered at a context width and signedness (`lower.rs`). Leaves are
    extended with the context signedness; comparisons share one operand width; shifts take the left
    operand's width; reductions and logical operators are one bit. The rules are tested against an

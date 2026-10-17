@@ -131,3 +131,31 @@ SMC controller, SDIO0/1) are in `mem_sys::IOP_BLOCKS` and are unmapped here.
 * Snapshots cover RAM only; a determinism test re-runs a scripted session and compares hashes.
 * Adding a block means one `Device` implementation, one entry in `mem_sys::ZYNQ_MAP` or a block
   table, and an attachment in `ps_periph::zynq_system`.
+
+## Appendix (batch 2): GPIO, SPI, I2C, XADC, devcfg, CAN, watchdog reset
+
+Added the models listed in `STATUS.md` (*Native PS peripherals, batch 2*) as new files of
+`ps-periph`: `gpio.rs`, `spi.rs`, `i2c.rs`, `devcfg.rs` (devcfg and XADC share one window), and
+`can.rs`, plus a watchdog reset request in `timers.rs` and `mpcore.rs`. Each is attached in
+`system.rs::zynq_system`; `PsHandles` now carries the shared handles the host uses (GPIO pins,
+SPI/I2C peers, CAN frames, XADC temperature, MPCore reset requests). The address map entries for
+GPIO, SPI0/1, I2C0/1 and CAN0/1 change from "not modelled" to "peripheral".
+
+Decisions:
+
+* **GPIO pin range.** The request listed four banks covering pins 0..117. The register layout
+  (`conf_gpiops`, `xgpiops`) has four banks of at most 32 bits, widths 16/16/22/32, so pins 0..85
+  are modelled and 86..117 are refused. `VERIFY:` against UG585.
+* **SPI and I2C host hooks** are traits (`SpiPeer`, `I2cPeer`) rather than a dependency on
+  `crates/devices`, so `ps-periph` stays free of that crate. Adapting the TMP2/ADT7420 model is
+  left to the integrator.
+* **Watchdog reset** is a queued event (`take_wdt_resets`). The model does not reset anything
+  itself: the engine must turn a nonzero result into a system reset.
+* **BSP sequences.** The devcfg SelfTest and the CAN self-test register order were disassembled
+  from `fixtures/bsp/bsp_devcfg_selftest.elf` and `bsp_canps_polled.elf` with the Vitis
+  `arm-none-eabi-objdump`. The CAN mode codes (1, 2, 4, 8, 16) are the ones the driver decodes.
+* **XADC data format.** UG480 puts the 12-bit sensor code in bits 15:4. The firmware's temperature
+  check applies its formula to the unshifted value and fails; `conf_xadcps` test documents this.
+
+Not done: the GIC IDs of CAN (19, 46) and devcfg (40) are `VERIFY:`; the BSP GPIO/SPI/I2C driver
+self tests were not disassembled; the native engine cannot run any BSP ELF (ADR-033).

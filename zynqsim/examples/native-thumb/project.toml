@@ -1,0 +1,23 @@
+# The Thumb-2 firmware on the native PS engine (ADR-030, ADR-033): firmware/thumb_hello is built
+# for thumbv7a-none-eabi, so every instruction it runs is Thumb or Thumb-2. The UART text is the
+# same on Xilinx QEMU (examples/native-thumb with backends.ps = "qemu"): the differential test in
+# crates/cli/tests/native_thumb_diff.rs compares them. PS only: no PL, core 0 only.
+#
+#   zynqsim run --project examples/native-thumb/project.toml --for 5ms
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "native"
+pl = "demo"          # no PL: the native PS attaches none
+
+[sim]
+quantum_ns = 1000
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/thumb_hello.elf"

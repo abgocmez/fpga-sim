@@ -1,0 +1,15 @@
+[package]
+name = "thumb_hello"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Thumb-2 firmware for the native PS engine (examples/native-thumb)"
+
+# Its own workspace: built for thumbv7a-none-eabi (Thumb code), not the A32 firmware workspace.
+[workspace]
+
+[profile.release]
+opt-level = "s"
+panic = "abort"
+lto = true
+codegen-units = 1

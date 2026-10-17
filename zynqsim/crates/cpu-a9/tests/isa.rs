@@ -434,13 +434,19 @@ fn cp15_identification_control_and_maintenance_registers() {
 }
 
 #[test]
-fn enabling_the_mmu_stops_the_core_rather_than_running_untranslated() {
+fn enabling_the_mmu_with_no_tables_takes_a_prefetch_abort() {
+    // SCTLR.M is set with TTBR0 = 0, so the first-level walk reads address 0, which this
+    // bus does not map: a synchronous external abort on a first-level walk (IFSR 0x0C).
+    // The MMU itself is tested in `tests/mmu.rs`.
     let mut m = machine(PROG_MMU);
     m.run(2);
-    match m.step() {
-        StepResult::Unimplemented { pc, .. } => assert_eq!(pc, CODE + 8),
-        other => panic!("expected Unimplemented, got {other:?}"),
-    }
+    assert_eq!(m.event(), Some(Event::PrefetchAbort { addr: CODE + 8 }));
+    assert_eq!(
+        m.cpu.cp15(0, 5, 0, 1),
+        Some(0x0C),
+        "IFSR: walk, first level"
+    );
+    assert_eq!(m.cpu.cp15(0, 6, 0, 2), Some(CODE + 8), "IFAR");
 }
 
 #[test]
@@ -455,29 +461,31 @@ fn exclusive_monitor_succeeds_once_and_fails_after_a_clear() {
 }
 
 #[test]
-fn vfp_is_reported_unimplemented_and_nothing_changes() {
-    let mut m = machine(PROG_VFP);
-    let before = (m.cpu.cpsr(), m.cpu.reg(0));
+fn half_precision_vcvt_is_reported_unimplemented_and_nothing_changes() {
+    // VFP proper is implemented (see vfp_isa.rs). With FPEXC.EN clear (reset state) the access
+    // check comes first, so VCVTB is UNDEFINED; once enabled it is reported Unimplemented.
+    let mut m = machine(&[0xEEB2_1A40]); // vcvtb.f32.f16 s2, s0
     match m.step() {
-        StepResult::Unimplemented { pc, insn } => {
-            assert_eq!(pc, CODE);
-            assert_eq!(insn, 0xEE00_0A10, "vmov s0, r0");
-        }
-        other => panic!("expected Unimplemented, got {other:?}"),
+        StepResult::Executed {
+            event: Some(cpu_a9::Event::Undefined),
+            ..
+        } => {}
+        other => panic!("expected Undefined while VFP is disabled, got {other:?}"),
     }
-    assert_eq!((m.cpu.cpsr(), m.cpu.reg(0)), before);
-    assert_eq!(m.cpu.pc(), CODE, "the PC did not advance");
 }
 
 #[test]
-fn bx_to_an_odd_address_enters_thumb_which_is_reported() {
+fn bx_to_an_odd_address_enters_thumb_and_runs_it() {
+    // The interworking itself: BX to an odd address sets T and the Thumb instruction at the
+    // even address runs (`movs r1, #5`, halfword 0x2105, planted at 0x2000).
     let mut m = machine(PROG_BXODD);
+    m.bus.load(0x2000, &0x2105u16.to_le_bytes());
     m.run(2);
     assert_ne!(m.cpu.cpsr() & 0x20, 0, "T set");
-    match m.step() {
-        StepResult::Unimplemented { pc, .. } => assert_eq!(pc, 0x2000),
-        other => panic!("expected Unimplemented, got {other:?}"),
-    }
+    assert_eq!(m.cpu.pc(), 0x2000);
+    m.run(1);
+    assert_eq!(m.cpu.reg(1), 5, "the Thumb MOVS ran");
+    assert_eq!(m.cpu.pc(), 0x2002);
 }
 
 #[test]

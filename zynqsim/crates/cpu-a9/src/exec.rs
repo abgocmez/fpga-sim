@@ -18,6 +18,9 @@ impl Cpu {
         if !self.cond_passed(cond) {
             return Flow::Done;
         }
+        if crate::vfp::is_fp_space(insn) {
+            return self.vfp_insn(bus, insn);
+        }
         match (insn >> 25) & 7 {
             0 => self.space_000(bus, insn),
             1 => self.space_001(insn),
@@ -36,14 +39,14 @@ impl Cpu {
                 if insn & (1 << 24) != 0 {
                     self.svc(insn)
                 } else {
-                    self.coproc(insn)
+                    self.coproc(bus, insn)
                 }
             }
         }
     }
 
     /// The condition code check of the ARM ARM (`cond` is not 0b1111 here).
-    fn cond_passed(&self, cond: u32) -> bool {
+    pub(crate) fn cond_passed(&self, cond: u32) -> bool {
         let (n, z, c, v) = (
             self.cpsr & N_BIT != 0,
             self.cpsr & Z_BIT != 0,
@@ -452,7 +455,7 @@ impl Cpu {
     }
 
     /// Coprocessor register transfers (MRC and MCR) to CP15. Everything else is not modelled.
-    fn coproc(&mut self, insn: u32) -> Flow {
+    fn coproc(&mut self, bus: &mut dyn Bus, insn: u32) -> Flow {
         if insn & 0x10 == 0 {
             return Flow::Unimpl; // CDP
         }
@@ -477,6 +480,15 @@ impl Cpu {
             }
         } else {
             let v = self.reg_or_pc(rt, 4);
+            // TLB maintenance (c8) and address translation (c7, c8) live in mmu.rs.
+            if opc1 == 0 && crn == 8 {
+                self.tlb_op(crm, opc2, v);
+                return Flow::Done;
+            }
+            if opc1 == 0 && crn == 7 && crm == 8 {
+                self.ats(bus, opc2, v);
+                return Flow::Done;
+            }
             if !self.cp15.write(opc1, crn, crm, opc2, v) {
                 return Flow::Unimpl;
             }
@@ -486,6 +498,9 @@ impl Cpu {
 
     /// Instructions in the unconditional space (cond = 0b1111).
     fn uncond(&mut self, insn: u32) -> Flow {
+        if crate::vfp::is_fp_space(insn) {
+            return self.undefined();
+        }
         if insn & 0xFFFF_FFF0 == 0xF57F_F010 {
             self.excl = None; // CLREX
             return Flow::Done;

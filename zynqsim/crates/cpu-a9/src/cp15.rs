@@ -1,10 +1,12 @@
 //! System control coprocessor (CP15) registers of one Cortex-A9 core.
 //!
-//! Only the registers the bare-metal firmware and the Xilinx BSP touch are modelled. Cache and
-//! TLB maintenance operations are accepted as no-ops (caches are not modelled: the bus is
-//! coherent). Any other encoding is reported as unknown so the caller sees it.
+//! Only the registers the bare-metal firmware and the Xilinx BSP touch are modelled. Cache
+//! maintenance operations are accepted as no-ops (caches are not modelled: the bus is coherent).
+//! TLB maintenance (c8) and the address translation operations (c7, c8) are handled by
+//! `mmu.rs`, which also reads and writes PAR. Any other encoding is reported as unknown so the
+//! caller sees it.
 
-/// SCTLR.M: MMU enable. The core refuses to run with it set (no MMU yet).
+/// SCTLR.M: MMU enable (translation tables are walked when set; see `mmu.rs`).
 pub(crate) const SCTLR_M: u32 = 1 << 0;
 /// SCTLR.A: strict alignment checking.
 pub(crate) const SCTLR_A: u32 = 1 << 1;
@@ -36,6 +38,8 @@ pub(crate) struct Cp15 {
     pub(crate) ifsr: u32,
     pub(crate) dfar: u32,
     pub(crate) ifar: u32,
+    /// Physical address register (the result of an ATS operation).
+    pub(crate) par: u32,
     pub(crate) vbar: u32,
     pub(crate) csselr: u32,
     pub(crate) contextidr: u32,
@@ -58,6 +62,7 @@ impl Cp15 {
             ifsr: 0,
             dfar: 0,
             ifar: 0,
+            par: 0,
             vbar: 0,
             csselr: 0,
             contextidr: 0,
@@ -84,6 +89,7 @@ impl Cp15 {
             (0, 5, 0, 1) => self.ifsr,
             (0, 6, 0, 0) => self.dfar,
             (0, 6, 0, 2) => self.ifar,
+            (0, 7, 4, 0) => self.par,
             (0, 12, 0, 0) => self.vbar,
             (0, 13, 0, 1) => self.contextidr,
             (0, 13, 0, 2) => self.tpidr[0],
@@ -97,7 +103,9 @@ impl Cp15 {
     /// Writes `(opc1, CRn, CRm, opc2)`; `false` if the register is not modelled.
     pub(crate) fn write(&mut self, opc1: u32, crn: u32, crm: u32, opc2: u32, v: u32) -> bool {
         match (opc1, crn, crm, opc2) {
-            // Cache and TLB maintenance: accepted, no state.
+            // Cache maintenance and the ATS operations (routed by `mmu.rs` before this call):
+            // accepted, no state. PAR is writable.
+            (0, 7, 4, 0) => self.par = v,
             (0, 7, _, _) | (0, 8, _, _) => {}
             (2, 0, 0, 0) => self.csselr = v,
             (0, 1, 0, 0) => self.sctlr = v,
@@ -119,5 +127,26 @@ impl Cp15 {
             _ => return false,
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Cp15;
+
+    #[test]
+    fn mpidr_carries_the_core_number_and_actlr_keeps_the_smp_bit() {
+        for id in 0..2u32 {
+            let cp = Cp15::new(id);
+            assert_eq!(
+                cp.read(0, 0, 0, 5),
+                Some(0x8000_0000 | id),
+                "MPIDR of core {id}"
+            );
+        }
+        let mut cp = Cp15::new(1);
+        // ACTLR bit 6 is SMP: the core joins the coherent cluster when it is set.
+        assert!(cp.write(0, 1, 0, 1, 1 << 6));
+        assert_eq!(cp.read(0, 1, 0, 1), Some(1 << 6));
     }
 }

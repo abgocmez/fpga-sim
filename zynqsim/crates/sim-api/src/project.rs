@@ -1057,6 +1057,7 @@ impl Project {
                 let debug = self.debug.clone().unwrap_or_default();
                 let spec = crate::NativeSpec {
                     elf,
+                    cpu1: self.cpu1.as_ref().map(|c| resolve(base, &c.elf)),
                     board_def,
                     quantum_ns: self.sim.quantum_ns,
                     breakpoints: debug.breakpoints.clone(),
@@ -1270,13 +1271,6 @@ impl Project {
                          (ADR-035); use `backends.ps = \"qemu\"`",
                     ));
                 }
-            }
-            if self.cpu1.is_some() {
-                d.push(err(
-                    "cpu1.elf",
-                    "the native PS runs core 0 only: core 1 is parked as the boot ROM leaves it, \
-                     so remove `[cpu1]` (two native cores are not implemented yet)",
-                ));
             }
             if !self.devices.is_empty() {
                 d.push(err(

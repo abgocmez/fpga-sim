@@ -47,7 +47,7 @@ at the baud rate by `ps-periph`, as on hardware; QEMU does not pace.
 
 ### Faults and breakpoints
 
-* An instruction the core does not implement (Thumb, VFP/NEON, MMU, the rest listed in ADR-030)
+* An instruction the core does not implement (VFP/NEON, MMU, the rest listed in ADR-030)
   stops the engine with a message naming the pc, the symbol and source line when known, the
   word, and the cycle. The instruction did not run; no state changed. The fault is sticky: later
   runs report it again. Nothing is computed wrongly.
@@ -88,10 +88,38 @@ workspace `Cargo.toml` builds these three crates at opt-level 3 in the dev profi
 
 ### Not implemented (stub, reported as such)
 
-Thumb, VFP and NEON, the MMU and TLB walk, two cores, a PL (remote-port attachment), board pins,
+VFP and NEON, the MMU and TLB walk, two cores, a PL (remote-port attachment), board pins,
 LEDs and switches, Pmod devices, HDMI and audio, Ethernet, screenshots, watchpoints,
 `set_quantum`, BOOT.BIN, OCM low remap, caches and cycle-accurate timing. `docs/STATUS.md` lists
 each with its status.
+
+## Two cores (`[cpu1]`)
+
+* **Cores.** `[cpu1] elf` adds a second `cpu-a9` core (MPIDR affinity 1). Without it core 1 is not
+  instantiated. Both cores share one `SystemBus`, so memory is coherent by construction; the SCU
+  snoop filter is not modelled.
+* **Boot ROM parking.** Core 1 resets to `0xFFFFFE00`, a four-instruction-plus-literal loop written
+  into the top of the on-chip RAM (`VERIFY:` the real ROM mapping): `wfe`, load the word at
+  `0xFFFFFFF0`, return to `wfe` while it is zero, otherwise `bx` to it. The `[cpu1]` ELF is loaded
+  into memory but not started: core 0 starts it by writing the entry address to `0xFFFFFFF0` and
+  sending an event. The engine does not write the mailbox itself (no FSBL is modelled).
+* **Scheduler.** Device time advances in windows of `BATCH_CYCLES` (128) cycles, as before. Within a
+  window the core with the fewest elapsed cycles runs next, for at most `SCHED_BATCH` (8) cycles,
+  ties to core 0: round robin, deterministic for the same inputs. A waiting core spends its cycles
+  waiting, so time moves on for both. The batch size is written in the trace start marker. With one
+  core the schedule and the trace are unchanged (the digest of `native-hello` at 5 ms was checked
+  before and after).
+* **Cross-core effects, at the step that causes them.** A store clears the other cores' exclusive
+  reservations on the 8-byte granule it hits (`EXCL_GRANULE`, `VERIFY:` the Cortex-A9 granule). SEV
+  sets the event register of every core. A store to the mailbox is traced. Interrupt lines are
+  re-sampled for every core after a device access or a tick.
+* **Breakpoints and registers.** Breakpoints are global addresses; a stop names the core that hit
+  one (`core N stopped`). `cpu_regs` answers for core 0 and core 1 when it exists.
+* **Snapshots and state.** Re-execution as before; the state hash covers both cores' registers,
+  event and exclusive state, their cycle counts and the tick count.
+* **Not modelled.** Cache maintenance beyond the no-op CP15 operations, SCU snoop and filtering,
+  the SLCR CPU reset bits (core 1 is never reset by software here), an FSBL, and UART0 on the QEMU
+  engine (its UART0 is `-serial null`, so core 1's console is native-only).
 
 ## Consequences
 

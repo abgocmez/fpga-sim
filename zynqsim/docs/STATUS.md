@@ -707,8 +707,8 @@ on the native engine.
 | DDRC (0xF8006000) and DEVCFG (0xF8007000, XADC not included) | stub | named stubs, read zero (`ps_periph::system`) |
 | Not modelled, unmapped and logged: DMAC, SWDT, SMC, USB, I2C, SPI, CAN, GPIO, GEM, QSPI controller, SDIO, XADC | not-planned for P5 | `mem_sys::ZYNQ_MAP` / `IOP_BLOCKS` list them; a native access to them is an unmapped access |
 | Comparison of these models with QEMU or with a board (P5 exit: differential tests) | not-planned here | the QEMU-differential runs need the native CPU core (other engineer) |
-The native ARMv7-A core `crates/cpu-a9` (ADR-030). Integer A32 only; the MMU, Thumb, VFP and NEON are
-`stub`. Every row below names its evidence; the firmware rows are per image in ADR-030.
+The native ARMv7-A core `crates/cpu-a9` (ADR-030). Integer A32 and Thumb/Thumb-2 (`thumb.rs`); the MMU,
+VFP and NEON are `stub`. Every row below names its evidence; the firmware rows are per image in ADR-030.
 
 | Feature | Status | Evidence / note |
 |---|---|---|
@@ -727,9 +727,21 @@ The native ARMv7-A core `crates/cpu-a9` (ADR-030). Integer A32 only; the MMU, Th
 | WFI, WFE, SEV, interrupt wake from WFI while masked | verified | `isa::wfi_waits_then_resumes_after_the_wakeup_even_when_masked`, `isa::sev_wakes_wfe_and_the_event_register_is_consumed` |
 | CP15: MIDR, MPIDR, ACTLR, cache and TLB no-ops | verified (the other registers implemented-untested) | `isa::cp15_identification_control_and_maintenance_registers` |
 | UDIV, SDIV are undefined (no integer divide on Cortex-A9) | verified for the permanently undefined encoding | `isa::undefined_instruction_takes_the_undef_exception` |
-| MMU: setting SCTLR.M stops the core, never runs untranslated | verified (no translation exists) | `isa::enabling_the_mmu_stops_the_core_rather_than_running_untranslated` |
+| MMU, short-descriptor VMSA: sections, supersections, coarse tables, large and small pages, TTBR0/1 split, DACR domains, AP/APX/XN/PXN, XP=0 subpages, DFSR/IFSR/DFAR/IFAR status codes with WnR, LDRT/STRT, data and prefetch abort entry and retry | verified (against the tests' own reading of the ARM ARM; not against hardware) | `cpu-a9/tests/mmu.rs` (28 tests, incl. the permission matrix and a property test against an independent reference walk); `isa::enabling_the_mmu_with_no_tables_takes_a_prefetch_abort` |
+| MMU TLB: invalidate by TLBIALL, TLBIMVA, TLBIMVAA, TLBIASID (c8); stale until invalidated, faults not cached | verified | `mmu::the_tlb_serves_the_old_walk_until_it_is_invalidated`, `mmu::tlb_invalidate_operations_remove_what_their_operand_names`, `mmu::a_remapped_page_is_seen_only_after_tlb_maintenance` |
+| MMU ATS1CPR/CPW/CUR/CUW and PAR | verified (PAR fault FST simplified: no domain) | `mmu::ats_writes_par_for_a_mapped_and_for_an_unmapped_address` |
+| MMU caches: TEX/C/B/S/NS recorded only; TEX remap, access flag, LPAE, Hyp not modelled | not-planned here (TEX/C/B recorded) | `mmu::texture_cacheability_and_sharing_bits_are_recorded_for_every_descriptor_type` |
 | Thumb (T=1, BX to an odd address): reported, not run | stub | `isa::bx_to_an_odd_address_enters_thumb_which_is_reported` |
+| MMU: setting SCTLR.M stops the core, never runs untranslated | verified (no translation exists) | `isa::enabling_the_mmu_stops_the_core_rather_than_running_untranslated` |
+| Thumb and Thumb-2 (T=1): 16-bit shifts, ALU, high registers, loads and stores, PUSH and POP, LDM and STM, branches, CBZ and CBNZ, SVC, BKPT, hints, CPS, SXT, UXT, REV (listed classes) | verified | `cpu-a9/tests/thumb.rs::every_corpus_group_decodes_and_runs_without_unimplemented` (every group of `thumb_groups.s` decodes and runs without Unimplemented), `shifts_and_adds_*`, `add_and_subtract_*`, `compare_and_branch_on_zero`, `push_and_pop_*`, `stm_writes_back_*`, `tbb_and_tbh_*` |
+| Thumb-2 32-bit: modified and shifted immediates, shift by register, MOVW, MOVT, ADDW, SUBW, ADR, bitfields, MUL/MLA/MLS/long multiplies, LDR/STR/LDRB/LDRH/LDRSB/LDRSH/LDRD/STRD all modes, LDM/STM/PUSH/POP.W, LDREX family, TBB/TBH, MRS/MSR, DMB/DSB/ISB, CLREX, MRC/MCR p15, B.W, BL, BLX, SSAT, USAT, extends with rotation | verified | `cpu-a9/tests/thumb_props.rs` (9 properties, 10000 seeded cases each: every class against its A32 twin, or against the same operation in A32 form), `thumb.rs` corpus smoke |
+| Thumb IT blocks (ITSTATE advance, flags not set inside IT, state cleared on exception entry), interworking (BX, BLX, POP {pc}, LDR pc, ALU writes to PC), exception returns with the T bit | verified | `cpu-a9/tests/thumb.rs::it_block_*`, `flag_setting_16bit_*`, `an_svc_inside_it_*`, `bx_and_blx_*`, `blx_register_*`, `pop_into_pc_*`, `ldr_into_pc_*`, `alu_writes_to_pc_*` |
+| Thumb divides (UDIV, SDIV), undefined encodings | verified (undefined on the Cortex-A9) | `cpu-a9/tests/thumb.rs::divides_are_undefined_on_the_cortex_a9`, `undefined_thumb_instruction_*` |
+| Thumb parallel ops (SADD8 and kin), SXTB16 and UXTB16, SMLAD and kin, SMULWy, LDRT and STRT, coprocessor 10/11 in Thumb | stub (`Unimplemented`) | not decoded; reported, never guessed |
 | VFP, NEON, coprocessor 10/11 | stub (`Unimplemented`) | `isa::vfp_is_reported_unimplemented_and_nothing_changes` |
+| MMU walk, TLB, the `Translate` hook | verified (short-descriptor; see the MMU rows above) | `cpu-a9::mmu`, `cpu-a9::xlate` |
+| VFPv3-D32 scalar, transfers, loads and stores | verified | `vfp_isa::*`, `vfp_props::*` (10000 cases per operation, all rounding modes, FZ, DN; mutation-checked) |
+| VFP short vectors, VCVTB/VCVTT, NEON | stub (`Unimplemented` with a reason) | `vfp_isa::unimplemented_features_are_reported_with_a_reason` |
 | MMU walk, TLB, the `Translate` hook beyond identity | stub (identity translation only) | `Translate` / `Identity` in `cpu-a9::xlate` |
 | GIC, timers, SCU, caches, peripherals | not in this crate | `mem-sys`, `ps-periph` (other crates) |
 | Rust firmware: `rust_hello.elf` runs to completion, UART text equals QEMU | verified | `cpu-a9/tests/rust_firmware.rs::rust_hello_runs_to_completion_and_prints_its_message`, `cli/tests/cpu_a9_diff.rs::rust_hello_prints_the_same_text_in_qemu_and_in_the_interpreter` (skips without QEMU) |
@@ -739,7 +751,7 @@ The native ARMv7-A core `crates/cpu-a9` (ADR-030). Integer A32 only; the MMU, Th
 
 ### The native engine (`backends.ps = "native"`, ADR-033)
 
-PS only: core 0 runs `[cpu0] elf`, core 1 stays parked, no PL is attached. Fidelity F0: one
+PS only: core 0 runs `[cpu0] elf`; with `[cpu1] elf` core 1 runs too (parked in the boot-ROM loop until released through the mailbox, see the dual-core rows). No PL is attached. Fidelity F0: one
 instruction per cycle at 666.67 MHz (1.5 ns), not cycle-accurate. Differences from QEMU are
 pinned in `docs/conformance/native-ps.md`.
 
@@ -765,19 +777,31 @@ pinned in `docs/conformance/native-ps.md`.
 | Project validation: `[cpu1]`, `backends.pl` other than `demo`, `[native]`, `[devices]`, `[media]`, `boot_bin` refused with the reason | verified | `zynqsim::native_ps_diff::a_native_project_with_a_second_core_is_refused_with_the_reason`; the rest in `sim-api::native_ps::tests::validation_*` |
 | CLI: `zynqsim run` on a native project; `inspect` lists `native` as an available PS | verified | `zynqsim::native_ps_diff::{five_processes_give_one_trace_digest, inspect_lists_the_native_ps_as_available}`; `examples/native-hello` |
 | GUI project window: "native Rust" PS choice | implemented-untested | `crates/gui/src/app/project.rs`, `loader.rs`; no GUI test drives it |
-| Thumb, VFP and NEON, the MMU | stub | reported as `Unimplemented`; the engine stops with a message (see the cpu-a9 table above) |
+| Thumb, VFP and NEON | stub | reported as `Unimplemented`; the engine stops with a message (see the cpu-a9 table above). The MMU is implemented (`cpu-a9` table) |
+| Thumb-2 firmware (`examples/native-thumb`, `firmware/thumb_hello` built for `thumbv7a-none-eabi`): 13 checks pass natively and the UART text equals QEMU's | verified | `zynqsim::native_thumb_diff::{the_thumb_firmware_passes_its_checks_on_the_native_ps, the_thumb_firmware_prints_the_same_text_on_qemu_and_natively}` |
+| VFP, NEON, the MMU | stub | reported as `Unimplemented`; the engine stops with a message (see the cpu-a9 table above) |
 | PL attachment through remote-port (native PL models, RTL) | not-planned | out of scope for P5; `backends.pl` must be `demo` |
-| Dual core (`[cpu1]`) | not-planned | refused by validation: core 1 is parked |
+| Dual core (`[cpu1]`): two `cpu-a9` cores, MPIDR 0/1, boot-ROM parking loop at 0xFFFFFE00 polling the mailbox 0xFFFFFFF0, release by a store plus SEV, round-robin scheduler (batch `SCHED_BATCH` = 8 cycles per core per turn, recorded in the trace start marker), core-1 stops and registers, one trace digest | verified (model, F0) | `native_ps::tests::{core1_stays_in_the_boot_rom_until_core0_writes_the_mailbox, the_cores_interleave_round_robin_and_run_the_same_cycles, cpu_regs_answers_for_core1_only_when_it_exists}`; `cli/tests/native_ps_diff::{dual_core_five_processes_give_one_trace_digest, dual_core_demo_prints_the_same_uart1_text_on_qemu_and_natively, a_native_project_with_a_second_core_is_accepted}`. Core 1's UART0 text is native-only (see below) |
+| Global exclusive monitor: a store by one core clears another core's reservation on its 8-byte granule (VERIFY), STREX from the other core fails | verified (model) | `native_ps::tests::a_store_by_another_core_clears_the_exclusive_reservation_of_its_granule` (store to the word and to the same granule fails, the next granule succeeds) |
+| SEV from one core sets the event register of every core; WFE waits for it | verified (model) | `native_ps::tests::sev_on_core0_wakes_a_wfe_on_core1`, `native_ps::tests::core1_stays_in_the_boot_rom_until_core0_writes_the_mailbox` |
+| WFI wakes on a pending SGI with IRQs masked; SGI filters (self, others, target list) and SGI-versus-PPI priority | verified (model) | `native_ps::tests::an_sgi_from_core0_wakes_a_wfi_on_core1_with_irqs_masked`, `ps_periph::gic::tests::sgi_filters_pick_the_cores_and_priorities_order_sgi_against_a_ppi` |
+| SCU control, configuration, invalidate-all (counted, no tag RAM), filter and access registers | implemented-untested (model; SCU snoop not modelled) | `ps_periph::mpcore::tests::{scu_control_config_and_invalidate_all, scu_filter_and_access_registers_store_their_fields}`. The SCU enable bit does not gate the cores; ACTLR.SMP is stored (`cpu-a9::cp15::tests`) |
+| Two-core snapshot restores both cores (re-execution, verified against digest and state hash) | verified, by re-execution | `native_ps::tests::a_two_core_snapshot_restores_both_cores` |
+| Two-core session: one trace digest in five runs in one process, and across five processes | verified | `native_ps::tests::a_two_core_session_gives_one_trace_digest_five_times`, `cli/tests/native_ps_diff::dual_core_five_processes_give_one_trace_digest` |
+| Dual-core demo firmware (`firmware/dual_core_demo`): mailbox release, LDREX/STREX spinlock counter 2×500, 50 WFE/SEV ping-pong rounds, SGI 1 to core 1, `RESULT: ALL PASS` | verified (native and QEMU, UART1) | `cli/tests/native_ps_diff::dual_core_demo_prints_the_same_uart1_text_on_qemu_and_natively` (QEMU half skips without Xilinx QEMU) |
+| Core 1's UART0 text (`uart_read` port 0) on the QEMU engine | not observable here | QEMU runs UART0 to `-serial null`; a native-only difference, pinned in the same test |
+| Boot ROM: only the parking loop exists (no FSBL, no boot modes, no CPU1 reset through SLCR `A9_CPU_RST_CTRL`); the core-1 entry is written by the guest, not by the engine | stub | ADR-033 "Two cores" |
+| Cache coherence beyond one shared memory, SMP-specific timing, interrupts to core 1 from core 0 outside the GIC model | not-planned | F0 model |
 | Board switches, buttons, LEDs; Pmod devices; HDMI and audio; Ethernet; screenshots on the native PS | not-planned | refused with the reason; `qemu` has them |
 | Cycle-accurate timing, caches, DDR timing, bus contention | not-planned | F0 only, by design |
 | Snapshot by copying core and RAM state | not-planned | ADR-033 explains why re-execution is used |
-| Two cores, SMP, the boot ROM | not-planned | core 1 stays parked |
+| SMP cache maintenance, a real boot ROM image, FSBL core-1 start | not-planned | see the dual-core rows above |
 
 ## Native RTL (P6, optional)
 
 The front end (`crates/rtl-frontend`) reads Verilog-2001 and the synthesizable SystemVerilog subset
 without any external tool, and elaborates the hierarchy. The native engine (`crates/rtl-engine`, ADR-034)
-simulates the subset on its own flattened netlist, 2-state and up to 128 bits. It is **not** selectable
+simulates the subset on its own flattened netlist, 4-state (0, 1, X, Z; ADR-036) and up to 128 bits. It is **not** selectable
 as a backend yet (`backends.pl = "rtl-native"` is refused). "Verified" means a named test checks the
 behaviour; for the engine, one design is compared with Vivado XSim and six corpus designs with their own
 self-checking testbenches. Those are the only evidence that the results match a real simulator.
@@ -813,7 +837,8 @@ self-checking testbenches. Those are the only evidence that the results match a 
 | Native engine as an AXI4-Lite slave: `RtlModule` implements `pl_native::RegisterBlock`; each register access is a handshake over clock cycles of the engine's clock | verified | `rtl-engine` `math_ip::*` (7 tests against `pl_native::MathIp`, the firmware golden model; the RTL decodes 4 address bits, so offset 0x10 aliases to 0x0, pinned as a known difference) |
 | Native engine vs Vivado XSim: `my_math_ip` answers the same register stimulus with the same values (through `XsimPl`) | verified (one design, Windows, XSim) | `rtl-engine` `xsim_diff::my_math_ip_registers_agree_between_xsim_and_the_engine` |
 | Native engine on the corpus (`tests/rtl`, self-checking testbenches printing `CORPUS_PASS`): picorv32, serv, Forencich LFSR, UART and AXI stream FIFO, dpretet async FIFO **pass** (6 of 9); uriscv refused (hierarchical task call), pulp-common-cells refused (package-typed parameters), vivado-funcsim refused (needs a netlist that is not in the repository) | verified (6 pass, 3 refused) | `rtl-engine` `corpus::corpus_results_are_pinned_and_written_to_docs`; table in `docs/CORPUS_NATIVE.md` |
-| Native engine: 4-state (X and Z), `x`/`z` comparisons | not-planned for this subset (2-state by decision, ADR-034) | `docs/RTL_SUBSET.md` |
+| Native engine: 4-state values (X, Z) with the IEEE 1364 operator tables, `casez`/`casex`, X-aware edges, net resolution of continuous drivers, uninitialised X, `$display` x/z digits, VCD x/z, `get4`/`set4` | verified (Rust tests, and an X-propagation testbench of about 35 checks that agrees with XSim) | `rtl-engine` `fourstate::*` (30 tests: operator tables written from IEEE, resolution, casez/casex, edges, counter without reset, initial blocks, tri-state bus, known-input and X-soundness properties, formatting, snapshot and hash) |
+| Native engine: 4-state differences from a commercial simulator still open: drive strength, `wand`/`wor`, `inout`, X-propagation beyond the one testbench | not-verified | `docs/RTL_SUBSET.md` (native engine limits); the differential is `rtl-engine` `xprop_diff::x_propagation_testbench_agrees_between_xsim_and_the_engine` |
 | Native engine: `#` delays on intra-assignments and on continuous assigns | implemented-untested | `elab`/`lower` emit `Delay` before the assignment; no test |
 | Native engine: SystemVerilog beyond the subset (interfaces, classes, packages, assertions, `fork`, `disable`, DPI, hierarchical references in expressions) | stub: refused by name | `docs/RTL_SUBSET.md` |
 | Native engine: VHDL, UNISIM and netlists | stub | not started |
@@ -824,3 +849,22 @@ self-checking testbenches. Those are the only evidence that the results match a 
 (names are not resolved; a wildcard import disables the undeclared-name check), type parameters,
 multi-dimensional packed arrays, `$` queues, `fork`, real arithmetic, and the elaboration of
 instance arrays, `defparam` and hierarchical references into other instances.
+
+## Native PS peripherals, batch 2 (ps-periph, ADR-031 appendix)
+
+Register-level models for the native engine. Status words per block: **verified** means a named
+test proves the stated behaviour against the model; it never means it matches hardware. Register
+facts marked `VERIFY:` are from memory unless the note says the BSP ELF was disassembled.
+
+| Feature | Status | Evidence / note |
+|---|---|---|
+| GPIO xgpiops (0xE000A000, IRQ 52): DATA, masked LSW/MSW writes, DATA_RO, DIRM, OEN, INT_MASK/EN/DIS/STAT/TYPE/POLARITY/ANY, host pin inputs, output sink. Pins 0..85 (MIO 0..53, EMIO 54..85); pins 86..117 are **not** modelled (4 banks of 32 bits) | verified | `conf_gpiops` (12 of 12 checks PASS, incl. pin event on GIC 52), `ps-periph::gpio::tests::*` |
+| SPI0/SPI1 xspips (0xE0006000/0xE0007000, IRQ 58/81): Config, Enable, Delay, TXD/RXD 128-word FIFOs, thresholds, Slave_Idle_count, ISR/IER/IDR/IMR, manual start, chip select, `SpiPeer` host trait (NoSlave, Loopback) | verified | `conf_spips` (28 of 28 PASS: the firmware's 27 plus a no-slave variant), `ps-periph::spi::tests::*` |
+| I2C0/I2C1 xiicps (0xE0004000/0xE0005000, IRQ 57/80): master write and read transfers to an `I2cPeer`, NACK for absent devices, data FIFO, ISR/IER/IDR/IMR | verified | `conf_iicps` (22 of 22 PASS; check 18 run with an attached EEPROM), `ps-periph::i2c::tests::*`. The `crates/devices` TMP2/ADT7420 model is **not** attached (needs an adapter in the integrator's code) |
+| XADC (0xF8007100) with CMDFIFO/RDFIFO, DRP sensors, host temperature and VCCINT, INT_STS/INT_MASK/MSTS/MCTL/CFG | verified (with a documented firmware finding) | `conf_xadcps` (15 PASS). **Finding**: `firmware/conf_xadcps` check 10 applies the 12-bit formula to the 16-bit left-aligned UG480 value and is out of range; the test documents that and runs the check on `raw >> 4` |
+| Devcfg (0xF8007000): CTRL (NIDEN), LOCK/UNLOCK, CFG, INT_STS/INT_MASK, STATUS, DMA registers stored only, MCTRL. No bitstream, no DMA | verified (SelfTest sequence); register reset values `VERIFY:` | `bsp_periph2::xdcfg_selftest_passes_when_nidien_reads_back_set` (sequence from `XDcfg_SelfTest`, disassembled from `fixtures/bsp/bsp_devcfg_selftest.elf`) |
+| CAN0/CAN1 xcanps (0xE0008000/0xE0009000, IRQ 19/46 VERIFY): reset, configuration/loopback/normal/sleep/listen modes, TX/RX FIFOs, RXOK interrupt, host sink and injection | verified (BSP self test sequence) | `bsp_periph2::xcanps_selftest_sequence_passes_in_loopback` (sequence from `XCanPs_SelfTest`, `EnterMode`, `GetMode`, `Send`, `Recv`, disassembled from `fixtures/bsp/bsp_canps_polled.elf`); `ps-periph::can::tests::*`. Mode codes are the ones the BSP decodes (1 config, 2 normal, 4 loopback, 8 listen, 16 sleep) |
+| SCU watchdog (0xF8F00620, per core): watchdog mode expiry sets RESET_STATUS and queues a reset request (`MpCore::take_wdt_resets`, the host turns it into a system reset); timer mode only flags the event | verified | `bsp_periph2::a_watchdog_in_watchdog_mode_requests_one_reset_per_expiry_and_the_host_takes_it`, `...timer_mode...` |
+| A9 private timer rate 333.33 MHz (CPU clock / 2) | verified | `bsp_periph2::the_private_timer_counts_at_333_mhz`. No separate "flush-to-zero" behaviour was found in the sources, so none is modelled |
+| Determinism of the new blocks: same stimulus, same state hash at every step; a different pin level changes it | verified | `determinism_periph2::{the_same_session_gives_the_same_hash_at_every_step, a_different_stimulus_gives_a_different_hash}` |
+| Native engine running the BSP driver examples (GPIO, SPI, I2C, XADC, devcfg, CAN ELFs) | **not run** | ADR-033 refuses VFP/NEON, the MMU and Thumb; the Xilinx standalone boot uses them. The integrator must decide this |

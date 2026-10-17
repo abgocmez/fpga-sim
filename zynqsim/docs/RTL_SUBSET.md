@@ -130,8 +130,9 @@ Parsing clean is not elaboration or simulation: it means the front end found no 
 
 ## Native engine (`crates/rtl-engine`, ADR-034)
 
-The native engine simulates the subset below with no external tool. It is **2-state**: every value is
-0 or 1, and x and z in source read as 0. It is not selectable as a backend (`backends.pl = "rtl-native"`
+The native engine simulates the subset below with no external tool. It is **4-state** (ADR-036): every bit
+is 0, 1, X or Z. A net (`wire`) is Z until driven and resolves its continuous drivers (Z loses, equal values
+keep, a conflict gives X); a `reg`, `logic` or `integer` starts at X; a `bit` or `int` is 0 and never holds X or Z. It is not selectable as a backend (`backends.pl = "rtl-native"`
 is refused). Anything not listed under *Supported* is refused at elaboration with a diagnostic that
 names the construct (or the signal, for width) and its position.
 
@@ -149,7 +150,7 @@ names the construct (or the signal, for width) and its position.
 | Statements | blocking and non-blocking assignments (with `#` intra-assignment delay), `if`/`else`, `case`/`casez`/`casex` (wildcard `?`, `z` and `x` digits in labels), `for`, `while`, `repeat`, `forever`, `break`, `continue`, `begin`/`end` with names and local declarations, `#` delays, `@(...)` event controls (`posedge`, `negedge`, plain; a bit of a vector or a constant bit index), `wait (cond)`, `return` |
 | Routines | `function` (inputs; the function name is the return variable; locals including memories), `task` (inputs, outputs, `inout` copied both ways; delays allowed; inlined at each call). Not recursive: a routine that calls itself is refused |
 | Expressions | literals (sized, based, unsized, fill `'0 '1`, strings as bytes); every unary, binary, reduction, logical, ternary, concatenation, replication (a zero replication is allowed inside a wider concatenation), bit, part and indexed (`+:`, `-:`) select, on signals, memory words and ascending ranges; `$signed`, `$unsigned`, `$time`, `$clog2`, `$bits`; size casts `N'(x)` |
-| Arithmetic | width and signedness as Verilog defines them (context-determined sizing, operands extended by the expression's signedness); `>>>` is arithmetic only for a signed left operand; `/` and `%` by zero give 0 (2-state) |
+| Arithmetic | width and signedness as Verilog defines them; `>>>` is arithmetic only for a signed left operand; any unknown operand bit makes the result all X; `/` and `%` by zero give X |
 | System tasks | `$display`, `$write`, `$strobe`, `$monitor` (one display at its call), `$error`, `$warning`, `$info`, `$fatal` (display then stop), `$finish`, `$stop`, `$readmemh`, `$readmemb` (relative to the design's base directory, or the current directory); formats `%d %D %h %H %x %X %b %B %o %O %c %s %t %m %%` with width and zero-fill flags |
 | Time | a single time base per module (from its file's last `timescale`); `$time` in that unit; `#0` runs after the current events |
 | Results | `Simulator::{new, set, set_word, get, get_word, run_until, tick_clock, snapshot, restore, state_hash, signal_names, width_of, log, finished, set_recording, changes, vcd}`; `RtlModule` (AXI4-Lite slave, see below) |
@@ -158,7 +159,7 @@ names the construct (or the signal, for width) and its position.
 
 | Limit | Behaviour |
 |---|---|
-| 2-state values; x and z read as 0 | a testbench that compares with `===` against `x`, or depends on x propagation, is decided differently from XSim |
+| Not modelled | drive strength (`supply0/1` are plain nets), `wand`/`wor` wired logic (treated as plain nets), `inout` ports (refused). Only the X-propagation checks in `tests/xprop/xprop_tb.v` are compared with XSim |
 | Width over 128 bits | refused, naming the signal (declarations) or the concatenation |
 | Recursive functions and tasks | refused |
 | Hierarchical references (`a.b` in expressions or as a task call, `u_mem.write(...)`) | refused (uriscv's testbench is refused for this) |
@@ -168,11 +169,11 @@ names the construct (or the signal, for width) and its position.
 | `inout` ports | refused |
 | Enum members with explicit values | read as their position; the enum base type is ignored (variables are 32-bit) |
 | Partial out-of-range writes (a part select partly outside the vector) | the whole write is skipped; Verilog writes the in-range bits |
-| Out-of-range reads | 0 (a 2-state read of a non-existent word) |
+| Out-of-range reads | X (a bit or word outside the declaration; an X index also reads X) |
 | Time | `timescale` is taken per file (its last directive); there is no `precision` modelling, and sub-picosecond units round to 1 ps |
 | Delays in `assign` (and `#` between a process's waits) | the process sleeps for the delay and then re-evaluates its right-hand side, so the output is the input's value at that later time; input changes during the delay are not seen, and no pulse filtering is modelled beyond that |
 | `$readmemb` | implemented-untested; `$readmemh` is tested |
-| Waveforms | `Simulator::vcd()` writes the recorded changes of every visible scalar and vector (2-state, all starting at 0); the engine does not write FST |
+| Waveforms | `Simulator::vcd()` writes the recorded changes of every visible scalar and vector (4-state: `0`, `1`, `x`, `z`; `$dumpvars` holds the values when recording started); the engine does not write FST |
 | Budgets | 20 million operations per process activation (a loop without timing control stops with a message); 2 million process activations or 200 000 non-blocking rounds in one time step are reported as a combinational loop |
 | Speed | not measured for this document; the engine interprets bytecode |
 

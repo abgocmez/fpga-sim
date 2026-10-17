@@ -29,8 +29,16 @@ global_asm!(
     "    bl main",
     "2:  wfi",
     "    b 2b",
+    // Core 1 parks on the mailbox at 0xFFFFFFF0 (the boot ROM's loop, as a guest
+    // runs it when it starts here): it wakes on an event, and a non-zero entry
+    // address written by core 0 is the start of its own software.
     "3:  wfe",
-    "    b 3b",
+    "    movw r0, #0xFFF0",
+    "    movt r0, #0xFFFF",
+    "    ldr r1, [r0]",
+    "    cmp r1, #0",
+    "    beq 3b",
+    "    bx r1",
 );
 
 const UART1: usize = 0xE000_1000;

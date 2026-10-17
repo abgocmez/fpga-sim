@@ -239,6 +239,12 @@ path through a real core (the core is the other engineer's crate).
 |---|---|---|
 | `cpu-a9` `dp_props` (3) | 10000 seeded inputs per data-processing opcode against an independent reference of the NZCV rules; random immediate shifts; register shift by zero keeps C | the flag and carry rules of the ARM ARM hold for the interpreter |
 | `cpu-a9` `isa` (31) | assembled programs (`tests/data/isa_words.inc.rs`, from `gen_isa.py`): branches, loads and stores, LDM/STM, multiplies, halfword multiplies, bit operations, extends, saturation, parallel ops, PKH, MSR/MRS, banking, SVC, undefined, data and prefetch aborts, IRQ and FIQ with return, WFI/WFE/SEV, CP15, MMU refusal, exclusive monitor, VFP and Thumb reporting | each class of ADR-030 works as the ARM ARM says, or is reported as unimplemented |
+| `cpu-a9` `mmu` (28) | short-descriptor descriptors built from the ARM ARM bit layouts: section, supersection (40-bit PA), small and large pages with offsets; TEX/C/B/S/nG recorded; AP x privilege x read/write/fetch x XN x PXN matrix against a table; XP = 0 subpages; domains 0 to 3 with fault codes; walk external aborts; TTBCR.N split; TLB hits, stale-until-TLBI, TLBIMVA/ASID/MVAA/ALL, faults not cached; core programs: MMU-on identity run, LDRT/STRT, data abort entry and retry after a table fix, domain fault, XN prefetch abort, alignment with WnR, TLBI by MCR, ATS/PAR; property test against an independent reference walk (3000 table generations, 48000 translations, TLB checked too) | the MMU walk, permissions, faults and TLB behave as the ARM ARM short-descriptor pseudocode says, as far as the tests' own reading of it goes |
+| `cpu-a9` `vfp_isa` (14) and `vfp_props` (7) | assembled VFP programs (`tests/data/vfp_words.inc.rs`, from `gen_vfp.py`): immediates, arithmetic, multiply-accumulate family, rounding modes, invalid/DZ/overflow/underflow/denormal flags, NaN propagation, VCMP flags, conversions, fixed-point, transfers, memory and writeback, UNDEFINED and Unimplemented cases; property tests against an independent bignum reference, 10000 cases per operation | VFP results and flags follow the ARM ARM rules and the conventions of ADR-030 |
+| `cpu-a9` `isa` (31) | assembled programs (`tests/data/isa_words.inc.rs`, from `gen_isa.py`): branches, loads and stores, LDM/STM, multiplies, halfword multiplies, bit operations, extends, saturation, parallel ops, PKH, MSR/MRS, banking, SVC, undefined, data and prefetch aborts, IRQ and FIQ with return, WFI/WFE/SEV, CP15, MMU refusal, exclusive monitor, VFP reporting | each class of ADR-030 works as the ARM ARM says, or is reported as unimplemented |
+| `cpu-a9` `thumb` (30) | the Thumb corpus (`thumb_groups.s`, assembled by the Xilinx toolchain at generation time into `thumb_words.inc.rs`) decodes and runs without Unimplemented; hand-computed behaviour of ALU, shifts, IT blocks, interworking, exception entry (SVC, UDF, BKPT, UDIV), LDM/PUSH/POP, TBB/TBH, exclusives, MRC/MCR, MRS/MSR | each class of the ARM ARM Thumb encodings works as stated, or is reported |
+| `cpu-a9` `thumb_props` (9) | A32 against T32 over 10000 seeded cases per class: 16-bit ALU, register and immediate shifts, Thumb-2 modified immediates, shifted and register-shifted data processing, multiplies, bitfields, extends and reversals; equal registers and flags | the Thumb executors match the A32 interpreter, which is itself checked against the assembler |
+| `zynqsim` `native_thumb_diff` (2) | `firmware/thumb_hello` (Thumb-2, `thumbv7a-none-eabi`) on the native PS: 13 checks pass, and the UART text equals Xilinx QEMU's (skips the QEMU half without QEMU) | Thumb firmware runs on the native engine with the same output as QEMU |
 | `cpu-a9` `rust_firmware` (3) | `rust_hello.elf` runs to completion; every distinct instruction word of the 31 Rust firmware images decodes to an implemented class; a per-image report (`RUSTFW` lines) | the firmware the repository builds runs on the interpreter; no image needs Thumb, VFP or the MMU |
 | `zynqsim` `cpu_a9_diff` (1, skips without QEMU) | `rust_hello` through `zynqsim run` (Xilinx QEMU) and through the interpreter: UART text identical | a native run prints what QEMU prints for that image |
 
@@ -322,3 +328,27 @@ Run: `cargo test -p rtl-engine` (60 tests, about 20 s). The XSim test needs Viva
 Not covered: 4-state behaviour (none exists); the `backends.pl = "rtl-native"` switch (not wired); a
 differential run against XSim for any design but `my_math_ip`; `$readmemb`; performance; Windows-only
 checks of the XSim path on other hosts.
+
+## ps-periph batch 2 (GPIO, SPI, I2C, XADC, devcfg, CAN, watchdog)
+
+* `cargo test -p ps-periph -p mem-sys`: unit tests of each new model, `conf_gpiops`, `conf_spips`,
+  `conf_iicps`, `conf_xadcps` (firmware checks encoded), `bsp_periph2` (CAN and devcfg BSP
+  sequences, watchdog reset and timer modes, private timer rate), `determinism_periph2`.
+* `cargo clippy -p ps-periph -p mem-sys --all-targets -- -D warnings`.
+* Not in the gate: the QEMU BSP examples are unchanged; no native-engine run of BSP ELFs.
+
+## Dual-core native PS (ADR-033, "Two cores")
+
+| Requirement | Test |
+|---|---|
+| Core 1 parks in the boot-ROM loop; runs only after the mailbox release | `sim-api` `native_ps::tests::core1_stays_in_the_boot_rom_until_core0_writes_the_mailbox` (hand-written A32) |
+| Exclusive monitor across cores: a store to the word or its 8-byte granule clears the other reservation; the next granule does not | `native_ps::tests::a_store_by_another_core_clears_the_exclusive_reservation_of_its_granule` |
+| SEV wakes WFE on another core | `native_ps::tests::sev_on_core0_wakes_a_wfe_on_core1` |
+| WFI wakes on a pending SGI with IRQs masked | `native_ps::tests::an_sgi_from_core0_wakes_a_wfi_on_core1_with_irqs_masked` |
+| SGI filters; SGI versus PPI priority | `ps-periph` `gic::tests::sgi_filters_pick_the_cores_and_priorities_order_sgi_against_a_ppi` |
+| MPIDR per core; ACTLR SMP bit | `cpu-a9` `cp15::tests::mpidr_carries_the_core_number_and_actlr_keeps_the_smp_bit` |
+| SCU registers | `ps-periph` `mpcore::tests::{scu_control_config_and_invalidate_all, scu_filter_and_access_registers_store_their_fields}` |
+| Round-robin interleaving, equal cycles per core | `native_ps::tests::the_cores_interleave_round_robin_and_run_the_same_cycles` |
+| Snapshot of two cores | `native_ps::tests::a_two_core_snapshot_restores_both_cores` |
+| Dual-core demo: UART1 identical to QEMU with the RESULT line; UART0 native-only | `cli/tests/native_ps_diff::dual_core_demo_prints_the_same_uart1_text_on_qemu_and_natively` |
+| Determinism: 5 in-process runs; 5 processes | `native_ps::tests::a_two_core_session_gives_one_trace_digest_five_times`, `native_ps_diff::dual_core_five_processes_give_one_trace_digest` |
