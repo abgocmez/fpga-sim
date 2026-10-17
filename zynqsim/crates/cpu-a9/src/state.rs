@@ -198,6 +198,8 @@ pub struct Cpu {
     pub(crate) xlate: Box<dyn Translate + Send>,
     /// Set around an LDRT/STRT-style access: it is translated with unprivileged permissions.
     pub(crate) unpriv: bool,
+    /// The VFP register file, FPSCR and FPEXC.
+    pub(crate) vfp: crate::vfp::Vfp,
 }
 
 impl Cpu {
@@ -221,6 +223,8 @@ impl Cpu {
             cp15: Cp15::new(cpu_id),
             xlate: Box::new(Mmu::new()),
             unpriv: false,
+            xlate: Box::new(Identity),
+            vfp: crate::vfp::Vfp::new(),
         }
     }
 
@@ -323,6 +327,7 @@ impl Cpu {
 
     /// Executes one instruction (or takes one pending interrupt, or idles in WFI/WFE).
     pub fn step(&mut self, bus: &mut dyn Bus) -> StepResult {
+        self.vfp.why = None;
         let pc = self.pc;
         if let Some(w) = self.wait {
             let wake_event = w == Wait::Wfe && self.event_reg;

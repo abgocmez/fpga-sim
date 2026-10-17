@@ -16,6 +16,7 @@ mod media;
 mod mem;
 pub mod mmu;
 mod state;
+mod vfp;
 mod xlate;
 
 pub use state::{Cpu, Event, Mode, StepResult};

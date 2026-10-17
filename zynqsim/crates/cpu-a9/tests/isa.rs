@@ -461,18 +461,17 @@ fn exclusive_monitor_succeeds_once_and_fails_after_a_clear() {
 }
 
 #[test]
-fn vfp_is_reported_unimplemented_and_nothing_changes() {
-    let mut m = machine(PROG_VFP);
-    let before = (m.cpu.cpsr(), m.cpu.reg(0));
+fn half_precision_vcvt_is_reported_unimplemented_and_nothing_changes() {
+    // VFP proper is implemented (see vfp_isa.rs). With FPEXC.EN clear (reset state) the access
+    // check comes first, so VCVTB is UNDEFINED; once enabled it is reported Unimplemented.
+    let mut m = machine(&[0xEEB2_1A40]); // vcvtb.f32.f16 s2, s0
     match m.step() {
-        StepResult::Unimplemented { pc, insn } => {
-            assert_eq!(pc, CODE);
-            assert_eq!(insn, 0xEE00_0A10, "vmov s0, r0");
-        }
-        other => panic!("expected Unimplemented, got {other:?}"),
+        StepResult::Executed {
+            event: Some(cpu_a9::Event::Undefined),
+            ..
+        } => {}
+        other => panic!("expected Undefined while VFP is disabled, got {other:?}"),
     }
-    assert_eq!((m.cpu.cpsr(), m.cpu.reg(0)), before);
-    assert_eq!(m.cpu.pc(), CODE, "the PC did not advance");
 }
 
 #[test]
