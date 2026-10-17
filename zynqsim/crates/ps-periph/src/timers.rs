@@ -179,14 +179,17 @@ pub fn private_timer() -> Countdown {
 }
 
 /// The watchdog of one core: the countdown block at 0x620, plus its reset status and the
-/// two-step disable sequence (DISABLE at +0x14). No reset is performed: a watchdog event in
-/// watchdog mode sets RESET_STATUS and the model records it (`VERIFY:` the W1C behaviour).
+/// two-step disable sequence (DISABLE at +0x14). The model performs no reset itself: a watchdog
+/// event in watchdog mode sets RESET_STATUS and queues a reset request that the host takes
+/// (`MpCore::take_wdt_resets`) and turns into a system reset (`VERIFY:` the W1C behaviour).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Watchdog {
     /// The countdown block.
     pub cd: Countdown,
     /// RESET_STATUS bit 0: a watchdog-mode event happened.
     pub reset_status: u32,
+    /// Watchdog reset requests not yet taken by the host (the `WdtReset` events).
+    pub reset_requests: u32,
     disable_step: u8,
 }
 
@@ -202,15 +205,23 @@ impl Watchdog {
         Watchdog {
             cd: Countdown::new(0xFF0F),
             reset_status: 0,
+            reset_requests: 0,
             disable_step: 0,
         }
     }
 
-    /// Advances by `periph_ticks`.
+    /// Advances by `periph_ticks`. An expiry in watchdog mode sets RESET_STATUS and makes one
+    /// reset request (`WdtReset`); in timer mode it only sets the countdown's event flag.
     pub fn advance(&mut self, periph_ticks: u64) {
         if self.cd.advance(periph_ticks) && self.cd.control & CTRL_WD_MODE != 0 {
             self.reset_status |= 1;
+            self.reset_requests += 1;
         }
+    }
+
+    /// Takes the reset requests made since the last call.
+    pub fn take_reset_requests(&mut self) -> u32 {
+        std::mem::take(&mut self.reset_requests)
     }
 
     /// Reads `size` bytes at `offset` (relative to the 0x620 block).

@@ -1,8 +1,13 @@
 //! The Zynq-7000 PS as one bus: the devices of this crate attached at the addresses of
 //! `mem_sys::ZYNQ_MAP`, with DDR and the on-chip RAM provided by the bus itself.
 
+use crate::can::Can;
+use crate::devcfg::DevCfg;
+use crate::gpio::Gpio;
+use crate::i2c::I2c;
 use crate::mpcore::MpCore;
 use crate::slcr::Slcr;
+use crate::spi::Spi;
 use crate::ttc::Ttc;
 use crate::uart::{UART0_IRQ, UART1_IRQ, Uart};
 use mem_sys::{
@@ -33,12 +38,25 @@ impl Default for PsConfig {
     }
 }
 
-/// Host handles to devices the bus owns: the UARTs, for their transmit log and receive input.
+/// Host handles to devices the bus owns: the UARTs (transmit log and receive input), the MPCore
+/// region (watchdog reset requests), and the models that take host stimulus or show outputs.
 pub struct PsHandles {
     /// UART0 (0xE0000000).
     pub uart0: Arc<Mutex<Uart>>,
     /// UART1 (0xE0001000).
     pub uart1: Arc<Mutex<Uart>>,
+    /// The MPCore region, for `take_wdt_resets` (the watchdog's `WdtReset` events).
+    pub mpcore: Arc<Mutex<MpCore>>,
+    /// GPIO (0xE000A000): pin inputs and the output sink.
+    pub gpio: Arc<Mutex<Gpio>>,
+    /// SPI0 and SPI1 (0xE0006000, 0xE0007000): attach a slave with `set_peer`.
+    pub spi: [Arc<Mutex<Spi>>; 2],
+    /// I2C0 and I2C1 (0xE0004000, 0xE0005000): attach devices with `set_peer`.
+    pub i2c: [Arc<Mutex<I2c>>; 2],
+    /// CAN0 and CAN1 (0xE0008000, 0xE0009000).
+    pub can: [Arc<Mutex<Can>>; 2],
+    /// Device configuration and XADC (0xF8007000): the XADC's host temperature and voltage.
+    pub devcfg: Arc<Mutex<DevCfg>>,
 }
 
 fn attach(bus: &mut SystemBus, name: &str, dev: Box<dyn Device + Send>) -> Result<(), MapError> {
@@ -47,8 +65,9 @@ fn attach(bus: &mut SystemBus, name: &str, dev: Box<dyn Device + Send>) -> Resul
 }
 
 /// Builds the PS bus: DDR and the on-chip RAM, UART0 and UART1, SLCR, TTC0 and TTC1, the
-/// DDRC and DEVCFG stubs, the MPCore private region, and (if an image is given) the QSPI
-/// linear window. Blocks listed in the map and not in this list are unmapped.
+/// GPIO, SPI0/1, I2C0/1 and CAN0/1 controllers, the device configuration with the XADC, the DDRC
+/// stub, the MPCore private region, and (if an image is given) the QSPI linear window. Blocks
+/// listed in the map and not in this list are unmapped.
 pub fn zynq_system(cfg: &PsConfig) -> Result<(SystemBus, PsHandles), MapError> {
     let mut bus = SystemBus::new(cfg.ddr_size)?;
     bus.set_policy(cfg.policy);
@@ -60,8 +79,24 @@ pub fn zynq_system(cfg: &PsConfig) -> Result<(SystemBus, PsHandles), MapError> {
     attach(&mut bus, "TTC0", Box::new(Ttc::new(0)))?;
     attach(&mut bus, "TTC1", Box::new(Ttc::new(1)))?;
     attach(&mut bus, "DDRC", Box::new(Stub::new("DDRC")))?;
-    attach(&mut bus, "DEVCFG", Box::new(Stub::new("DEVCFG")))?;
-    attach(&mut bus, "MPCORE", Box::new(MpCore::new()))?;
+    let (dc, devcfg) = shared(DevCfg::new());
+    attach(&mut bus, "DEVCFG", Box::new(dc))?;
+    let (gp, gpio) = shared(Gpio::new());
+    attach(&mut bus, "GPIO", Box::new(gp))?;
+    let (s0, spi0) = shared(Spi::new(0));
+    let (s1, spi1) = shared(Spi::new(1));
+    attach(&mut bus, "SPI0", Box::new(s0))?;
+    attach(&mut bus, "SPI1", Box::new(s1))?;
+    let (i0, i2c0) = shared(I2c::new(0));
+    let (i1, i2c1) = shared(I2c::new(1));
+    attach(&mut bus, "I2C0", Box::new(i0))?;
+    attach(&mut bus, "I2C1", Box::new(i1))?;
+    let (c0, can0) = shared(Can::new(0));
+    let (c1, can1) = shared(Can::new(1));
+    attach(&mut bus, "CAN0", Box::new(c0))?;
+    attach(&mut bus, "CAN1", Box::new(c1))?;
+    let (mp, mpcore) = shared(MpCore::new());
+    attach(&mut bus, "MPCORE", Box::new(mp))?;
     if let Some(img) = &cfg.qspi_image {
         attach(
             &mut bus,
@@ -69,7 +104,17 @@ pub fn zynq_system(cfg: &PsConfig) -> Result<(SystemBus, PsHandles), MapError> {
             Box::new(ReadOnlyImage::new(img.clone())),
         )?;
     }
-    Ok((bus, PsHandles { uart0, uart1 }))
+    let handles = PsHandles {
+        uart0,
+        uart1,
+        mpcore,
+        gpio,
+        spi: [spi0, spi1],
+        i2c: [i2c0, i2c1],
+        can: [can0, can1],
+        devcfg,
+    };
+    Ok((bus, handles))
 }
 
 #[cfg(test)]
