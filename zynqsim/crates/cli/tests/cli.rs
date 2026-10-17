@@ -202,7 +202,15 @@ fn inspect_lists_backends_without_claiming_unbuilt_ones() {
         .collect();
     assert_eq!(
         implemented,
-        ["demo", "qemu", "native", "demo", "native", "verilator", "xsim"]
+        [
+            "demo",
+            "qemu",
+            "native",
+            "demo",
+            "native",
+            "verilator",
+            "xsim"
+        ]
     );
 }
 
