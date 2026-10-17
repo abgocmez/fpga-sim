@@ -156,12 +156,15 @@ fn unsupported_features_exit_3_with_a_clear_message() {
     let p = d.join("qemu.toml");
     std::fs::write(
         &p,
-        "schema_version = 1\n[board]\nname = \"zybo-z7-20\"\n[backends]\npl = \"icarus\"\n",
+        "schema_version = 1\n[board]\nname = \"zybo-z7-20\"\n[backends]\npl = \"questa\"\n",
     )
     .unwrap();
     let r = zynqsim(&["run", "--project", p.to_str().unwrap()]);
-    assert_eq!(r.status.code(), Some(3));
-    assert!(String::from_utf8_lossy(&r.stderr).contains("not implemented in this build"));
+    // Every backend the project format knows is built now (QEMU, native PS, XSim, Verilator,
+    // Icarus, the native RTL engine), so "not implemented in this build" (exit 3) cannot be
+    // reached by a project any more; a name nobody knows is a plain project error.
+    assert_eq!(r.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&r.stderr).contains("unknown backend"));
 }
 
 #[test]
@@ -209,6 +212,7 @@ fn inspect_lists_backends_without_claiming_unbuilt_ones() {
             "demo",
             "native",
             "verilator",
+            "icarus",
             "xsim"
         ]
     );
