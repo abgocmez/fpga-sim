@@ -28,5 +28,12 @@ extern crate alloc;
 pub mod abi;
 pub mod core;
 
+// The hosted transport (sockets and the one instance) for shared objects and VPI modules.
+#[cfg(feature = "hosted")]
+pub mod hosted;
+
 #[cfg(all(windows, feature = "freestanding"))]
 mod win;
+
+#[cfg(all(feature = "hosted", feature = "freestanding"))]
+compile_error!("`hosted` needs std; it cannot be combined with the freestanding archive");

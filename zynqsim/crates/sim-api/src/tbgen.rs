@@ -1005,6 +1005,107 @@ pub fn generate_testbench(m: &ModuleInfo, axi: &AxiLite) -> String {
     generate_testbench_with_irqs(m, axi, None)
 }
 
+/// The `rp_*` DPI imports of the testbench, with their Icarus Verilog form (ADR-037).
+///
+/// Without `ZS_ICARUS` the text is the `import "DPI-C"` lines the DPI simulators (XSim,
+/// Verilator, Questa) take. With `ZS_ICARUS` (Icarus has no DPI-C) each import is a wrapper of
+/// the system task or function `$zs_<name>` that `zynqsim.vpi` registers. `rp_next` has output
+/// arguments, which an Icarus function cannot take, so it has no wrapper: its call site is
+/// wrapped instead (see [`RP_NEXT_CALL`]).
+const RP_IMPORTS: &str = r#"`ifdef ZS_ICARUS
+    // Icarus Verilog has no DPI-C (ADR-037): each import is a wrapper of the VPI system call
+    // `$zs_<name>` of zynqsim.vpi. A `$time` passed straight to a system call reads as 0 in
+    // vvp, so the time of `$zs_rp_next` goes through `zs_now` (see RP_NEXT_CALL).
+    longint zs_now;
+    function int rp_open(input string descr);
+        rp_open = $zs_rp_open(descr);
+    endfunction
+    task rp_done_t(input int rdata, input int ok, input longint now_ns);
+        $zs_rp_done_t(rdata, ok, now_ns);
+    endtask
+    task rp_close();
+        $zs_rp_close();
+    endtask
+    task rp_lockstep(input int on);
+        $zs_rp_lockstep(on);
+    endtask
+    function longint rp_sync_target();
+        rp_sync_target = $zs_rp_sync_target();
+    endfunction
+    task rp_sync_ack(input longint now_ns);
+        $zs_rp_sync_ack(now_ns);
+    endtask
+    function longint rp_req_ts();
+        rp_req_ts = $zs_rp_req_ts();
+    endfunction
+    task rp_irq(input longint now_ns, input int line, input int val);
+        $zs_rp_irq(now_ns, line, val);
+    endtask
+    task rp_mem_put(input int idx, input int word);
+        $zs_rp_mem_put(idx, word);
+    endtask
+    function int rp_mem_start(input longint now_ns, input int dev,
+                                        input int is_write, input int addr, input int len);
+        rp_mem_start = $zs_rp_mem_start(now_ns, dev, is_write, addr, len);
+    endfunction
+    function int rp_mem_wait(input int slot);
+        rp_mem_wait = $zs_rp_mem_wait(slot);
+    endfunction
+    function int rp_mem_get(input int slot, input int idx);
+        rp_mem_get = $zs_rp_mem_get(slot, idx);
+    endfunction
+    task rp_mem_free(input int slot);
+        $zs_rp_mem_free(slot);
+    endtask
+`else
+    import "DPI-C" function int  rp_open(input string descr);
+    import "DPI-C" function int  rp_next(input longint now_ns, input int idle_ms,
+                                         output int addr, output int wdata,
+                                         output int wstrb, output int is_write);
+    import "DPI-C" function void rp_done_t(input int rdata, input int ok, input longint now_ns);
+    import "DPI-C" function void rp_close();
+    import "DPI-C" function void rp_lockstep(input int on);
+    import "DPI-C" function longint rp_sync_target();
+    import "DPI-C" function void rp_sync_ack(input longint now_ns);
+    import "DPI-C" function longint rp_req_ts();
+    import "DPI-C" function void rp_irq(input longint now_ns, input int line, input int val);
+    import "DPI-C" function void rp_mem_put(input int idx, input int word);
+    import "DPI-C" function int  rp_mem_start(input longint now_ns, input int dev,
+                                              input int is_write, input int addr, input int len);
+    import "DPI-C" function int  rp_mem_wait(input int slot);
+    import "DPI-C" function int  rp_mem_get(input int slot, input int idx);
+    import "DPI-C" function void rp_mem_free(input int slot);
+`endif
+"#;
+
+/// The call of `rp_next` in the testbench's loop, with its Icarus form: the system function
+/// writes its outputs itself (Icarus functions cannot have output arguments).
+const RP_NEXT_CALL: &str = "`ifdef ZS_ICARUS
+            zs_now = $time;
+            st = $zs_rp_next(zs_now, -1, a_i, wd_i, ws_i, iw_i);
+`else
+            st = rp_next($time, -1, a_i, wd_i, ws_i, iw_i);
+`endif
+";
+
+/// The pin-group DPI imports of the testbench, with their Icarus wrappers (ADR-037).
+const PIN_IMPORTS: &str = r#"`ifdef ZS_ICARUS
+    task zs_pin_out(input int group, input int levels, input longint now_ns);
+        $zs_pin_out(group, levels, now_ns);
+    endtask
+    function int zs_pin_in(input int group);
+        zs_pin_in = $zs_pin_in(group);
+    endfunction
+    function int zs_pin_xchg(input int group, input int levels, input longint now_ns);
+        zs_pin_xchg = $zs_pin_xchg(group, levels, now_ns);
+    endfunction
+`else
+    import "DPI-C" function void zs_pin_out(input int group, input int levels, input longint now_ns);
+    import "DPI-C" function int  zs_pin_in(input int group);
+    import "DPI-C" function int  zs_pin_xchg(input int group, input int levels, input longint now_ns);
+`endif
+"#;
+
 /// Like [`generate_testbench`], with the `IRQ_F2P` bit of each interrupt output.
 ///
 /// `irq_bits[k]` is the bit of the k-th output [`detect_irqs`] reports (`None` leaves that
@@ -1026,26 +1127,11 @@ pub fn generate_testbench_with_irqs(
          // Generated by `zynqsim init --ip`: stands in for the PS7 and drives `{}`\n\
          // through its AXI4-Lite slave `{}*` from the remote-port link (lock-step).\n\
          // Edit freely: it is a plain testbench. A write of 0xC051D0DE to offset 0x3C ends the run.\n\
-         module cosim_top;\n\
-         \x20   import \"DPI-C\" function int  rp_open(input string descr);\n\
-         \x20   import \"DPI-C\" function int  rp_next(input longint now_ns, input int idle_ms,\n\
-         \x20                                         output int addr, output int wdata,\n\
-         \x20                                         output int wstrb, output int is_write);\n\
-         \x20   import \"DPI-C\" function void rp_done_t(input int rdata, input int ok, input longint now_ns);\n\
-         \x20   import \"DPI-C\" function void rp_close();\n\
-         \x20   import \"DPI-C\" function void rp_lockstep(input int on);\n\
-         \x20   import \"DPI-C\" function longint rp_sync_target();\n\
-         \x20   import \"DPI-C\" function void rp_sync_ack(input longint now_ns);\n\
-         \x20   import \"DPI-C\" function longint rp_req_ts();\n\
-         \x20   import \"DPI-C\" function void rp_irq(input longint now_ns, input int line, input int val);\n\
-         \x20   import \"DPI-C\" function void rp_mem_put(input int idx, input int word);\n\
-         \x20   import \"DPI-C\" function int  rp_mem_start(input longint now_ns, input int dev,\n\
-         \x20                                             input int is_write, input int addr, input int len);\n\
-         \x20   import \"DPI-C\" function int  rp_mem_wait(input int slot);\n\
-         \x20   import \"DPI-C\" function int  rp_mem_get(input int slot, input int idx);\n\
-         \x20   import \"DPI-C\" function void rp_mem_free(input int slot);\n",
+         module cosim_top;",
         m.name, axi.prefix
     );
+    s.push_str(RP_IMPORTS);
+    let _ = writeln!(s);
     let _ = writeln!(
         s,
         "    reg aclk = 1'b0;\n    reg aresetn = 1'b0;\n    always #5 aclk = ~aclk;   // 100 MHz = FCLK_CLK0\n"
@@ -1192,10 +1278,7 @@ pub fn generate_testbench_with_irqs(
     let _ = write!(
         s,
         "\
-    import \"DPI-C\" function void zs_pin_out(input int group, input int levels, input longint now_ns);
-    import \"DPI-C\" function int  zs_pin_in(input int group);
-    import \"DPI-C\" function int  zs_pin_xchg(input int group, input int levels, input longint now_ns);
-    reg        connected = 1'b0;
+{pin_imports}    reg        connected = 1'b0;
     reg        wr_ok;
     reg        rd_ok;
     reg [31:0] rd_val;
@@ -1247,7 +1330,7 @@ pub fn generate_testbench_with_irqs(
         connected = 1'b1;
 {xchg_init}{irq_init}
         forever begin
-            st = rp_next($time, -1, a_i, wd_i, ws_i, iw_i);
+            {rp_next_call}
             if (st == 0) begin
                 $display(\"cosim_top: peer closed, finishing at %0t\", $time);
                 rp_close();
@@ -1279,6 +1362,8 @@ pub fn generate_testbench_with_irqs(
 endmodule
 ",
         master = master.as_ref().map(master_bridge).unwrap_or_default(),
+        pin_imports = PIN_IMPORTS,
+        rp_next_call = RP_NEXT_CALL,
         checkers = protocol_checkers(m, axi, master.as_ref()),
         irq_blocks = irq_blocks,
         pin_blocks = pin_blocks,
@@ -1470,6 +1555,68 @@ mod tests {
             assert!(tb.contains(&format!(".{}(", p.name)), "{}", p.name);
         }
         assert!(tb.contains("rp_lockstep(1)"));
+    }
+
+    #[test]
+    fn the_icarus_form_wraps_every_dpi_import_and_the_dpi_form_is_kept() {
+        // Icarus Verilog (ADR-037): under ZS_ICARUS every DPI function the testbench calls is
+        // a wrapper of `$zs_<name>`; without it the `import "DPI-C"` lines are the ones the
+        // DPI simulators take, as before.
+        let m = parse_module(&fixture("math/my_math_ip.v"), None).unwrap();
+        let axi = detect_axi_lite(&m).unwrap();
+        let tb = generate_testbench(&m, &axi);
+        let (icarus, dpi) = tb.split_once("`else").expect("the ZS_ICARUS branch");
+        let icarus = icarus.split_once("`ifdef ZS_ICARUS").expect("the guard").1;
+        let dpi = dpi.split_once("`endif").expect("the end of the guard").0;
+        assert!(dpi.contains("import \"DPI-C\" function int  rp_open(input string descr);"));
+        assert!(
+            dpi.contains("import \"DPI-C\" function int  rp_next("),
+            "rp_next keeps its import"
+        );
+        assert!(
+            !icarus.contains("import \"DPI-C\""),
+            "no DPI-C in the Icarus branch"
+        );
+        for name in [
+            "rp_open",
+            "rp_done_t",
+            "rp_close",
+            "rp_lockstep",
+            "rp_sync_target",
+            "rp_sync_ack",
+            "rp_req_ts",
+            "rp_irq",
+            "rp_mem_put",
+            "rp_mem_start",
+            "rp_mem_wait",
+            "rp_mem_get",
+            "rp_mem_free",
+        ] {
+            assert!(
+                icarus.contains(&format!("$zs_{name}(")),
+                "{name} has no $zs_ call"
+            );
+        }
+        // rp_next has output arguments: its call site calls the system function instead.
+        assert!(
+            tb.contains("st = $zs_rp_next(zs_now, -1, a_i, wd_i, ws_i, iw_i);"),
+            "{tb}"
+        );
+        assert!(
+            tb.contains("st = rp_next($time, -1, a_i, wd_i, ws_i, iw_i);"),
+            "{tb}"
+        );
+        // The pin imports of the testbench have the same two forms.
+        assert!(
+            tb.contains("$zs_pin_out(group, levels, now_ns);"),
+            "the pin wrapper is written"
+        );
+        assert!(
+            tb.contains("import \"DPI-C\" function void zs_pin_out("),
+            "{tb}"
+        );
+        let opened = tb.matches("`ifdef").count() + tb.matches("`ifndef").count();
+        assert_eq!(tb.matches("`endif").count(), opened, "{tb}");
     }
 
     #[test]
@@ -1752,7 +1899,9 @@ mod tests {
         assert!(tb.contains(".awaddr(m_awaddr)"), "{tb}");
         assert!(tb.contains(".rlast(m_rlast)"), "{tb}");
         assert!(tb.contains(".awlen(m_awlen)"), "{tb}");
-        assert_eq!(tb.matches("`endif").count(), 1, "{tb}");
+        // The checker guard and the Icarus wrappers (ADR-037) are each closed by an `endif`.
+        let opened = tb.matches("`ifdef").count() + tb.matches("`ifndef").count();
+        assert_eq!(tb.matches("`endif").count(), opened, "{tb}");
 
         // A lite-only IP gets the lite checker alone.
         let math = parse_module(&fixture("math/my_math_ip.v"), None).unwrap();

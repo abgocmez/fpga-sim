@@ -73,6 +73,7 @@ Needs Vivado/XSim; skipped with a message when it is not found.
 | `backend-rtl-xsim` `math` (3+1, plus the build cache), `dma_golden`, `zynqsim` `dma_*`, `mcp` `dma_project_through_mcp` | Xilinx QEMU + Vivado XSim (+ builds the DPI library on demand) | same |
 | `backend-rtl-xsim` `media` (4: build, codec, HDMI, polling stress) | Vivado XSim | same |
 | `backend-rtl-verilator` (diagnostics parser unit tests with captured messages, tool discovery, `math`: 7 writes / 14 reads through the Verilator model, cached second start, `unsupported_constructs_are_reported_with_file_line_and_text`); `zynqsim` `verilator` (`math_firmware_passes_through_verilator_and_matches_xsim`: real QEMU + Verilator, the same project with XSim when Vivado is present); `sim-api` `project::tests::verilator_refuses_what_only_xsim_can_run`; `mcp` `backend_list` | Verilator (`ZYNQSIM_VERILATOR`, `VERILATOR_ROOT`, `PATH` or `<temp>\zs-tools\verilator\oss-cad-suite`) + `make`, a C++ compiler and `sh` + the DPI library; the QEMU test also needs Xilinx QEMU. The unit tests need nothing | `SKIPPED:` and returns (`math` and `verilator`) |
+| `backend-rtl-icarus` (diagnostics parser with captured `iverilog` messages, tool discovery), `vpi-icarus` (the 31 `$zs_` names are unique; every `$zs_` call of the math testbench is registered), `cli::icarus` (real QEMU runs `examples/math-icarus`: ALL PASS, 21 accesses, the trace digest is compared with XSim and was equal), determinism case `math-icarus` | Icarus Verilog (`ZYNQSIM_ICARUS`, `PATH` or the unpacked archive) and `cargo xtask vpi`; `SKIPPED:` and returns without them | Windows only; math design only |
 | `zynqsim` `oled_demo_*`, `rgb_demo_*`; `mcp` `pmod_oled_through_mcp` | Xilinx QEMU + Vivado XSim + the DPI library (rebuild it after pulling: the pin DPI functions are new) | same |
 | `zynqsim` `pmod_simple_demo_lights_the_8ld_and_reads_the_buttons` (8LD pattern, host-set BTN values, determinism; also in the 5x determinism table); `devices` `led8`, `ssd`, `buttons` (unit tests, no tools needed) | Xilinx QEMU + Vivado XSim + the DPI library for the end-to-end test; none for the unit tests | prints `SKIPPED:` and returns (the unit tests always run) |
 | `devices` (9, no tools needed), `sim-api` `tbgen` (12, no tools needed), `zynqsim` `init_ip_*` (4; three need QEMU + XSim), `sim-api` `disasm` (4, no tools needed), `backend-qemu` `e2e` debugger (2), `sim-api` `qemu_debug` (6; core 1 also needs Vivado XSim + DPI), `mcp` `debugger_through_mcp`, `gui` `registers_appear_in_the_model...` | Xilinx QEMU | same |
@@ -195,7 +196,8 @@ archive. Windows is the only one run so far.
 * **QEMU session features**: registers at an arbitrary time (not possible, see STATUS.md);
   access (`Z4`) and RAM watchpoints firing; debug sessions' trace digests (not reproducible). Snapshot, restore, reset and replay are covered, by re-execution, on the
   native-PL math project and (replay only) on the RTL board demo by hand.
-* **Verilator / Icarus backends** and **Linux / macOS XSim**: not implemented.
+* **Linux / macOS XSim** and the **Icarus DMA, board, media and pin models**: not run. The Verilator
+  and Icarus backends are Windows only.
 
 ## Native PS memory and peripherals (P5, optional; ADR-031)
 
@@ -244,8 +246,9 @@ To rebuild the assembled test words: `python crates/cpu-a9/tests/data/gen_isa.py
 
 Limits: no instruction-by-instruction differential run (needs the QEMU gdb stub driven per step); the
 firmware word sweep proves decoding, not behaviour; `rust_firmware` assertions cover one image only.
-* **Icarus backend** and **Linux / macOS XSim**: not implemented. The Verilator backend is
-  Windows only for now.
+* **Icarus backend**: the math design only (`cli::icarus`, `determinism` case `math-icarus`);
+  the DMA regression, board, media and pin models are not run under Icarus. Windows only.
+  **Linux / macOS XSim**: not implemented. The Verilator backend is Windows only for now.
 * **Verilator against XSim**: the math project gives the same firmware output and bus traffic in
   both (`cli::verilator`), but this is one design. The DMA regression, the board, media and pin
   models have **not** been run under Verilator. Trace digests are compared, not asserted equal,

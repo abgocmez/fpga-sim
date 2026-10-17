@@ -684,7 +684,7 @@ const PL_BACKENDS: &[&str] = &["demo", "verilator", "icarus", "xsim", "native"];
 /// PS backends that exist in this build.
 const IMPLEMENTED_PS: &[&str] = &["demo", "qemu", "native"];
 /// PL backends that exist in this build.
-const IMPLEMENTED_PL: &[&str] = &["demo", "native", "xsim", "verilator"];
+const IMPLEMENTED_PL: &[&str] = &["demo", "native", "xsim", "verilator", "icarus"];
 
 impl Project {
     /// The `[rtl] protocol_checkers` setting (the default when there is no `[rtl]`).
@@ -953,11 +953,14 @@ impl Project {
                     rtl,
                     board: board_def.name.clone(),
                     board_def: Some(board_def),
-                    pl_name: if matches!(self.backends.pl.as_str(), "xsim" | "verilator") {
+                    pl_name: if matches!(self.backends.pl.as_str(), "xsim" | "verilator" | "icarus")
+                    {
                         match (self.backends.pl.as_str(), self.native.is_empty()) {
                             ("xsim", true) => "xsim",
                             ("xsim", false) => "xsim+native",
                             ("verilator", true) => "verilator",
+                            ("icarus", true) => "icarus",
+                            ("icarus", false) => "icarus+native",
                             _ => "verilator+native",
                         }
                         .to_string()
@@ -1104,7 +1107,7 @@ impl Project {
                 ));
             }
         }
-        if matches!(self.backends.pl.as_str(), "xsim" | "verilator") {
+        if matches!(self.backends.pl.as_str(), "xsim" | "verilator" | "icarus") {
             let pl = self.backends.pl.as_str();
             match &self.rtl {
                 Some(r)
@@ -1113,8 +1116,8 @@ impl Project {
                         || r.filelist.is_some() =>
                 {
                     let resolved = crate::exportsim::resolve_rtl(r, base);
-                    if pl == "verilator" {
-                        for msg in verilator_rtl_problems(r, &resolved.files) {
+                    if matches!(pl, "verilator" | "icarus") {
+                        for msg in rtl_problems(pl, r, &resolved.files) {
                             d.push(err("rtl", msg));
                         }
                     }
@@ -1235,7 +1238,10 @@ impl Project {
             }
         }
         if !self.native.is_empty()
-            && !matches!(self.backends.pl.as_str(), "native" | "xsim" | "verilator")
+            && !matches!(
+                self.backends.pl.as_str(),
+                "native" | "xsim" | "verilator" | "icarus"
+            )
         {
             d.push(warn(
                 "native",
@@ -1462,7 +1468,7 @@ impl Project {
                                 devices::KINDS.join(", ")
                             ),
                         ));
-                    } else if !matches!(self.backends.pl.as_str(), "xsim" | "verilator")
+                    } else if !matches!(self.backends.pl.as_str(), "xsim" | "verilator" | "icarus")
                         && !self.native_drives_pmod(port)
                     {
                         d.push(warn(
@@ -1648,13 +1654,25 @@ impl Project {
     /// the sources resolved. `None` for the other PL backends.
     fn rtl_spec(&self, base: &Path) -> Result<Option<crate::RtlSpec>, ApiError> {
         let pl = self.backends.pl.as_str();
-        if !matches!(pl, "xsim" | "verilator") {
+        if !matches!(pl, "xsim" | "verilator" | "icarus") {
             return Ok(None);
         }
         let r = self.rtl.as_ref().ok_or_else(|| {
             ApiError::invalid_argument(format!("backends.pl = \"{pl}\" needs [rtl]"))
         })?;
-        let tool = if pl == "xsim" {
+        let tool = if pl == "icarus" {
+            let tools = backend_rtl_icarus::tools::find().ok_or_else(|| {
+                ApiError::not_found("Icarus Verilog was not found").with_hint(
+                    "unpack the oss-cad-suite Windows archive to <temp>\\zs-tools\\verilator\\oss-cad-suite, \
+                     or set ZYNQSIM_ICARUS to iverilog.exe; see docs/INSTALL.md",
+                )
+            })?;
+            let vpi = backend_rtl_icarus::tools::find_vpi().ok_or_else(|| {
+                ApiError::not_found("the zynqsim VPI module (zynqsim.vpi) was not found")
+                    .with_hint("build it with `cargo xtask vpi`, or set ZYNQSIM_VPI")
+            })?;
+            crate::RtlTool::Icarus(tools, vpi)
+        } else if pl == "xsim" {
             let vivado_root = std::env::var_os("ZYNQSIM_VIVADO")
                 .map(PathBuf::from)
                 .or_else(crate::tools::find_vivado)
@@ -1673,16 +1691,21 @@ impl Project {
             })?;
             crate::RtlTool::Verilator(tools)
         };
-        let dpi_lib = crate::tools::find_dpi_lib().ok_or_else(|| {
-            ApiError::not_found("the XSim DPI library (libxsim_dpi.a) was not found")
-                .with_hint("build it with `cargo xtask dpi`, or set ZYNQSIM_DPI_LIB")
-        })?;
+        // Icarus takes the VPI module in place of the DPI archive (ADR-037).
+        let dpi_lib = if pl == "icarus" {
+            std::path::PathBuf::new()
+        } else {
+            crate::tools::find_dpi_lib().ok_or_else(|| {
+                ApiError::not_found("the XSim DPI library (libxsim_dpi.a) was not found")
+                    .with_hint("build it with `cargo xtask dpi`, or set ZYNQSIM_DPI_LIB")
+            })?
+        };
         let resolved = crate::exportsim::resolve_rtl(r, base);
         if let Some(e) = resolved.first_error() {
             return Err(ApiError::invalid_argument(e));
         }
-        if pl == "verilator" {
-            if let Some(e) = verilator_rtl_problems(r, &resolved.files).first() {
+        if matches!(pl, "verilator" | "icarus") {
+            if let Some(e) = rtl_problems(pl, r, &resolved.files).first() {
                 return Err(ApiError::invalid_argument(e.clone()));
             }
         }
@@ -1830,26 +1853,24 @@ fn port_missing(board: Option<&BoardDef>, port: u8) -> Option<String> {
 
 /// What `backends.pl = "verilator"` cannot take, as messages for the user: waveforms, Vivado
 /// simulation exports and VHDL are XSim's.
-fn verilator_rtl_problems(r: &RtlSection, files: &[PathBuf]) -> Vec<String> {
+fn rtl_problems(backend: &str, r: &RtlSection, files: &[PathBuf]) -> Vec<String> {
     let mut out = Vec::new();
     if r.waves {
-        out.push(
-            "`[rtl] waves = true` is not recorded by the Verilator backend yet; use \
+        out.push(format!(
+            "`[rtl] waves = true` is not recorded by the {backend} backend yet; use \
              backends.pl = \"xsim\" for a waveform database"
-                .to_string(),
-        );
+        ));
     }
     if r.export_dir.is_some() || r.filelist.is_some() {
-        out.push(
+        out.push(format!(
             "`export_dir` / `filelist` (Vivado simulation exports) run in XSim only; list the \
-             sources in `files` with `top` for backends.pl = \"verilator\""
-                .to_string(),
-        );
+             sources in `files` with `top` for backends.pl = \"{backend}\""
+        ));
     }
     for f in files {
         if xsim_export::Lang::from_path(f).is_some_and(xsim_export::Lang::is_vhdl) {
             out.push(format!(
-                "{}: VHDL is not supported by the Verilator backend; use backends.pl = \"xsim\"",
+                "{}: VHDL is not supported by the {backend} backend; use backends.pl = \"xsim\"",
                 f.display()
             ));
         }
@@ -1960,7 +1981,7 @@ pub fn starter_project_toml() -> &'static str {
      \n\
      [backends]\n\
      ps = \"demo\"   # \"qemu\" or \"native\" (Rust, core 0, no PL) run firmware\n\
-     pl = \"demo\"   # \"icarus\" is not implemented yet; \"verilator\", \"xsim\" and \"native\" need a PS and [rtl] or [native]\n\
+     pl = \"demo\"   # \"icarus\" (Icarus Verilog, ADR-037), \"verilator\", \"xsim\" and \"native\" need a PS and [rtl] or [native]\n\
      \n\
      [sim]\n\
      quantum_ns = 1000\n\

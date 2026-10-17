@@ -306,14 +306,27 @@ pub fn detect_backends() -> Vec<BackendInfo> {
                         .to_string(),
             }
         },
-        external(
-            "icarus",
-            BackendRole::Pl,
-            &["iverilog", "vvp"],
-            false,
-            false,
-            "RTL adapter: milestone P1/P4, not in this build",
-        ),
+        {
+            // Located by the adapter crate: `iverilog.exe` (its `vvp.exe` beside it), and the
+            // zynqsim VPI module that is built by `cargo xtask vpi`.
+            let found = backend_rtl_icarus::tools::find();
+            let vpi = backend_rtl_icarus::tools::find_vpi();
+            BackendInfo {
+                name: "icarus".to_string(),
+                role: BackendRole::Pl,
+                kind: BackendKind::External,
+                implemented: true,
+                found: Some(found.is_some() && vpi.is_some()),
+                path: found.as_ref().map(|t| t.iverilog.display().to_string()),
+                executables: vec!["iverilog".to_string(), "vvp".to_string()],
+                note: format!(
+                    "RTL in Icarus Verilog (iverilog -g2012, vvp) through the zynqsim VPI module \
+                     (ADR-037); module: {}; Windows only for now",
+                    vpi.map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "not built (cargo xtask vpi)".to_string())
+                ),
+            }
+        },
         external(
             "xsim",
             BackendRole::Pl,
@@ -346,6 +359,7 @@ mod tests {
                 ("demo", BackendRole::Pl),
                 ("native", BackendRole::Pl),
                 ("verilator", BackendRole::Pl),
+                ("icarus", BackendRole::Pl),
                 ("xsim", BackendRole::Pl),
             ]
         );

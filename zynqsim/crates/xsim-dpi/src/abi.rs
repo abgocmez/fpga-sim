@@ -43,7 +43,7 @@ pub unsafe fn cstr_bytes<'a>(p: *const c_char) -> &'a [u8] {
 /// be edition 2021 (edition 2024 would require `#[unsafe(no_mangle)]`).
 #[macro_export]
 macro_rules! export_dpi_abi {
-    ($dpi:ident, $open:path) => {
+    ($dpi:path, $open:path) => {
         /// `rp_open(descr)`: connects to the remote-port peer and sends our hello.
         #[no_mangle]
         pub unsafe extern "C" fn rp_open(descr: *const ::core::ffi::c_char) -> i32 {

@@ -16,6 +16,7 @@ cargo xtask <command>
   release       cargo build --release (zynqsim, zynqsim-gui, zynqsim-mcp)
   dpi           build the XSim DPI library (target/dpi/release/libxsim_dpi.a)
   dpi-shared    build the shared-object DPI library (target/dpi/release/zynqsim_dpi.dll, .so or .dylib)
+  vpi           build the Icarus VPI module (target/vpi/release/zynqsim.vpi)
   dist          release archive in dist/ (binaries, DPI library, examples, fixtures,
                 boards, docs, licence, INSTALL.txt, SHA256SUMS), then an unpack check
                 from a clean directory
@@ -279,6 +280,7 @@ fn main() -> ExitCode {
         "release" => cargo(&["build", "--release"], &[]),
         "dpi" => cargo(dist::DPI_BUILD, &[]),
         "dpi-shared" => dist::run_dpi_shared(&workspace_root()),
+        "vpi" => dist::run_vpi(&workspace_root()),
         "dist" => dist::run(&workspace_root()),
         "dist-verify" => dist::verify_cli(std::env::args().nth(2).as_deref()),
         "third-party" => third_party(),

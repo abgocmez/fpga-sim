@@ -3,12 +3,28 @@
 // turns each PS access to M_AXI_GP0 into AXI4-Lite beats on my_math_ip.
 // Clock/reset match FCLK_CLK0 = 100 MHz.
 module cosim_top;
+`ifdef ZS_ICARUS
+    // Icarus Verilog has no DPI-C (ADR-037): these are the VPI system calls of zynqsim.vpi.
+    // `rp_next` is called as `$zs_rp_next` below (its outputs are arguments of the call);
+    // the time goes through `zs_now`, since a `$time` argument reads as 0 in vvp.
+    longint zs_now;
+    function int rp_open(input string descr);
+        rp_open = $zs_rp_open(descr);
+    endfunction
+    task rp_done(input int rdata, input int ok);
+        $zs_rp_done(rdata, ok);
+    endtask
+    task rp_close();
+        $zs_rp_close();
+    endtask
+`else
     import "DPI-C" function int  rp_open(input string descr);
     import "DPI-C" function int  rp_next(input longint now_ns, input int idle_ms,
                                          output int addr, output int wdata,
                                          output int wstrb, output int is_write);
     import "DPI-C" function void rp_done(input int rdata, input int ok);
     import "DPI-C" function void rp_close();
+`endif
 
     reg aclk    = 1'b0;
     reg aresetn = 1'b0;
@@ -81,7 +97,12 @@ module cosim_top;
 
         forever begin
             // 1 ms real-time wait for QEMU; if idle, let simulated time move.
+`ifdef ZS_ICARUS
+            zs_now = $time;
+            st = $zs_rp_next(zs_now, 1, a_i, wd_i, ws_i, iw_i);
+`else
             st = rp_next($time, 1, a_i, wd_i, ws_i, iw_i);
+`endif
             if (st == 0) begin
                 $display("cosim_top: peer closed, finishing at %0t", $time);
                 rp_close();

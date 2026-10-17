@@ -1,6 +1,7 @@
 # ADR-027: Verilator as the second RTL backend; Icarus stays a stub
 
 Status: **Accepted** (milestone P1, second RTL engine). Date: 2026-10-17.
+Update (ADR-037): Icarus Verilog is now the third RTL backend through a Rust VPI module; the "Icarus stays a stub" decision below is superseded.
 
 ## Context
 

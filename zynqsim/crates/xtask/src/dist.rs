@@ -175,6 +175,34 @@ fn build_dpi_shared(root: &Path) -> Result<PathBuf, String> {
     Ok(dest)
 }
 
+/// `cargo xtask vpi`: builds the Icarus VPI module and copies it to `target/vpi/release/zynqsim.vpi`
+/// (the name `vvp -mzynqsim` loads; ADR-037).
+pub fn run_vpi(root: &Path) -> bool {
+    match build_vpi(root) {
+        Ok(path) => {
+            eprintln!("xtask: Icarus VPI module: {}", path.display());
+            true
+        }
+        Err(e) => {
+            eprintln!("xtask: vpi failed: {e}");
+            false
+        }
+    }
+}
+
+/// Builds `vpi-icarus` and copies the DLL to `target/vpi/release/zynqsim.vpi`. Returns the copy.
+fn build_vpi(root: &Path) -> Result<PathBuf, String> {
+    cargo(root, &["build", "--release", "-p", "vpi-icarus"])?;
+    let built = root.join("target").join("release").join("zynqsim.dll");
+    let dest = root
+        .join("target")
+        .join("vpi")
+        .join("release")
+        .join("zynqsim.vpi");
+    copy_file(&built, &dest)?;
+    Ok(dest)
+}
+
 /// Builds the release binaries and the DPI libraries, assembles the archive,
 /// writes `SHA256SUMS` and checks the archive from a clean directory.
 pub fn run(root: &Path) -> bool {

@@ -82,6 +82,9 @@ pub enum RtlTool {
     },
     /// Verilator (`--binary --timing`), located by `backend_rtl_verilator::tools::find`.
     Verilator(backend_rtl_verilator::VerilatorTools),
+    /// Icarus Verilog (`iverilog` and `vvp`) with the zynqsim VPI module (ADR-037), located by
+    /// `backend_rtl_icarus::tools`.
+    Icarus(backend_rtl_icarus::IcarusTools, PathBuf),
 }
 
 /// An RTL design to run as the PL (XSim or Verilator).
@@ -807,6 +810,26 @@ fn start_rtl(
                 backend_rtl_xsim::XsimPl::start_with(&cfg, rtl.export.as_ref()).map_err(|e| {
                     ApiError::io(e.to_string())
                         .with_hint("see build.log / xsim.out.log in the run directory")
+                })?,
+            ))
+        }
+        RtlTool::Icarus(tools, vpi) => {
+            let cfg = backend_rtl_icarus::IcarusConfig {
+                iverilog: tools.iverilog.clone(),
+                vvp: tools.vvp.clone(),
+                vpi: vpi.clone(),
+                tool_dirs: tools.tool_dirs.clone(),
+                sources: rtl.sources.clone(),
+                top: rtl.top.clone(),
+                defines: rtl.defines.clone(),
+                work_dir: run_dir.join("icarus"),
+                connect_timeout: std::time::Duration::from_secs(300),
+                cache_dir: cache.map(|p| p.join("icarus-cache")),
+            };
+            Ok(Box::new(
+                backend_rtl_icarus::IcarusPl::start(&cfg).map_err(|e| {
+                    ApiError::io(e.to_string())
+                        .with_hint("see build.log / sim.err.log in the run directory (icarus/)")
                 })?,
             ))
         }

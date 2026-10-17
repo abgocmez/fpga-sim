@@ -73,6 +73,19 @@ Environment variables (all optional):
 
 `zynqsim inspect` lists every backend, whether it was found and where.
 
+### Icarus Verilog (optional, open source; ADR-037)
+
+Icarus Verilog is the third RTL backend (`pl = "icarus"`). It is in the same oss-cad-suite archive
+as Verilator, so nothing else is needed once that is unpacked: `iverilog.exe` and `vvp.exe` are in
+`%TEMP%\zs-tools\verilator\oss-cad-suite\bin`, their DLLs in its `lib` folder. Then build the VPI
+module (the Rust crate `vpi-icarus`; nothing is installed):
+
+    cargo xtask vpi                    # target\vpi\release\zynqsim.vpi
+
+`zynqsim inspect` reports `icarus` as found when the compiler and the module are both located.
+Environment: `ZYNQSIM_ICARUS` (`iverilog.exe`, or the folder with it) and `ZYNQSIM_VPI` (the module).
+The XSim comparison in `cli::icarus` also needs the DPI library (`cargo xtask dpi`).
+
 ## Install from an archive
 
 Release archives are named `zynqsim-<version>-<os>-<arch>.zip` (Windows) or
@@ -130,8 +143,8 @@ job. To run that check again on an archive: `cargo xtask dist-verify <archive>`.
 | The MCP server (`zynqsim-mcp`): the same tools, for the same engines | | |
 
 Verilator needs the install above (`pl = "verilator"`, `examples/math-verilator`). Icarus Verilog
-is not implemented and the native RTL engine is not built: `backends.pl = "icarus"` is refused
-with a message, not a crash.
+needs its install and `cargo xtask vpi` (`pl = "icarus"`, `examples/math-icarus`). The native RTL
+engine is not wired to `backends.pl`; it is refused with a message, not a crash.
 
 ## Troubleshooting
 

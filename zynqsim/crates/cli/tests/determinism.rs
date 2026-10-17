@@ -33,6 +33,8 @@ struct Case {
     xsim: bool,
     /// Needs Verilator (the portable build the Verilator backend finds).
     verilator: bool,
+    /// Needs Icarus Verilog and the zynqsim VPI module (`cargo xtask vpi`).
+    icarus: bool,
 }
 
 const fn case(name: &'static str, duration: &'static str) -> Case {
@@ -43,6 +45,7 @@ const fn case(name: &'static str, duration: &'static str) -> Case {
         qemu: true,
         xsim: false,
         verilator: false,
+        icarus: false,
     }
 }
 
@@ -95,6 +98,10 @@ const CASES: &[Case] = &[
         xsim: true,
         verilator: true,
         ..case("math-verilator", "3ms")
+    },
+    Case {
+        icarus: true,
+        ..case("math-icarus", "3ms")
     },
     Case {
         xsim: true,
@@ -329,7 +336,10 @@ fn every_example_runs_five_times_with_identical_trace_hashes() {
     let cases: Vec<&Case> = CASES
         .iter()
         .filter(|c| {
-            (!c.qemu || qemu) && (!c.xsim || xsim) && (!c.verilator || backend_found("verilator"))
+            (!c.qemu || qemu)
+                && (!c.xsim || xsim)
+                && (!c.verilator || backend_found("verilator"))
+                && (!c.icarus || backend_found("icarus"))
         })
         .collect();
     // Workers take the next case index from a shared counter; each case's RUNS
