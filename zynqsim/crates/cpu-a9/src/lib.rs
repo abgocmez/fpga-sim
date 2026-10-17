@@ -4,7 +4,7 @@
 //! One [`Cpu::step`] executes one instruction against a [`ps_bus::Bus`]. Unimplemented
 //! encodings are never guessed: the step returns [`StepResult::Unimplemented`] and leaves the
 //! state untouched. There is no MMU (virtual = physical; the [`Translate`] hook is the seam
-//! for one), no Thumb, no VFP or NEON. See `docs/adr/030-cpu-a9.md` for the instruction table.
+//! for one), no VFP or NEON; Thumb and Thumb-2 are in `thumb.rs`. See `docs/adr/030-cpu-a9.md` for the instruction table.
 
 #![forbid(unsafe_code)]
 
@@ -14,6 +14,7 @@ mod exec;
 mod media;
 mod mem;
 mod state;
+mod thumb;
 mod xlate;
 
 pub use state::{Cpu, Event, Mode, StepResult};

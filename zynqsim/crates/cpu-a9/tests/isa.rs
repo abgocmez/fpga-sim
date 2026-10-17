@@ -470,14 +470,17 @@ fn vfp_is_reported_unimplemented_and_nothing_changes() {
 }
 
 #[test]
-fn bx_to_an_odd_address_enters_thumb_which_is_reported() {
+fn bx_to_an_odd_address_enters_thumb_and_runs_it() {
+    // The interworking itself: BX to an odd address sets T and the Thumb instruction at the
+    // even address runs (`movs r1, #5`, halfword 0x2105, planted at 0x2000).
     let mut m = machine(PROG_BXODD);
+    m.bus.load(0x2000, &0x2105u16.to_le_bytes());
     m.run(2);
     assert_ne!(m.cpu.cpsr() & 0x20, 0, "T set");
-    match m.step() {
-        StepResult::Unimplemented { pc, .. } => assert_eq!(pc, 0x2000),
-        other => panic!("expected Unimplemented, got {other:?}"),
-    }
+    assert_eq!(m.cpu.pc(), 0x2000);
+    m.run(1);
+    assert_eq!(m.cpu.reg(1), 5, "the Thumb MOVS ran");
+    assert_eq!(m.cpu.pc(), 0x2002);
 }
 
 #[test]

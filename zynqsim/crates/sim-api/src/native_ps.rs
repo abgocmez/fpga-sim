@@ -196,7 +196,13 @@ impl NativePsEngine {
             uart_write(&mut bus, base + UART_CR, CR_TX_EN | CR_RX_EN)?;
         }
         let mut cpu = Cpu::new(0);
-        cpu.reset(image.entry);
+        // A Thumb entry point is an odd address (the symbol's value has bit 0 set): the core
+        // starts in Thumb state at the even address.
+        cpu.reset(image.entry & !1);
+        if image.entry & 1 != 0 {
+            let cpsr = cpu.cpsr();
+            cpu.set_cpsr(cpsr | (1 << 5));
+        }
         let symbols = Symbols::load(&spec.elf).unwrap_or_default();
         let source = SourceMap::load(&spec.elf).unwrap_or_default();
         let mut breakpoints = Vec::new();
@@ -350,7 +356,7 @@ impl NativePsEngine {
         };
         let msg = format!(
             "native PS stopped at {}: unimplemented {kind} {insn:#010x} at cycle {} \
-             (Thumb, VFP/NEON and the MMU are not implemented; docs/adr/033-native-ps-engine.md). \
+             (VFP/NEON and the MMU are not implemented; docs/adr/033-native-ps-engine.md). \
              The instruction was not executed and no state changed",
             describe_pc(pc, &self.symbols, &self.source),
             self.cycle
