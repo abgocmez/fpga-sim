@@ -1375,18 +1375,18 @@ mod tests {
 
     #[test]
     fn an_unimplemented_instruction_stops_with_its_pc_and_word() {
-        // mov r0, #1, then a VFP instruction (coprocessor 10), which is not implemented.
+        // mov r0, #1, then a NEON instruction (vadd.i32 d0, d1, d2), which is not implemented.
         let mut code = Vec::new();
         code.extend_from_slice(&0xE3A0_0001u32.to_le_bytes());
-        code.extend_from_slice(&0xEEB0_0A40u32.to_le_bytes());
-        let path = write_temp("vfp.elf", &tiny_elf(0x0010_0000, 0x0010_0000, &code));
+        code.extend_from_slice(&0xF221_0802u32.to_le_bytes());
+        let path = write_temp("neon.elf", &tiny_elf(0x0010_0000, 0x0010_0000, &code));
         let mut e = NativePsEngine::new(&spec_for(path)).expect("engine");
         let err = e
             .run_for(Ps::from_us(10))
-            .expect_err("VFP must stop the run");
+            .expect_err("NEON must stop the run");
         let msg = err.message.clone();
         assert!(msg.contains("pc=0x00100004"), "{msg}");
-        assert!(msg.contains("0xeeb00a40"), "{msg}");
+        assert!(msg.contains("0xf2210802"), "{msg}");
         assert_eq!(e.cpus[0].reg(0), 1, "the instruction before it ran");
         assert_eq!(
             e.cpus[0].pc(),
