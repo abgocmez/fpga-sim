@@ -101,10 +101,8 @@ impl Xadc {
                     self.rdfifo.push_back(v);
                 }
             }
-            2 => {
-                if (DRP_RW_BASE..DRP_SIZE).contains(&addr) {
-                    self.drp[addr] = data;
-                }
+            2 if (DRP_RW_BASE..DRP_SIZE).contains(&addr) => {
+                self.drp[addr] = data;
             }
             _ => {}
         }
@@ -272,7 +270,7 @@ impl DevCfg {
 
 impl Device for DevCfg {
     fn read(&mut self, offset: u64, size: u8) -> BusResult<u64> {
-        if offset >= 0x100 && offset < 0x200 {
+        if (0x100..0x200).contains(&offset) {
             return self.xadc.read(offset - 0x100, size);
         }
         if offset >= 0x200 {
@@ -387,7 +385,14 @@ mod tests {
         wr(&mut d, 0x10, 0);
         lines.clear();
         d.irq_lines(&mut lines);
-        assert_eq!(lines[0], IrqInput { id: 40, cpu: None, level: true });
+        assert_eq!(
+            lines[0],
+            IrqInput {
+                id: 40,
+                cpu: None,
+                level: true
+            }
+        );
         wr(&mut d, 0x0C, 0b100);
         assert_eq!(rd(&mut d, 0x0C), 0b001);
     }

@@ -119,7 +119,7 @@ impl I2c {
         let result = if self.control & CTRL_RW == 0 {
             let take = n.min(self.fifo.len());
             let data: Vec<u8> = self.fifo.drain(..take).collect();
-            self.peer.write(addr, &data).map(|()| ())
+            self.peer.write(addr, &data)
         } else {
             self.peer.read(addr, n).map(|bytes| {
                 for b in bytes {
@@ -314,7 +314,11 @@ mod tests {
     fn a_write_transfer_reaches_an_attached_device() {
         let stored = Arc::new(Mutex::new(Vec::new()));
         let mut i = I2c::new(1);
-        i.set_peer(Box::new(Eeprom { addr: 0x50, stored: Arc::clone(&stored), fill: 0 }));
+        i.set_peer(Box::new(Eeprom {
+            addr: 0x50,
+            stored: Arc::clone(&stored),
+            fill: 0,
+        }));
         wr(&mut i, CONTROL, CTRL_MS);
         wr(&mut i, ADDR, 0x50);
         wr(&mut i, DATA, 0x12);
@@ -328,7 +332,11 @@ mod tests {
     fn a_read_transfer_fills_the_fifo_from_the_device() {
         let stored = Arc::new(Mutex::new(Vec::new()));
         let mut i = I2c::new(0);
-        i.set_peer(Box::new(Eeprom { addr: 0x51, stored, fill: 0x7E }));
+        i.set_peer(Box::new(Eeprom {
+            addr: 0x51,
+            stored,
+            fill: 0x7E,
+        }));
         wr(&mut i, CONTROL, CTRL_MS | CTRL_RW | CTRL_CLR_FIFO);
         wr(&mut i, ADDR, 0x51);
         wr(&mut i, TRANS_SIZE, 3);
@@ -361,6 +369,13 @@ mod tests {
         wr(&mut i, IER, IXR_NACK);
         lines.clear();
         i.irq_lines(&mut lines);
-        assert_eq!(lines[0], IrqInput { id: 80, cpu: None, level: true });
+        assert_eq!(
+            lines[0],
+            IrqInput {
+                id: 80,
+                cpu: None,
+                level: true
+            }
+        );
     }
 }

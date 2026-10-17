@@ -60,7 +60,9 @@ fn dirm_readback(bus: &mut SystemBus) -> Res {
         for p in [0xA5C3_5A3Cu32, 0x0F0F_F0F0] {
             wr(bus, bank(b, DIRM), p);
             let got = rd(bus, bank(b, DIRM)) & m;
-            check(got == p & m, || format!("bank {b}: {got:#x} want {:#x}", p & m))?;
+            check(got == p & m, || {
+                format!("bank {b}: {got:#x} want {:#x}", p & m)
+            })?;
         }
         wr(bus, bank(b, DIRM), 0);
         Ok(())
@@ -72,7 +74,9 @@ fn oen_readback(bus: &mut SystemBus) -> Res {
         for p in [0x5A3C_C3A5u32, 0xF00F_0FF0] {
             wr(bus, bank(b, OEN), p);
             let got = rd(bus, bank(b, OEN)) & m;
-            check(got == p & m, || format!("bank {b}: {got:#x} want {:#x}", p & m))?;
+            check(got == p & m, || {
+                format!("bank {b}: {got:#x} want {:#x}", p & m)
+            })?;
         }
         wr(bus, bank(b, OEN), 0);
         Ok(())
@@ -85,7 +89,9 @@ fn data_readback(bus: &mut SystemBus) -> Res {
         wr(bus, BASE + DATA + 4 * b, p);
         let got = rd(bus, BASE + DATA + 4 * b) & m;
         wr(bus, BASE + DATA + 4 * b, 0);
-        check(got == p & m, || format!("bank {b}: {got:#x} want {:#x}", p & m))
+        check(got == p & m, || {
+            format!("bank {b}: {got:#x} want {:#x}", p & m)
+        })
     })
 }
 

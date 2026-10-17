@@ -48,6 +48,7 @@ fn check(ok: bool, detail: impl FnOnce() -> String) -> Res {
 }
 
 #[test]
+#[allow(clippy::vec_init_then_push)] // the checks are listed in firmware order
 fn conf_xadcps_checks_pass_on_the_model() {
     let (mut bus, _host) = system();
     let mut checks: Vec<(&str, Res)> = Vec::new();
@@ -78,15 +79,24 @@ fn conf_xadcps_checks_pass_on_the_model() {
     ));
     wr(&mut bus, XADC + INT_MASK, 0);
     let got = rd(&mut bus, XADC + INT_MASK) & 0xFFFF;
-    checks.push(("6 XADC INT_MASK cleared", check(got == 0, || format!("{got:#x}"))));
+    checks.push((
+        "6 XADC INT_MASK cleared",
+        check(got == 0, || format!("{got:#x}")),
+    ));
     wr(&mut bus, XADC + MCTL, 0x40);
     let got = rd(&mut bus, XADC + MCTL) & 0xFF;
-    checks.push(("7 XADC MCTL write/read", check(got == 0x40, || format!("{got:#x}"))));
+    checks.push((
+        "7 XADC MCTL write/read",
+        check(got == 0x40, || format!("{got:#x}")),
+    ));
     wr(&mut bus, XADC + MCTL, 0);
 
     wr(&mut bus, XADC + CFG, 0x1234);
     let got = rd(&mut bus, XADC + CFG);
-    checks.push(("8 XADC CFG write/read", check(got == 0x1234, || format!("{got:#x}"))));
+    checks.push((
+        "8 XADC CFG write/read",
+        check(got == 0x1234, || format!("{got:#x}")),
+    ));
     wr(&mut bus, XADC + CFG, 0);
 
     // Check 9: N/A in the firmware (no event source). Here a clear must not set anything.
@@ -110,7 +120,9 @@ fn conf_xadcps_checks_pass_on_the_model() {
     let t_mc = (i64::from(code) * 503_975 / 4096) - 273_150;
     checks.push((
         "10 XADC temperature via CMDFIFO/RDFIFO in -40..125 C (code = raw >> 4)",
-        check((-40_000..=125_000).contains(&t_mc), || format!("raw {temp:#x} -> {t_mc} mC")),
+        check((-40_000..=125_000).contains(&t_mc), || {
+            format!("raw {temp:#x} -> {t_mc} mC")
+        }),
     ));
     checks.push((
         "10b XADC temperature near the host value 25 C",

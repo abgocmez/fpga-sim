@@ -166,7 +166,7 @@ impl Gpio {
     /// Recomputes the pad levels and turns each change into interrupt status and output log
     /// entries.
     fn refresh(&mut self) {
-        for b in 0..4 {
+        for (b, &first) in BANK_FIRST.iter().enumerate() {
             let now = self.effective(b);
             let changed = now ^ self.last[b];
             let drive = self.dirm[b] & self.oen[b];
@@ -176,7 +176,7 @@ impl Gpio {
                     continue;
                 }
                 let level = now & bit != 0;
-                let pin = BANK_FIRST[b] + i as usize;
+                let pin = first + i as usize;
                 if drive & bit != 0 && self.out_log.len() < OUTPUT_LOG_CAP {
                     self.out_log.push((pin as u16, level));
                 }
@@ -334,7 +334,10 @@ mod tests {
         for b in 0..4u64 {
             assert_eq!(rd(&mut g, BANK_BASE + 0x40 * b + DIRM), 0);
             assert_eq!(rd(&mut g, BANK_BASE + 0x40 * b + OEN), 0);
-            assert_eq!(rd(&mut g, BANK_BASE + 0x40 * b + INT_MASK), BANK_WIDTH[b as usize]);
+            assert_eq!(
+                rd(&mut g, BANK_BASE + 0x40 * b + INT_MASK),
+                BANK_WIDTH[b as usize]
+            );
             assert_eq!(rd(&mut g, BANK_BASE + 0x40 * b + INT_TYPE), 0);
         }
     }
@@ -381,7 +384,11 @@ mod tests {
         wr(&mut g, DATA_BASE, 0b01);
         wr(&mut g, DATA_BASE, 0b01);
         g.set_input(5, true);
-        assert_eq!(g.take_output_log(), vec![(0, true)], "pin 1 never changes; pin 5 is not driven");
+        assert_eq!(
+            g.take_output_log(),
+            vec![(0, true)],
+            "pin 1 never changes; pin 5 is not driven"
+        );
         assert!(g.take_output_log().is_empty(), "drained");
     }
 
@@ -393,12 +400,23 @@ mod tests {
         wr(&mut g, BANK_BASE + 0x40 + INT_POLARITY, 1 << 4);
         wr(&mut g, BANK_BASE + 0x40 + INT_EN, 1 << 4);
         g.set_input(20, false);
-        assert_eq!(rd(&mut g, BANK_BASE + 0x40 + INT_STAT), 0, "falling is not selected");
+        assert_eq!(
+            rd(&mut g, BANK_BASE + 0x40 + INT_STAT),
+            0,
+            "falling is not selected"
+        );
         g.set_input(20, true);
         assert_eq!(rd(&mut g, BANK_BASE + 0x40 + INT_STAT), 1 << 4);
         let mut lines = Vec::new();
         g.irq_lines(&mut lines);
-        assert_eq!(lines, vec![IrqInput { id: 52, cpu: None, level: true }]);
+        assert_eq!(
+            lines,
+            vec![IrqInput {
+                id: 52,
+                cpu: None,
+                level: true
+            }]
+        );
         wr(&mut g, BANK_BASE + 0x40 + INT_STAT, 1 << 4);
         assert_eq!(rd(&mut g, BANK_BASE + 0x40 + INT_STAT), 0, "write 1 clears");
         // INT_ANY: both edges count.
@@ -419,7 +437,10 @@ mod tests {
         wr(&mut g, BANK_BASE + INT_DIS, 1);
         lines.clear();
         g.irq_lines(&mut lines);
-        assert!(!lines[0].level, "masked: the status stays but the line is low");
+        assert!(
+            !lines[0].level,
+            "masked: the status stays but the line is low"
+        );
         assert_eq!(rd(&mut g, BANK_BASE + INT_STAT) & 1, 1);
     }
 

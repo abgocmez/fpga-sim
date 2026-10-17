@@ -87,7 +87,11 @@ fn xcanps_selftest_sequence_passes_in_loopback() {
         })
         .collect();
     assert_eq!(rx[0], 0xFA00_0000, "ID/DLC word");
-    assert_eq!(rx[1] & 0xFFFF_0000, 0x8000_0000, "the self test compares the top half");
+    assert_eq!(
+        rx[1] & 0xFFFF_0000,
+        0x8000_0000,
+        "the self test compares the top half"
+    );
     assert_eq!(rx[2], 0);
     assert_eq!(rx[3], 0);
     // XCanPs_IntrClear(0x80), then the frame is gone.
@@ -116,10 +120,17 @@ fn a_watchdog_in_watchdog_mode_requests_one_reset_per_expiry_and_the_host_takes_
     wr(&mut bus, WDT_LOAD, 500);
     wr(&mut bus, WDT_COUNTER, 500);
     wr(&mut bus, WDT_CONTROL, CTRL_EN | CTRL_WD_MODE);
-    assert_eq!(h.mpcore.lock().unwrap().take_wdt_resets(), 0, "nothing before expiry");
+    assert_eq!(
+        h.mpcore.lock().unwrap().take_wdt_resets(),
+        0,
+        "nothing before expiry"
+    );
     // 500 PERIPHCLK ticks = 1000 CPU cycles per expiry.
     bus.tick(1_500);
-    assert!(h.mpcore.lock().unwrap().take_wdt_resets() >= 1, "expiry requests a reset");
+    assert!(
+        h.mpcore.lock().unwrap().take_wdt_resets() >= 1,
+        "expiry requests a reset"
+    );
     assert_eq!(rd(&mut bus, WDT_RESET_STATUS) & 1, 1, "RESET_STATUS set");
     assert_eq!(h.mpcore.lock().unwrap().take_wdt_resets(), 0, "taken once");
     // The reset status is write-1-to-clear.
@@ -136,7 +147,11 @@ fn a_watchdog_in_timer_mode_flags_its_event_and_requests_no_reset() {
     bus.tick(1_500);
     assert_eq!(h.mpcore.lock().unwrap().take_wdt_resets(), 0);
     assert_eq!(rd(&mut bus, WDT_RESET_STATUS) & 1, 0);
-    assert_eq!(rd(&mut bus, WDT + 0x0C) & 1, 1, "the countdown event flag is set");
+    assert_eq!(
+        rd(&mut bus, WDT + 0x0C) & 1,
+        1,
+        "the countdown event flag is set"
+    );
 }
 
 #[test]

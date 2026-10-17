@@ -347,7 +347,14 @@ mod tests {
         wr(&mut c, IER, ISR_RXOK);
         lines.clear();
         c.irq_lines(&mut lines);
-        assert_eq!(lines[0], IrqInput { id: 19, cpu: None, level: true });
+        assert_eq!(
+            lines[0],
+            IrqInput {
+                id: 19,
+                cpu: None,
+                level: true
+            }
+        );
     }
 
     #[test]

@@ -278,7 +278,9 @@ impl Device for Spi {
     }
 
     fn save_state(&self, out: &mut Vec<u8>) {
-        for v in [self.cr, self.isr, self.mask, self.er, self.dr, self.sicr, self.txwr, self.rxwr] {
+        for v in [
+            self.cr, self.isr, self.mask, self.er, self.dr, self.sicr, self.txwr, self.rxwr,
+        ] {
             out.extend_from_slice(&v.to_le_bytes());
         }
         out.extend_from_slice(&(self.tx.len() as u32).to_le_bytes());
@@ -354,7 +356,14 @@ mod tests {
         wr(&mut s, IER, IXR_TXFULL);
         lines.clear();
         s.irq_lines(&mut lines);
-        assert_eq!(lines[0], IrqInput { id: 58, cpu: None, level: true });
+        assert_eq!(
+            lines[0],
+            IrqInput {
+                id: 58,
+                cpu: None,
+                level: true
+            }
+        );
     }
 
     #[test]
