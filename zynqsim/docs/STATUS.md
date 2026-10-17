@@ -592,7 +592,7 @@ run unmodified; GPIO, SPI, CAN, USB, devcfg and the watchdog fail because the ma
 | `xsim` (PL) | verified, Windows + Vivado (build cache) |
 | `verilator` (PL) | verified, Windows, 2-state (ADR-027) |
 | `icarus` (PL) | stub (no DPI-C; ADR-027) |
-| `native` PS / RTL engine | stub, P5 / P6 (optional) |
+| `native` PS / RTL engine | native PS: P5 (see *Native PS*); native RTL engine: engine and `RtlModule` verified, not wired to `backends.pl` (see *Native RTL*) |
 
 ## Robustness fuzzing (spec §14.8, §14.10)
 
@@ -731,10 +731,12 @@ The native ARMv7-A core `crates/cpu-a9` (ADR-030). Integer A32 only; the MMU, Th
 ## Native RTL (P6, optional)
 
 The front end (`crates/rtl-frontend`) reads Verilog-2001 and the synthesizable SystemVerilog subset
-without any external tool, and elaborates the hierarchy. It does **not** simulate: the engine that
-will run the subset on the AST is not started. "Verified" here means the named tests check the parser,
-preprocessor and elaborator; it does not mean that the results match Vivado XSim (no differential run
-exists yet). "Parses clean" means no diagnostic was produced, not that the design is correct.
+without any external tool, and elaborates the hierarchy. The native engine (`crates/rtl-engine`, ADR-034)
+simulates the subset on its own flattened netlist, 2-state and up to 128 bits. It is **not** selectable
+as a backend yet (`backends.pl = "rtl-native"` is refused). "Verified" means a named test checks the
+behaviour; for the engine, one design is compared with Vivado XSim and six corpus designs with their own
+self-checking testbenches. Those are the only evidence that the results match a real simulator.
+"Parses clean" means no diagnostic was produced, not that the design is correct.
 
 | Feature | Status | Evidence / note |
 |---|---|---|
@@ -754,7 +756,23 @@ exists yet). "Parses clean" means no diagnostic was produced, not that the desig
 | Corpus: every `.v`, `.sv`, `.vh`, `.svh` under `zynqsim/fixtures`, `examples` and `tests` (148 files): **109 parse clean**, **39 still give diagnostics**, named per file in the test's pinned list | verified | `rtl-frontend` `corpus::corpus_files_match_the_pinned_parse_results` (the list changes only on purpose) |
 | Robustness: 5000 seeded mutations of repository sources never panic and stay within the step budget; a lexer loop found by it is a regression test | verified | `rtl-frontend` `fuzz::five_thousand_mutated_sources_never_panic_and_stop_within_the_budget`, `fuzz::apostrophe_before_a_non_base_letter_terminates`, `fuzz::the_step_budget_stops_a_large_input` |
 | CLI `zynqsim rtl-check FILE... [--top M] [-I DIR] [-D NAME=VAL] [--json]`: diagnostics as `file:line:col: construct: message`, exit 0 / 1 / 2, JSON with the hierarchy and port list | verified | `crates/cli/tests/rtl_check.rs` (5 tests) |
-| Native RTL engine (simulation of the subset from the AST) | stub | not started; the front end is its input (P6 engine phase) |
+| Native engine: flattening elaboration (`rtl_engine::Design::elaborate`): parameter overrides (named, positional, string values), generate for/if/case with `label[i]` names, module instances, port wiring (input and output; `inout` refused), gate primitives, memories, functions, tasks (inlined, with delays and output arguments), block locals, `$clog2`, `$bits` | verified | `rtl-engine` `constructs::{parameters_generate_and_hierarchical_names, tasks_with_delays_and_output_arguments_run_inline, functions_return_values_and_take_arguments}`, `expr::a_function_writing_a_memory_declared_after_it`, and the corpus row below |
+| Native engine: scheduling (active and non-blocking regions, delta cycles, `posedge`/`negedge`/`@*`/`wait` events, timed events in the `timescale` unit, `$finish`), guards for combinational loops and processes without timing control | verified | `rtl-engine` `scheduling::*` (11 tests): NBA swap, blocking swap, race-free counter, delta chain, negedge, delays, loop, budget, finish, `always_comb` at time 0 |
+| Native engine: expression sizing and signedness (context width, operand sign rules, comparisons, shifts, `>>>`, division and modulo) at widths 1 to 128 | verified | `rtl-engine` `property::*`: seeded random operands against an independent Rust reference, every width 1 to 64 for both signednesses, and widths 65 to 128; plus `expr::{context_width_keeps_the_carry_of_an_addition, mixed_signedness_makes_the_expression_unsigned, arithmetic_right_shift_only_for_signed_left_operands, division_and_modulo_follow_the_sign_rules, comparison_operands_share_the_wider_width}` |
+| Native engine: expression constructs: literals (sized, based; x and z read as 0), concatenation and replication (zero replication inside a wider concatenation), bit, part and indexed selects (also of memory words and of ascending ranges), reductions, logical operators, ternary | verified | `rtl-engine` `expr::*` (hand-computed values, 18 tests) |
+| Native engine: `case`, `casez`, `casex` (wildcard labels), `for`, `while`, `repeat`, `forever` with `break` and `continue`, memories with `$readmemh` | verified (`$readmemh`); `$readmemb` implemented-untested | `rtl-engine` `constructs::{case_casez_and_casex_select_the_first_matching_item, loops_break_and_continue_and_repeat_and_forever, readmemh_loads_a_memory_from_a_file}` |
+| Native engine: `$display`, `$write`, `$strobe`, `$error` and the like, with `%d %h %b %o %s %c %t %m %%` and Verilog padding; the log | verified. `$monitor` is one display at its call, not a monitor | `rtl-engine` `constructs::display_formats_match_verilog_padding`, `constructs::finish_stops_the_simulation_at_once` |
+| Native engine: recursive functions and tasks, unknown or hierarchical task calls, `$random` and other unsupported system tasks, values wider than 128 bits: refused with a diagnostic that names the construct or signal | verified (refusal) | `rtl-engine` `constructs::{recursive_functions_are_refused, unsupported_system_tasks_are_refused_at_elaboration, a_port_connection_with_a_missing_module_is_refused_by_name}`, `expr::a_value_wider_than_128_bits_is_refused_by_name`, corpus (uriscv) |
+| Native engine: snapshot and restore (`Vec<u8>`, refused for another design or a truncated snapshot), state hash (FNV-1a), identical state hashes across five runs in one process | verified (in process; not across processes) | `rtl-engine` `constructs::{snapshot_and_restore_reproduce_the_same_future, snapshot_rejects_another_design_and_garbage, identical_runs_give_identical_state_hashes}` |
+| Native engine: value-change recorder and VCD text | verified (structure only; no waveform viewer opened it) | `rtl-engine` `constructs::the_value_change_recorder_writes_a_vcd` |
+| Native engine as an AXI4-Lite slave: `RtlModule` implements `pl_native::RegisterBlock`; each register access is a handshake over clock cycles of the engine's clock | verified | `rtl-engine` `math_ip::*` (7 tests against `pl_native::MathIp`, the firmware golden model; the RTL decodes 4 address bits, so offset 0x10 aliases to 0x0, pinned as a known difference) |
+| Native engine vs Vivado XSim: `my_math_ip` answers the same register stimulus with the same values (through `XsimPl`) | verified (one design, Windows, XSim) | `rtl-engine` `xsim_diff::my_math_ip_registers_agree_between_xsim_and_the_engine` |
+| Native engine on the corpus (`tests/rtl`, self-checking testbenches printing `CORPUS_PASS`): picorv32, serv, Forencich LFSR, UART and AXI stream FIFO, dpretet async FIFO **pass** (6 of 9); uriscv refused (hierarchical task call), pulp-common-cells refused (package-typed parameters), vivado-funcsim refused (needs a netlist that is not in the repository) | verified (6 pass, 3 refused) | `rtl-engine` `corpus::corpus_results_are_pinned_and_written_to_docs`; table in `docs/CORPUS_NATIVE.md` |
+| Native engine: 4-state (X and Z), `x`/`z` comparisons | not-planned for this subset (2-state by decision, ADR-034) | `docs/RTL_SUBSET.md` |
+| Native engine: `#` delays on intra-assignments and on continuous assigns | implemented-untested | `elab`/`lower` emit `Delay` before the assignment; no test |
+| Native engine: SystemVerilog beyond the subset (interfaces, classes, packages, assertions, `fork`, `disable`, DPI, hierarchical references in expressions) | stub: refused by name | `docs/RTL_SUBSET.md` |
+| Native engine: VHDL, UNISIM and netlists | stub | not started |
+| Native engine selected with `backends.pl = "rtl-native"` (a `PlTarget` adapter with lock-step, board pins, media and IRQ forwarding) | stub: not wired; `backends.pl` refuses it | `RtlModule` is a register-level adapter only; a `PlTarget` is the next step (ADR-034) |
 | Differential check of the front end against XSim on the corpus | not-planned here | would need a Vivado run per file; not done |
 
 **Known limits of the front end** (see `docs/RTL_SUBSET.md`): DPI, classes, interfaces, packages
