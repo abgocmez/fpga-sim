@@ -10,6 +10,19 @@ you can see, drive from a GUI, a CLI or an MCP server, and replay exactly.
 > Vivado, both located automatically. Read [docs/STATUS.md](docs/STATUS.md) before trusting any
 > behaviour.
 
+## Try it in 5 minutes
+
+```
+cargo xtask demo --quick       # builds, then runs the 5-minute tour of headless checks
+demo.cmd                       # the same on Windows (double-click it, or run it in any terminal)
+```
+
+The tour runs the real `zynqsim`, `zynqsim-gui` and `zynqsim-mcp` binaries, checks each result
+(UART text, `--json` fields, artifact files) and writes its output to `demo-out/`. Steps whose tool
+is not installed are reported as `SKIPPED` with the reason. The full tour, the manual GUI tour and
+what is expected NOT to work are in [docs/DEMO.md](docs/DEMO.md). Requirements are in
+[docs/INSTALL.md](docs/INSTALL.md).
+
 ## Build and test
 
 ```

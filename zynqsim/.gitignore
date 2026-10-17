@@ -13,3 +13,6 @@
 
 # Local tool state
 ruvector.db
+
+# Output of `cargo xtask demo` (screenshots, pcap, WAV, PNG, demo projects)
+/demo-out/

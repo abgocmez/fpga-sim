@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 use std::time::Instant;
 use xtask::ci::{self, CiMode, StepRecord};
-use xtask::dist;
+use xtask::{demo, dist};
 
 const HELP: &str = "\
 cargo xtask <command>
@@ -39,6 +39,9 @@ cargo xtask <command>
   firmware      build the Rust firmware (needs the armv7a-none-eabi target) and copy the
                 ELFs to fixtures/elf/rust_*.elf
   third-party   regenerate THIRD_PARTY.md from the lock file
+  demo          a tour of the headless checks through the real binaries, with output in
+                demo-out/ (see docs/DEMO.md). Options: --quick (5-minute subset),
+                --only name,... (step names), --gui (also the GUI screenshots)
   help          this text
 ";
 
@@ -417,6 +420,20 @@ fn main() -> ExitCode {
         "dist-verify" => dist::verify_cli(std::env::args().nth(2).as_deref()),
         "third-party" => third_party(),
         "firmware" => firmware(),
+        "demo" => match demo::parse_args(&args[2..]) {
+            Ok(opts) => {
+                let root = workspace_root();
+                // The firmware ELFs are committed; rebuild them only when one is missing.
+                let missing = FIRMWARE
+                    .iter()
+                    .any(|(_, f)| !root.join("fixtures/elf").join(f).exists());
+                demo::run(&root, &opts, &|| if missing { firmware() } else { true })
+            }
+            Err(e) => {
+                eprintln!("xtask: {e}");
+                false
+            }
+        },
         "help" | "-h" | "--help" => {
             print!("{HELP}");
             true
