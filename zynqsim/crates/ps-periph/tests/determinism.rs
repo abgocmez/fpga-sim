@@ -36,7 +36,7 @@ fn session(ticks: &[u64]) -> (Vec<u64>, SystemBus) {
 
     // UART1: RX on, bytes injected by the host.
     wr(&mut bus, 0xE000_1000, 0x14);
-    assert_eq!(h.uart1.borrow_mut().inject_rx(b"xy"), 2);
+    assert_eq!(h.uart1.lock().unwrap().inject_rx(b"xy"), 2);
     step(&bus, &mut hashes);
 
     // DDR and OCM writes with a pattern.

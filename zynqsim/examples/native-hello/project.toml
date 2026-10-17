@@ -1,0 +1,22 @@
+# The rust-hello firmware on the native PS engine (`backends.ps = "native"`, ADR-033): the
+# pure-Rust Cortex-A9 interpreter, no Xilinx QEMU, no Vivado. Same firmware and UART text as
+# examples/rust-hello (the differential test compares them). PS only: no PL, core 0 only.
+#
+#   zynqsim run --project examples/native-hello/project.toml --for 5ms
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "native"
+pl = "demo"          # no PL: the native PS attaches none
+
+[sim]
+quantum_ns = 1000
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_hello.elf"

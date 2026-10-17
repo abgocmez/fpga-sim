@@ -664,7 +664,7 @@ struct StopNote {
     reason: String,
 }
 
-fn cpsr_mode(cpsr: u32) -> &'static str {
+pub(crate) fn cpsr_mode(cpsr: u32) -> &'static str {
     match cpsr & 0x1F {
         0x10 => "usr",
         0x11 => "fiq",
@@ -690,7 +690,7 @@ fn gdb_kind(k: BreakKind) -> GdbKind {
 
 /// Splits `file.rs:42` into its parts (the line is after the last colon, so a
 /// Windows drive letter is fine). `None` for anything else.
-fn split_file_line(t: &str) -> Option<(&str, u32)> {
+pub(crate) fn split_file_line(t: &str) -> Option<(&str, u32)> {
     let (file, line) = t.rsplit_once(':')?;
     let line: u32 = line.trim().parse().ok()?;
     let file = file.trim();
@@ -698,7 +698,7 @@ fn split_file_line(t: &str) -> Option<(&str, u32)> {
 }
 
 /// The source position of an address, when the ELF has line information.
-fn source_ref(map: &SourceMap, addr: u32) -> Option<SourceRef> {
+pub(crate) fn source_ref(map: &SourceMap, addr: u32) -> Option<SourceRef> {
     map.lookup(addr).map(|l| SourceRef {
         file: l.file.to_string(),
         line: l.line,
@@ -707,7 +707,7 @@ fn source_ref(map: &SourceMap, addr: u32) -> Option<SourceRef> {
 
 /// An address (`0x100614`, `1049108`), an ELF symbol name or `file.rs:LINE`.
 /// A source line may start code in several places; all are returned.
-fn resolve_locations(
+pub(crate) fn resolve_locations(
     text: &str,
     symbols: &Symbols,
     source: &SourceMap,

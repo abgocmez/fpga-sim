@@ -109,7 +109,7 @@ struct Region {
     name: &'static str,
     base: u64,
     size: u64,
-    dev: Box<dyn Device>,
+    dev: Box<dyn Device + Send>,
 }
 
 /// The physical address space of the PS: DDR from 0, the on-chip RAM at its high mapping,
@@ -184,7 +184,7 @@ impl SystemBus {
         name: &'static str,
         base: u64,
         size: u64,
-        dev: Box<dyn Device>,
+        dev: Box<dyn Device + Send>,
     ) -> Result<(), MapError> {
         if size == 0 {
             return Err(MapError::Empty(name));

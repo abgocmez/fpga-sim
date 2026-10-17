@@ -58,6 +58,13 @@ is `true` (warnings), `false` (off) or `"strict"` (errors fail the run). See
 
 ### Run real firmware
 
+The PS can also run natively, with no Xilinx QEMU: `backends.ps = "native"` runs the pure-Rust
+Cortex-A9 interpreter (core 0 only, no PL, not cycle-accurate; ADR-033):
+
+```
+zynqsim run --project examples/native-hello/project.toml --for 10ms    # same text as rust-hello
+```
+
 ```
 cargo xtask dpi                                    # once: the XSim DPI library
 cargo xtask dpi-shared                             # optional: the shared-object DPI library (Questa, VCS, Xcelium; ADR-028)

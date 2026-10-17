@@ -274,8 +274,8 @@ pub fn detect_backends() -> Vec<BackendInfo> {
         native(
             "native",
             BackendRole::Ps,
-            false,
-            "native Cortex-A9 backend: milestone P5 (optional)",
+            true,
+            "native Cortex-A9 interpreter (cpu-a9, F0, PS only: no PL, core 0 only)",
         ),
         native(
             "demo",
@@ -342,6 +342,7 @@ mod tests {
             [
                 ("demo", BackendRole::Ps),
                 ("qemu", BackendRole::Ps),
+                ("native", BackendRole::Ps),
                 ("demo", BackendRole::Pl),
                 ("native", BackendRole::Pl),
                 ("verilator", BackendRole::Pl),
