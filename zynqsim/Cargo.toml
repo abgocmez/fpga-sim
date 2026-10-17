@@ -76,6 +76,15 @@ all = { level = "warn", priority = -1 }
 [profile.dev]
 panic = "abort"
 
+# The native PS engine interprets guest code inside the dev and test profiles (ADR-033). Its
+# hot crates are optimised there, so a 100 ms virtual-time run takes seconds, not minutes.
+[profile.dev.package.cpu-a9]
+opt-level = 3
+[profile.dev.package.mem-sys]
+opt-level = 3
+[profile.dev.package.ps-periph]
+opt-level = 3
+
 [profile.release]
 lto = "thin"
 codegen-units = 4

@@ -63,7 +63,7 @@ control plane drive it). Caveats are listed under *Known limits of the P1 engine
 | `Play`/`Pause` on a QEMU engine, queries stay responsive | verified | `sim-api::tests::qemu_play` |
 | Prototype DMA regression: 6 cases PASS, 2 cores, IRQ | verified | `zynqsim::dma_regression_passes_and_is_deterministic_across_processes` |
 | DMA results equal a Rust golden model (4,337 words) | verified | `backend-rtl-xsim::dma_golden`; mutation-checked (a deliberately wrong model fails) |
-| Every example, 5 separate processes each: trace hash, end time and UART text identical (§14.6). 26 examples run (25 identical; `board-demo` is known non-deterministic, see FINDING below); `hdmi-demo` not run | verified for 25 examples; board-demo **not** deterministic | `zynqsim::every_example_runs_five_times_with_identical_trace_hashes` (`crates/cli/tests/determinism.rs`). FINDING: `board-demo` drives its shell over UART1 TCP (`[host] uart1 = "tcp"`), best-effort timing: 3 distinct hashes in 5 runs in one full run of the test and 5 in 5 in another, end times 15.000116..15.000652 ms, the firmware's PL tick count differs (300145..328234). Not fixed; the scripted inputs are not reproducible on this path. `rust-debug` and `math-debug` stop at their first breakpoint, so they compare the stop state only (rust-debug at 0 ps); math-debug was identical in 5 runs although its project header warns that debugger timing can vary. `hdmi-demo` needs a host video image and is covered by `zynqsim::hdmi_demo_scans_out_a_frame_and_captures_the_host_image` |
+| Every example, 5 separate processes each: trace hash, end time and UART text identical (§14.6). 27 examples run (26 identical, `native-hello` among them; `board-demo` is known non-deterministic, see FINDING below); `hdmi-demo` not run | verified for 25 examples; board-demo **not** deterministic | `zynqsim::every_example_runs_five_times_with_identical_trace_hashes` (`crates/cli/tests/determinism.rs`). FINDING: `board-demo` drives its shell over UART1 TCP (`[host] uart1 = "tcp"`), best-effort timing: 3 distinct hashes in 5 runs in one full run of the test and 5 in 5 in another, end times 15.000116..15.000652 ms, the firmware's PL tick count differs (300145..328234). Not fixed; the scripted inputs are not reproducible on this path. `rust-debug` and `math-debug` stop at their first breakpoint, so they compare the stop state only (rust-debug at 0 ps); math-debug was identical in 5 runs although its project header warns that debugger timing can vary. `hdmi-demo` needs a host video image and is covered by `zynqsim::hdmi_demo_scans_out_a_frame_and_captures_the_host_image` |
 | `zynqsim bench --project P --for T`: wall time, simulated time, sim/wall ratio, PL cycles per wall second (XSim, nominal 100 MHz), approximate guest instruction rate (QEMU) | verified for the numbers in `docs/PERFORMANCE.md` (single runs, 2026-10-16); no test asserts them | `docs/PERFORMANCE.md` |
 | 5 identical trace digests of the DMA regression | verified | run manually 5x (`fnv1a64:4137e81608225a53`, 3.000836 ms, 687 bus accesses); CLI test runs 3 processes |
 | Verilator, Icarus, native RTL engine (as RTL backends) | stub | not built; `backends.pl` rejects them with a precise message. The DPI shared object for them exists (rows above) but no backend drives it |
@@ -724,6 +724,43 @@ The native ARMv7-A core `crates/cpu-a9` (ADR-030). Integer A32 only; the MMU, Th
 | Every distinct instruction word of the 31 Rust firmware images decodes to an implemented class | verified (decode, not behaviour) | `cpu-a9/tests/rust_firmware.rs::every_instruction_word_of_the_firmware_decodes` |
 | Other 30 Rust firmware images run to their end | stub: they need the GIC, timer, PL and peripheral models; ADR-030 lists each | `cpu-a9/tests/rust_firmware.rs::every_rust_firmware_image_is_classified` (report) |
 | Instruction-by-instruction differential against QEMU | stub (only the UART text of one image is compared) | ADR-030, TESTPLAN |
+
+### The native engine (`backends.ps = "native"`, ADR-033)
+
+PS only: core 0 runs `[cpu0] elf`, core 1 stays parked, no PL is attached. Fidelity F0: one
+instruction per cycle at 666.67 MHz (1.5 ns), not cycle-accurate. Differences from QEMU are
+pinned in `docs/conformance/native-ps.md`.
+
+| Feature | Status | Evidence / note |
+|---|---|---|
+| `backends.ps = "native"`: build the PS, load the PT_LOAD segments into DDR/OCM, reset core 0 to the entry (Supervisor, IRQ and FIQ masked) | verified | `sim-api::native_ps::tests::{rust_hello_prints_its_text_and_parks, core_zero_starts_in_supervisor_mode_at_the_entry_point}` |
+| `rust-hello` prints the same UART text as QEMU, status contract (board, no PL, F0) | verified (with QEMU) | `zynqsim::native_ps_diff::rust_hello_prints_the_same_text_on_qemu_and_natively` (skips without QEMU); native half: `native_ps::tests::rust_hello_prints_its_text_and_parks` |
+| `conf-scutimer` on the native PS: checks 1 to 17 PASS | verified | `zynqsim::native_ps_diff::conf_scutimer_matches_qemu_except_the_three_checks_qemu_cannot_pass` (3 pinned differences: checks 13 to 15, QEMU N/A) |
+| `conf-ttc` on the native PS: 14 checks, one FAIL pinned | verified (differences pinned) | `zynqsim::native_ps_diff::conf_ttc_matches_qemu_except_the_pinned_differences`: check 12 (QEMU N/A) and check 9 (native FAIL, timing-dependent firmware; explained in `docs/conformance/native-ps.md`) |
+| UART1 and UART0 TX: `uart_read` and trace bytes; UART bring-up 115200 8N1, TX and RX on | verified | `native_ps::tests::rust_hello_prints_its_text_and_parks`; bring-up is the FSBL-equivalent described in ADR-033 |
+| UART RX injection (`uart_write`), bad ports refused | verified | `native_ps::tests::uart_input_is_accepted_and_bad_ports_are_refused` |
+| Run, RunUntil, Step: virtual time in cycles, never past the request | verified | `native_ps::tests::*` (every run) and the differential tests |
+| Interrupt latency of a device to the core | implemented-untested | bound by construction (128-cycle ticks, 192 ns); the conformance firmwares take their timer interrupts, no latency measurement |
+| Determinism: one trace digest across five processes; five engines in one process | verified | `zynqsim::native_ps_diff::five_processes_give_one_trace_digest`, `native_ps::tests::five_runs_give_one_trace_digest` |
+| Unimplemented instruction: stop with pc, symbol, word, cycle; nothing executed; sticky | verified | `native_ps::tests::an_unimplemented_instruction_stops_with_its_pc_and_word` (a VFP word) |
+| Execution breakpoints (address, symbol, `file:line`): stop before the instruction, resume past it | verified (symbol form) | `native_ps::tests::a_breakpoint_stops_before_the_instruction_and_resumes`; `file:line` and address forms share the QEMU resolver, not tested natively |
+| Watchpoints | not-planned | refused with `unsupported` |
+| `cpu_regs` for core 0 at any time; core 1 refused | verified | `native_ps::tests::core_zero_starts_in_supervisor_mode_at_the_entry_point` |
+| Memory read and write: DDR and OCM only (device registers are not read by a query) | verified | `native_ps::tests::memory_reads_see_the_loaded_image_and_device_space_is_refused` |
+| Snapshot and restore by re-execution, verified against the trace digest, cycle and state hash (bus, core registers, CPSR, SPSRs) | verified, by re-execution | `native_ps::tests::a_snapshot_restores_the_same_session_and_is_verified`. No memory copy: device models have no restore (ADR-033) |
+| Reset returns to time zero with the same trace digest | verified | `native_ps::tests::reset_returns_to_the_start_of_the_session` |
+| Recording and replay through the project (journal) | implemented-untested | `Query::Recording` is answered and replays through `replay_engine` like the QEMU journal; no native replay test yet |
+| Project validation: `[cpu1]`, `backends.pl` other than `demo`, `[native]`, `[devices]`, `[media]`, `boot_bin` refused with the reason | verified | `zynqsim::native_ps_diff::a_native_project_with_a_second_core_is_refused_with_the_reason`; the rest in `sim-api::native_ps::tests::validation_*` |
+| CLI: `zynqsim run` on a native project; `inspect` lists `native` as an available PS | verified | `zynqsim::native_ps_diff::{five_processes_give_one_trace_digest, inspect_lists_the_native_ps_as_available}`; `examples/native-hello` |
+| GUI project window: "native Rust" PS choice | implemented-untested | `crates/gui/src/app/project.rs`, `loader.rs`; no GUI test drives it |
+| Thumb, VFP and NEON, the MMU | stub | reported as `Unimplemented`; the engine stops with a message (see the cpu-a9 table above) |
+| PL attachment through remote-port (native PL models, RTL) | not-planned | out of scope for P5; `backends.pl` must be `demo` |
+| Dual core (`[cpu1]`) | not-planned | refused by validation: core 1 is parked |
+| Board switches, buttons, LEDs; Pmod devices; HDMI and audio; Ethernet; screenshots on the native PS | not-planned | refused with the reason; `qemu` has them |
+| Cycle-accurate timing, caches, DDR timing, bus contention | not-planned | F0 only, by design |
+| Snapshot by copying core and RAM state | not-planned | ADR-033 explains why re-execution is used |
+| Two cores, SMP, the boot ROM | not-planned | core 1 stays parked |
+
 ## Native RTL (P6, optional)
 
 The front end (`crates/rtl-frontend`) reads Verilog-2001 and the synthesizable SystemVerilog subset

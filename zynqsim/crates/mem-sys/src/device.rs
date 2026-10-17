@@ -1,9 +1,8 @@
 //! The device interface the system bus dispatches to, and the register-access helpers
 //! that device models share.
 
-use core::cell::RefCell;
 use ps_bus::{BusFault, BusResult};
-use std::rc::Rc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 /// The level of one interrupt line, as a device reports it or an interrupt controller
 /// receives it.
@@ -88,40 +87,46 @@ pub fn lane_merge(offset: u64, size: u8, value: u64, cur: u32) -> BusResult<(u64
 /// A device shared between the bus and the host, so that tests and the host can reach its
 /// state (for example a UART's transmit log) while the bus owns the region.
 ///
-/// The bus and the host must not hold a borrow at the same time; a conflicting borrow
-/// panics, as `RefCell` does.
-pub struct Shared<D: Device>(pub Rc<RefCell<D>>);
+/// The bus and the host take the lock one at a time. Lock-based sharing keeps the PS `Send`,
+/// so that the native engine can move to the thread of a simulation server (`Engine: Send`).
+pub struct Shared<D: Device>(pub Arc<Mutex<D>>);
 
 /// Wraps `dev` in a [`Shared`] and returns the handle the host keeps.
-pub fn shared<D: Device>(dev: D) -> (Shared<D>, Rc<RefCell<D>>) {
-    let rc = Rc::new(RefCell::new(dev));
-    (Shared(Rc::clone(&rc)), rc)
+pub fn shared<D: Device>(dev: D) -> (Shared<D>, Arc<Mutex<D>>) {
+    let arc = Arc::new(Mutex::new(dev));
+    (Shared(Arc::clone(&arc)), arc)
 }
 
-impl<D: Device> Device for Shared<D> {
+impl<D: Device> Shared<D> {
+    fn lock(&self) -> MutexGuard<'_, D> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl<D: Device + Send> Device for Shared<D> {
     fn read(&mut self, offset: u64, size: u8) -> BusResult<u64> {
-        self.0.borrow_mut().read(offset, size)
+        self.lock().read(offset, size)
     }
     fn write(&mut self, offset: u64, size: u8, value: u64) -> BusResult<()> {
-        self.0.borrow_mut().write(offset, size, value)
+        self.lock().write(offset, size, value)
     }
     fn select_cpu(&mut self, cpu: usize) {
-        self.0.borrow_mut().select_cpu(cpu);
+        self.lock().select_cpu(cpu);
     }
     fn tick(&mut self, cycles: u64) {
-        self.0.borrow_mut().tick(cycles);
+        self.lock().tick(cycles);
     }
     fn irq_lines(&self, out: &mut Vec<IrqInput>) {
-        self.0.borrow().irq_lines(out);
+        self.lock().irq_lines(out);
     }
     fn accept_irqs(&mut self, lines: &[IrqInput]) {
-        self.0.borrow_mut().accept_irqs(lines);
+        self.lock().accept_irqs(lines);
     }
     fn core_irq(&self, cpu: usize) -> bool {
-        self.0.borrow().core_irq(cpu)
+        self.lock().core_irq(cpu)
     }
     fn save_state(&self, out: &mut Vec<u8>) {
-        self.0.borrow().save_state(out);
+        self.lock().save_state(out);
     }
 }
 

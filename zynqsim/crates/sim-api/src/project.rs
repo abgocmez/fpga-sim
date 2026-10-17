@@ -625,7 +625,7 @@ fn warn(field: &str, message: impl Into<String>) -> Diagnostic {
 const PS_BACKENDS: &[&str] = &["demo", "qemu", "native"];
 const PL_BACKENDS: &[&str] = &["demo", "verilator", "icarus", "xsim", "native"];
 /// PS backends that exist in this build.
-const IMPLEMENTED_PS: &[&str] = &["demo", "qemu"];
+const IMPLEMENTED_PS: &[&str] = &["demo", "qemu", "native"];
 /// PL backends that exist in this build.
 const IMPLEMENTED_PL: &[&str] = &["demo", "native", "xsim", "verilator"];
 
@@ -913,6 +913,25 @@ impl Project {
                 }
                 Ok(Box::new(engine))
             }
+            "native" => {
+                let board_def = self.board_def(base)?;
+                let elf = self
+                    .cpu0
+                    .as_ref()
+                    .map(|c| resolve(base, &c.elf))
+                    .ok_or_else(|| ApiError::invalid_argument("cpu0.elf is required"))?;
+                let debug = self.debug.clone().unwrap_or_default();
+                let spec = crate::NativeSpec {
+                    elf,
+                    board_def,
+                    quantum_ns: self.sim.quantum_ns,
+                    breakpoints: debug.breakpoints.clone(),
+                    source_dirs: std::iter::once(base.to_path_buf())
+                        .chain(debug.source_dirs.iter().map(|d| resolve(base, d)))
+                        .collect(),
+                };
+                Ok(Box::new(crate::NativePsEngine::new(&spec)?))
+            }
             other => Err(ApiError::unsupported(format!(
                 "PS backend `{other}` is not implemented"
             ))),
@@ -1037,6 +1056,58 @@ impl Project {
                 "backends.pl",
                 "native PL models need a PS that issues bus accesses; set `backends.ps = \"qemu\"`",
             ));
+        }
+        if self.backends.ps == "native" {
+            // The native PS is PS-only (ADR-033): what needs a PL, a QEMU-only feature or a
+            // second core is refused here, with the reason, instead of being ignored.
+            if self.backends.pl != "demo" {
+                d.push(err(
+                    "backends.pl",
+                    format!(
+                        "`{}` cannot be attached to the native PS yet (PL attachment through \
+                         remote-port is out of scope); use `backends.pl = \"demo\"` or \
+                         `backends.ps = \"qemu\"`",
+                        self.backends.pl
+                    ),
+                ));
+            }
+            if self.cpu1.is_some() {
+                d.push(err(
+                    "cpu1.elf",
+                    "the native PS runs core 0 only: core 1 is parked as the boot ROM leaves it, \
+                     so remove `[cpu1]` (two native cores are not implemented yet)",
+                ));
+            }
+            if !self.native.is_empty() {
+                d.push(err(
+                    "native",
+                    "native PL models need the PL, which the native PS does not have; use \
+                     `backends.ps = \"qemu\"`",
+                ));
+            }
+            if !self.devices.is_empty() {
+                d.push(err(
+                    "devices",
+                    "Pmod devices are on the PL side, which the native PS does not have; use \
+                     `backends.ps = \"qemu\"`",
+                ));
+            }
+            if self.media.is_some() {
+                d.push(err(
+                    "media",
+                    "HDMI and audio are PL models; use `backends.ps = \"qemu\"`",
+                ));
+            }
+            if self
+                .boot
+                .as_ref()
+                .is_some_and(|b| crate::bootbin::is_boot_bin_mode(&b.mode))
+            {
+                d.push(err(
+                    "boot.mode",
+                    "`boot_bin` is not supported by the native PS yet; use `backends.ps = \"qemu\"`",
+                ));
+            }
         }
         match self.host.get("uart1").map(String::as_str) {
             None | Some("file") | Some("tcp") => {}
@@ -1794,7 +1865,7 @@ pub fn starter_project_toml() -> &'static str {
      name = \"zybo-z7-20\"\n\
      \n\
      [backends]\n\
-     ps = \"demo\"   # \"qemu\" and \"native\" are not implemented yet\n\
+     ps = \"demo\"   # \"qemu\" or \"native\" (Rust, core 0, no PL) run firmware\n\
      pl = \"demo\"   # \"icarus\" is not implemented yet; \"verilator\", \"xsim\" and \"native\" need a PS and [rtl] or [native]\n\
      \n\
      [sim]\n\
@@ -2020,7 +2091,7 @@ schema_version = 2
 [board]
 name = "nope"
 [backends]
-ps = "native"
+ps = "vivado"
 pl = "magic"
 [boot]
 mode = "tftp"
@@ -2052,8 +2123,8 @@ files = ["rtl/*.v"]
             assert!(fields.contains(&want), "missing {want} in {fields:?}");
         }
         let ps = d.iter().find(|x| x.field == "backends.ps").unwrap();
-        assert!(ps.message.contains("not implemented in this build"));
-        assert!(ps.message.contains("available: demo, qemu"));
+        assert!(ps.message.contains("unknown backend `vivado`"));
+        assert!(ps.message.contains("expected one of demo, qemu, native"));
     }
 
     fn storage_project(body: &str) -> Project {

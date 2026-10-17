@@ -57,6 +57,11 @@ const CASES: &[Case] = &[
     // comparison covers the stop state (rust-debug stops at time 0), not a full run.
     case("math-debug", "20ms"),
     case("rust-hello", "5ms"),
+    // The native PS engine (ADR-033): no QEMU needed, so it runs everywhere.
+    Case {
+        qemu: false,
+        ..case("native-hello", "10ms")
+    },
     // Unmodified Xilinx BSP applications (fixtures/bsp); bsp-peripherals ends in the SCU
     // watchdog test that never returns (no watchdog in this QEMU machine), which is deterministic too.
     case("bsp-hello", "15ms"),

@@ -244,6 +244,38 @@ firmware word sweep proves decoding, not behaviour; `rust_firmware` assertions c
   both (`cli::verilator`), but this is one design. The DMA regression, the board, media and pin
   models have **not** been run under Verilator. Trace digests are compared, not asserted equal,
   by the test (equal in the one run recorded in STATUS.md).
+## Native PS engine (P5, `backends.ps = "native"`, ADR-033)
+
+Run: `cargo test -p sim-api --lib native_ps` (no external tools; under a second once built) and
+`cargo test -p zynqsim --test native_ps_diff -- --nocapture` (about 2.5 minutes, nearly all of it
+the QEMU halves; they print `SKIPPED:` without the Xilinx QEMU). `cpu-a9`, `mem-sys` and
+`ps-periph` are built at opt-level 3 in the dev profile for this reason.
+
+| Requirement | Test binary / name | Where |
+|---|---|---|
+| The engine is `Send` (the server thread owns it) | `sim-api` unit `native_ps::tests::the_engine_is_send_*` | `crates/sim-api/src/native_ps.rs` |
+| rust-hello prints its text natively and parks | `sim-api` unit `native_ps::tests::rust_hello_prints_its_text_and_parks` | same |
+| Core 0 starts in Supervisor mode at the entry, IRQ and FIQ masked; core 1 refused | `sim-api` unit `native_ps::tests::core_zero_starts_*` | same |
+| Five engines in one process give one digest | `sim-api` unit `native_ps::tests::five_runs_give_one_trace_digest` | same |
+| Breakpoint by symbol stops before the instruction; resume is not stopped again | `sim-api` unit `native_ps::tests::a_breakpoint_*` | same |
+| Unimplemented instruction (VFP word): stop, pc and word named, sticky | `sim-api` unit `native_ps::tests::an_unimplemented_*` | same |
+| Snapshot restore reproduces the trace digest, cycle and state hash | `sim-api` unit `native_ps::tests::a_snapshot_*` | same |
+| Memory: image visible, device space refused | `sim-api` unit `native_ps::tests::memory_*` | same |
+| Reset to time zero | `sim-api` unit `native_ps::tests::reset_*` | same |
+| UART RX injection; bad port refused | `sim-api` unit `native_ps::tests::uart_input_*` | same |
+| Project validation: PL, `[cpu1]`, `[native]`, `[devices]`, `[media]`, `boot_bin` | `sim-api` unit `native_ps::tests::validation_*` | same |
+| rust-hello: UART text identical to QEMU | `zynqsim` `native_ps_diff::rust_hello_prints_the_same_text_on_qemu_and_natively` | `crates/cli/tests/native_ps_diff.rs` |
+| conf-scutimer: 17 PASS natively; the 3 QEMU N/A checks are the only differences | `zynqsim` `native_ps_diff::conf_scutimer_*` | same |
+| conf-ttc: check 12 and check 9 are the only differences; result FAIL pinned | `zynqsim` `native_ps_diff::conf_ttc_*` | same |
+| Five separate processes give one trace digest | `zynqsim` `native_ps_diff::five_processes_give_one_trace_digest` | same |
+| `inspect` lists the native PS as available | `zynqsim` `native_ps_diff::inspect_lists_the_native_ps_as_available` | same |
+| A native project with `[cpu1]` is refused with the reason | `zynqsim` `native_ps_diff::a_native_project_with_a_second_core_*` | same |
+| `mem-sys` RAM reads after the single-lookup change | `mem-sys` unit `ram::tests::*` | `crates/mem-sys/src/ram.rs` |
+
+Not covered: the GUI project window (no GUI test drives the PS choice); the native `file:line`
+breakpoint form and recording replay of a native session; interrupt latency measured against the
+bound; any comparison with a board.
+
 ## Native RTL front end (P6, optional)
 
 Run: `cargo test -p rtl-frontend` (93 tests, about 4 s) and `cargo test -p zynqsim --test rtl_check`

@@ -43,6 +43,14 @@ impl SparseRam {
 
     /// Reads `size` bytes at `addr`, little endian, zero-extended. `size` must be 1, 2, 4 or 8.
     pub fn read(&self, addr: u64, size: u8) -> u64 {
+        // One page lookup for an access inside a page (instruction fetches are the common
+        // case); a straddling access takes the byte path.
+        let off = (addr as usize) & (PAGE_SIZE - 1);
+        if off + usize::from(size) <= PAGE_SIZE {
+            return self.pages.get(&(addr >> PAGE_SHIFT)).map_or(0, |p| {
+                (0..usize::from(size)).fold(0u64, |v, i| v | (u64::from(p[off + i]) << (8 * i)))
+            });
+        }
         (0..u64::from(size)).fold(0u64, |v, i| v | (u64::from(self.byte(addr + i)) << (8 * i)))
     }
 

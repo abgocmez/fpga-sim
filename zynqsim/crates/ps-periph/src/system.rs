@@ -8,8 +8,7 @@ use crate::uart::{UART0_IRQ, UART1_IRQ, Uart};
 use mem_sys::{
     DDR_DEFAULT, Device, MapError, ReadOnlyImage, Stub, SystemBus, UnmappedPolicy, find, shared,
 };
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 /// What to build the PS with.
 pub struct PsConfig {
@@ -37,12 +36,12 @@ impl Default for PsConfig {
 /// Host handles to devices the bus owns: the UARTs, for their transmit log and receive input.
 pub struct PsHandles {
     /// UART0 (0xE0000000).
-    pub uart0: Rc<RefCell<Uart>>,
+    pub uart0: Arc<Mutex<Uart>>,
     /// UART1 (0xE0001000).
-    pub uart1: Rc<RefCell<Uart>>,
+    pub uart1: Arc<Mutex<Uart>>,
 }
 
-fn attach(bus: &mut SystemBus, name: &str, dev: Box<dyn Device>) -> Result<(), MapError> {
+fn attach(bus: &mut SystemBus, name: &str, dev: Box<dyn Device + Send>) -> Result<(), MapError> {
     let e = find(name).unwrap_or_else(|| panic!("{name} is not in the address map"));
     bus.attach(e.name, e.base, e.size, dev)
 }
@@ -121,7 +120,7 @@ mod tests {
     fn uart_handles_reach_the_device_on_the_bus() {
         let (mut bus, h) = zynq_system(&PsConfig::default()).unwrap();
         mem_sys::Bus::write(&mut bus, 0xE000_0000, 4, 0x10 | 0x04).unwrap(); // enable TX and RX
-        assert_eq!(h.uart0.borrow_mut().inject_rx(b"k"), 1);
+        assert_eq!(h.uart0.lock().unwrap().inject_rx(b"k"), 1);
         assert_eq!(
             mem_sys::Bus::read(&mut bus, 0xE000_0030, 1),
             Ok(u64::from(b'k'))

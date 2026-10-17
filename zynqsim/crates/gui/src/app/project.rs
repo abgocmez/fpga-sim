@@ -167,11 +167,30 @@ impl App {
 
                 ui.separator();
                 ui.heading("PS (Cortex-A9 firmware)");
-                ui.checkbox(
-                    &mut self.draft.use_qemu,
-                    "run firmware on QEMU (otherwise the built-in demo engine)",
-                );
-                ui.add_enabled_ui(self.draft.use_qemu, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("PS engine:");
+                    let demo = !self.draft.use_qemu && !self.draft.use_native;
+                    if ui.radio(demo, "demo").clicked() {
+                        self.draft.use_qemu = false;
+                        self.draft.use_native = false;
+                    }
+                    if ui.radio(self.draft.use_qemu, "QEMU").clicked() {
+                        self.draft.use_qemu = true;
+                        self.draft.use_native = false;
+                    }
+                    if ui
+                        .radio(self.draft.use_native, "native Rust (PS only, core 0)")
+                        .on_hover_text(
+                            "The pure-Rust Cortex-A9 interpreter: no QEMU, no PL, core 0 only",
+                        )
+                        .clicked()
+                    {
+                        self.draft.use_native = true;
+                        self.draft.use_qemu = false;
+                    }
+                });
+                let firmware = self.draft.use_qemu || self.draft.use_native;
+                ui.add_enabled_ui(firmware, |ui| {
                     egui::Grid::new("ps_grid").num_columns(3).show(ui, |ui| {
                         ui.label("core 0 ELF");
                         ui.add_sized(
@@ -338,7 +357,9 @@ impl App {
                             &dir,
                             &[("ELF", &["elf", "axf"]), ("all files", &["*"])],
                         ) {
-                            self.draft.use_qemu = true;
+                            if !(self.draft.use_qemu || self.draft.use_native) {
+                                self.draft.use_qemu = true;
+                            }
                             self.draft.cpu0 = dialogs::relative_to(&dir, &f);
                             build = Some("PS firmware");
                         }

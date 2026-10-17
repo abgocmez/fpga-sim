@@ -35,8 +35,10 @@ pub struct ProjectDraft {
     pub board_name: String,
     /// A custom board description file (relative to the project), or empty.
     pub board_file: String,
-    /// Use QEMU for the PS (else the built-in demo engine).
+    /// Use QEMU for the PS (else the built-in demo engine, or the native engine).
     pub use_qemu: bool,
+    /// Use the native Rust PS engine (`backends.ps = "native"`: core 0 only, no PL).
+    pub use_native: bool,
     /// Core 0 ELF.
     pub cpu0: String,
     /// Core 1 ELF (empty = unused).
@@ -82,6 +84,7 @@ impl ProjectDraft {
             },
             board_file: base.board.file.clone().unwrap_or_default(),
             use_qemu: base.backends.ps == "qemu",
+            use_native: base.backends.ps == "native",
             cpu0: base
                 .cpu0
                 .as_ref()
@@ -137,7 +140,14 @@ impl ProjectDraft {
                 p.board.name = self.board_name.trim().to_string();
             }
         }
-        p.backends.ps = if self.use_qemu { "qemu" } else { "demo" }.to_string();
+        p.backends.ps = if self.use_qemu {
+            "qemu"
+        } else if self.use_native {
+            "native"
+        } else {
+            "demo"
+        }
+        .to_string();
         p.backends.pl = match self.pl {
             PlKind::None => "demo",
             PlKind::Native => "native",
@@ -145,7 +155,20 @@ impl ProjectDraft {
             PlKind::Verilator => "verilator",
         }
         .to_string();
-        if self.use_qemu {
+        if self.use_native {
+            if !matches!(self.pl, PlKind::None) {
+                return Err(
+                    "the native PS has no PL: choose PL \"none\" or run on QEMU".to_string()
+                );
+            }
+            if non_empty(&self.cpu1).is_some() {
+                return Err(
+                    "the native PS runs core 0 only: clear the core 1 ELF or run on QEMU"
+                        .to_string(),
+                );
+            }
+        }
+        if self.use_qemu || self.use_native {
             // A BOOT.BIN project has no core 0 ELF: it comes from `[boot] file`.
             let boot_bin = p
                 .boot
@@ -388,6 +411,19 @@ mod tests {
         d.rtl_files = "x.v".to_string();
         d.quantum_ns = "zero".to_string();
         assert!(d.problems()[0].contains("quantum"));
+    }
+
+    #[test]
+    fn the_native_engine_is_a_ps_choice_without_a_pl_or_a_second_core() {
+        let mut d = ProjectDraft::load(&example("native-hello")).unwrap();
+        assert!(d.use_native && !d.use_qemu);
+        assert_eq!(d.to_project().unwrap().backends.ps, "native");
+        assert!(d.problems().is_empty(), "{:?}", d.problems());
+        d.pl = PlKind::Native;
+        assert!(d.to_project().unwrap_err().contains("no PL"));
+        d.pl = PlKind::None;
+        d.cpu1 = "../../fixtures/elf/dma_cpu1.elf".to_string();
+        assert!(d.to_project().unwrap_err().contains("core 0 only"));
     }
 
     #[test]

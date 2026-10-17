@@ -194,7 +194,7 @@ pub struct Cpu {
     /// The CP15 registers.
     pub(crate) cp15: Cp15,
     /// The virtual-to-physical hook.
-    pub(crate) xlate: Box<dyn Translate>,
+    pub(crate) xlate: Box<dyn Translate + Send>,
 }
 
 impl Cpu {
@@ -247,7 +247,7 @@ impl Cpu {
     }
 
     /// Replaces the address translation (the MMU hook).
-    pub fn set_translate(&mut self, xlate: Box<dyn Translate>) {
+    pub fn set_translate(&mut self, xlate: Box<dyn Translate + Send>) {
         self.xlate = xlate;
     }
 
