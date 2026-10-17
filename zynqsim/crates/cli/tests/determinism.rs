@@ -31,6 +31,8 @@ struct Case {
     qemu: bool,
     /// Needs Vivado XSim (PL RTL). Also builds the DPI library once.
     xsim: bool,
+    /// Needs Verilator (the portable build the Verilator backend finds).
+    verilator: bool,
 }
 
 const fn case(name: &'static str, duration: &'static str) -> Case {
@@ -40,6 +42,7 @@ const fn case(name: &'static str, duration: &'static str) -> Case {
         extra: &[],
         qemu: true,
         xsim: false,
+        verilator: false,
     }
 }
 
@@ -88,6 +91,11 @@ const CASES: &[Case] = &[
     case("conf-iicps", "50ms"),
     case("conf-spips", "50ms"),
     case("conf-xadcps", "50ms"),
+    Case {
+        xsim: true,
+        verilator: true,
+        ..case("math-verilator", "3ms")
+    },
     Case {
         xsim: true,
         ..case("irq-demo", "5ms")
@@ -320,7 +328,9 @@ fn every_example_runs_five_times_with_identical_trace_hashes() {
     }
     let cases: Vec<&Case> = CASES
         .iter()
-        .filter(|c| (!c.qemu || qemu) && (!c.xsim || xsim))
+        .filter(|c| {
+            (!c.qemu || qemu) && (!c.xsim || xsim) && (!c.verilator || backend_found("verilator"))
+        })
         .collect();
     // Workers take the next case index from a shared counter; each case's RUNS
     // processes run one after another inside its worker.
