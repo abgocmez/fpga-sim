@@ -70,4 +70,16 @@ the firmware shows up.
   (`native_ps_diff::five_processes_give_one_trace_digest`).
 * Anything the native engine does not drive yet: LEDs, Pmod devices, HDMI, Ethernet. The examples
   compared here use only the UART, SLCR, the private and global timers, TTC and the GIC.
-* Firmware that needs a PL or the MMU, Thumb or VFP: refused by the native engine (ADR-033).
+* Firmware that needs a PL, Thumb or VFP: refused by the native engine (ADR-033). The MMU is
+  implemented (ADR-030, `cpu-a9::mmu`); see the BSP section below.
+
+## Xilinx BSP ELFs on the native engine (2026-10-17)
+
+No `fixtures/bsp/bsp_*.elf` runs to its UART output natively yet. Probed with `bsp_hello_world.elf`
+(`backends.ps = "native"`, 15 ms): the core parks in **Abort mode** after the first instruction
+that reads a device window the native bus does not map. The faulting access is the `ldr r1, [r0]`
+at 0x100148 (`CheckEFUSE`), with r0 = 0xF800D010. The Xilinx abort handler then spins, so the
+native run prints nothing and reports no fault. That is a missing device model, not the MMU: the
+BSP enables no translation before this point. The BSP ELFs also contain VFP instructions
+(`vmrs`/`vmsr fpexc`, `vmov`) and the MMU setup code (TTBR0, DACR, SCTLR writes), so a run past
+the device reads is limited by VFP as well. No BSP ELF was compared with QEMU here.

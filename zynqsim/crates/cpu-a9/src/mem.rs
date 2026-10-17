@@ -6,15 +6,18 @@ use crate::cp15::SCTLR_A;
 use crate::state::{CPSR_MSR_MASK, Cpu, Event, Flow, Mode, T_BIT};
 use crate::xlate::Access;
 
-/// DFSR/IFSR status: alignment fault.
-pub(crate) const FSR_ALIGN: u8 = 0x01;
-/// DFSR/IFSR status: synchronous external abort (any bus fault).
-pub(crate) const FSR_EXTERNAL: u8 = 0x08;
+/// Fault status: alignment fault.
+pub(crate) const FSR_ALIGN: u16 = 0x01;
+/// Fault status: synchronous external abort (any bus fault, not on a table walk).
+pub(crate) const FSR_EXTERNAL: u16 = 0x08;
+/// DFSR.WnR (bit 11): the aborted access was a write.
+pub(crate) const DFSR_WNR: u16 = 1 << 11;
 
 impl Cpu {
-    /// Reads `size` (1, 2 or 4) bytes at virtual address `va`, little endian. Unaligned
-    /// accesses are split into bytes unless SCTLR.A makes them an alignment fault.
-    pub(crate) fn read_mem(&mut self, bus: &mut dyn Bus, va: u32, size: u32) -> Result<u32, u8> {
+    /// Reads `size` (1, 2 or 4) bytes at virtual address `va`, little endian, through the
+    /// translation hook. Unaligned accesses are split into bytes unless SCTLR.A makes them an
+    /// alignment fault. The error is the DFSR status of the abort.
+    pub(crate) fn read_mem(&mut self, bus: &mut dyn Bus, va: u32, size: u32) -> Result<u32, u16> {
         if size > 1 && va % size != 0 {
             if self.cp15.sctlr & SCTLR_A != 0 {
                 return Err(FSR_ALIGN);
@@ -25,36 +28,42 @@ impl Cpu {
             }
             return Ok(v);
         }
-        let pa = self.xlate.translate(va, Access::Read)?;
+        let regs = self.data_regs();
+        let pa = self.xlate.translate(bus, &regs, va, Access::Read)?;
         bus.read(pa, size as u8)
             .map(|v| v as u32)
             .map_err(|_| FSR_EXTERNAL)
     }
 
-    /// Writes the low `size` (1, 2 or 4) bytes of `v` at `va`, little endian.
+    /// Writes the low `size` (1, 2 or 4) bytes of `v` at `va`, little endian, through the
+    /// translation hook. The error is the DFSR status, with WnR set.
     pub(crate) fn write_mem(
         &mut self,
         bus: &mut dyn Bus,
         va: u32,
         size: u32,
         v: u32,
-    ) -> Result<(), u8> {
+    ) -> Result<(), u16> {
         if size > 1 && va % size != 0 {
             if self.cp15.sctlr & SCTLR_A != 0 {
-                return Err(FSR_ALIGN);
+                return Err(FSR_ALIGN | DFSR_WNR);
             }
             for i in 0..size {
                 self.write_mem(bus, va.wrapping_add(i), 1, v >> (8 * i))?;
             }
             return Ok(());
         }
-        let pa = self.xlate.translate(va, Access::Write)?;
+        let regs = self.data_regs();
+        let pa = self
+            .xlate
+            .translate(bus, &regs, va, Access::Write)
+            .map_err(|e| e | DFSR_WNR)?;
         bus.write(pa, size as u8, u64::from(v))
-            .map_err(|_| FSR_EXTERNAL)
+            .map_err(|_| FSR_EXTERNAL | DFSR_WNR)
     }
 
     /// Turns a failed access into a data abort at `va`.
-    pub(crate) fn abort_flow(&mut self, va: u32, status: u8) -> Flow {
+    pub(crate) fn abort_flow(&mut self, va: u32, status: u16) -> Flow {
         self.data_abort(va, status);
         Flow::Event(Event::DataAbort { addr: va })
     }
@@ -107,11 +116,14 @@ impl Cpu {
         let (addr, wb) = Self::address_of(p, u, base, offset);
         let size = if byte { 1 } else { 4 };
         let store_value = if load { 0 } else { self.reg_or_pc(rt, 4) };
+        // P = 0 with W = 1 is LDRT/STRT (and the byte forms): translated as unprivileged.
+        self.unpriv = !p && w;
         let result = if load {
             self.read_mem(bus, addr, size)
         } else {
             self.write_mem(bus, addr, size, store_value).map(|()| 0)
         };
+        self.unpriv = false;
         let v = match result {
             Ok(v) => v,
             Err(status) => return self.abort_flow(addr, status),
@@ -148,7 +160,9 @@ impl Cpu {
         let (addr, wb) = Self::address_of(p, u, base, offset);
         let mut loaded: [u32; 2] = [0; 2];
         let mut count = 1;
-        let outcome: Result<(), u8> = match (load, sh) {
+        // P = 0 with W = 1: LDRHT, LDRSHT, LDRSBT, STRHT are translated as unprivileged.
+        self.unpriv = !p && w;
+        let outcome: Result<(), u16> = match (load, sh) {
             (true, 1) => self.read_mem(bus, addr, 2).map(|v| loaded[0] = v),
             (true, 2) => self
                 .read_mem(bus, addr, 1)
@@ -177,6 +191,7 @@ impl Cpu {
                     .and_then(|()| self.write_mem(bus, addr.wrapping_add(4), 4, b))
             }
         };
+        self.unpriv = false;
         if let Err(status) = outcome {
             return self.abort_flow(addr, status);
         }
@@ -302,7 +317,8 @@ impl Cpu {
         let addr = self.reg_or_pc(rn, 0);
         let align = if pair { 8 } else { size };
         if addr % align != 0 {
-            return self.abort_flow(addr, FSR_ALIGN);
+            let wnr = if load { 0 } else { DFSR_WNR };
+            return self.abort_flow(addr, FSR_ALIGN | wnr);
         }
         if load {
             let rt = (insn >> 12) & 0xF;

@@ -350,7 +350,7 @@ impl NativePsEngine {
         };
         let msg = format!(
             "native PS stopped at {}: unimplemented {kind} {insn:#010x} at cycle {} \
-             (Thumb, VFP/NEON and the MMU are not implemented; docs/adr/033-native-ps-engine.md). \
+             (Thumb and VFP/NEON are not implemented; docs/adr/033-native-ps-engine.md). \
              The instruction was not executed and no state changed",
             describe_pc(pc, &self.symbols, &self.source),
             self.cycle

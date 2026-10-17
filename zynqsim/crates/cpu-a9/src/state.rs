@@ -2,8 +2,9 @@
 
 use ps_bus::Bus;
 
-use crate::cp15::{Cp15, SCTLR_M, SCTLR_TE, SCTLR_V};
-use crate::xlate::{Identity, Translate};
+use crate::cp15::{Cp15, SCTLR_TE, SCTLR_V};
+use crate::mmu::Mmu;
+use crate::xlate::{Access, TlbOp, Translate};
 
 /// CPSR.N.
 pub(crate) const N_BIT: u32 = 1 << 31;
@@ -193,8 +194,10 @@ pub struct Cpu {
     pub(crate) excl: Option<u32>,
     /// The CP15 registers.
     pub(crate) cp15: Cp15,
-    /// The virtual-to-physical hook.
+    /// The virtual-to-physical hook (the MMU by default).
     pub(crate) xlate: Box<dyn Translate + Send>,
+    /// Set around an LDRT/STRT-style access: it is translated with unprivileged permissions.
+    pub(crate) unpriv: bool,
 }
 
 impl Cpu {
@@ -216,14 +219,17 @@ impl Cpu {
             event_reg: false,
             excl: None,
             cp15: Cp15::new(cpu_id),
-            xlate: Box::new(Identity),
+            xlate: Box::new(Mmu::new()),
+            unpriv: false,
         }
     }
 
-    /// Returns the core to its reset state with the PC at `entry`.
+    /// Returns the core to its reset state with the PC at `entry`. The TLB is empty after
+    /// reset; a custom hook is kept.
     pub fn reset(&mut self, entry: u32) {
         let id = self.cp15.cpu_id;
-        let xlate = std::mem::replace(&mut self.xlate, Box::new(Identity));
+        let mut xlate = std::mem::replace(&mut self.xlate, Box::new(Mmu::new()));
+        xlate.invalidate(TlbOp::All);
         *self = Cpu::new(id);
         self.xlate = xlate;
         self.pc = entry;
@@ -246,7 +252,8 @@ impl Cpu {
         self.write_cpsr(v, u32::MAX);
     }
 
-    /// Replaces the address translation (the MMU hook).
+    /// Replaces the address translation hook (the default is the MMU; [`crate::Identity`] gives
+    /// flat addressing whatever SCTLR says).
     pub fn set_translate(&mut self, xlate: Box<dyn Translate + Send>) {
         self.xlate = xlate;
     }
@@ -317,11 +324,6 @@ impl Cpu {
     /// Executes one instruction (or takes one pending interrupt, or idles in WFI/WFE).
     pub fn step(&mut self, bus: &mut dyn Bus) -> StepResult {
         let pc = self.pc;
-        if self.cp15.sctlr & SCTLR_M != 0 {
-            // The MMU is not implemented: refuse rather than run with physical addressing.
-            let insn = self.fetch(bus, pc).unwrap_or(0);
-            return StepResult::Unimplemented { pc, insn };
-        }
         if let Some(w) = self.wait {
             let wake_event = w == Wait::Wfe && self.event_reg;
             if !(self.irq_line || self.fiq_line || wake_event) {
@@ -368,13 +370,17 @@ impl Cpu {
         }
     }
 
-    fn fetch(&mut self, bus: &mut dyn Bus, pc: u32) -> Result<u32, u8> {
-        let pa = self.xlate.translate(pc, crate::xlate::Access::Fetch)?;
+    /// Fetches the A32 word at `pc` through the translation hook (privileged in a privileged
+    /// mode). The error is the prefetch fault status.
+    fn fetch(&mut self, bus: &mut dyn Bus, pc: u32) -> Result<u32, u16> {
+        let regs = self.xlate_regs(self.mode() != Mode::User);
+        let pa = self.xlate.translate(bus, &regs, pc, Access::Fetch)?;
         bus.read32(pa).map_err(|_| crate::mem::FSR_EXTERNAL)
     }
 
-    fn fetch16(&mut self, bus: &mut dyn Bus, pc: u32) -> Result<u16, u8> {
-        let pa = self.xlate.translate(pc, crate::xlate::Access::Fetch)?;
+    fn fetch16(&mut self, bus: &mut dyn Bus, pc: u32) -> Result<u16, u16> {
+        let regs = self.xlate_regs(self.mode() != Mode::User);
+        let pa = self.xlate.translate(bus, &regs, pc, Access::Fetch)?;
         bus.read(pa, 2)
             .map(|v| v as u16)
             .map_err(|_| crate::mem::FSR_EXTERNAL)
@@ -410,15 +416,17 @@ impl Cpu {
     }
 
     /// Records a prefetch abort (IFSR/IFAR) and takes the exception.
-    pub(crate) fn prefetch_abort(&mut self, addr: u32, status: u8) {
-        self.cp15.ifsr = u32::from(status);
+    pub(crate) fn prefetch_abort(&mut self, addr: u32, status: u16) {
+        // IFSR has no domain field: only the status bits are kept.
+        self.cp15.ifsr = u32::from(status & 0xF);
         self.cp15.ifar = addr;
         self.exception(Mode::Abort, 0x0C, addr.wrapping_add(4), false);
     }
 
     /// Records a data abort at `addr` (DFSR/DFAR) and takes the exception. LR is the faulting
     /// instruction + 8, so `SUBS PC, LR, #8` retries it.
-    pub(crate) fn data_abort(&mut self, addr: u32, status: u8) {
+    pub(crate) fn data_abort(&mut self, addr: u32, status: u16) {
+        // DFSR layout: status, domain and WnR (bit 11) as the caller built them.
         self.cp15.dfsr = u32::from(status);
         self.cp15.dfar = addr;
         let lr = self.cur.wrapping_add(8);
