@@ -31,7 +31,7 @@ the archive: pass `rtl/math/my_math_ip.v` with `--rtl`.
 ## `boot/`
 
 `BOOT.BIN` is **real output of Vitis 2022.1 `bootgen`** (`bootgen -arch zynq -image boot.bif -w on
--o BOOT.BIN`, 9,104 bytes): `fsbl_stub.elf` as the bootloader (an ARM ELF with four `b .`
+-o BOOT.BIN`, 9,168 bytes): `fsbl_stub.elf` as the bootloader (an ARM ELF with four `b .`
 instructions at 0x0: no FSBL is built on this machine, so it is a stand-in), `dummy.bit` (a valid
 `.bit` container with a made-up payload, **not a design**), and `rust_hello.elf` as the application
 with `[checksum=md5]` and the register-init file `regs.int`. `mkstubs.py` made the two stub inputs.

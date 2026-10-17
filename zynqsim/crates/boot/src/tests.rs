@@ -14,6 +14,27 @@ fn real() -> Vec<u8> {
     fixture("boot/BOOT.BIN")
 }
 
+/// The PT_LOAD segments of an ELF32 little-endian image with file bytes, in program-header
+/// order: `(file offset, file size, load address)`. The expectations below come from the ELF
+/// the fixture was made from, so a rebuilt firmware changes them without editing this file.
+fn elf_loads(elf: &[u8]) -> Vec<(usize, usize, u32)> {
+    assert_eq!(&elf[..4], b"\x7fELF", "ELF magic");
+    let phoff = get(elf, 28) as usize;
+    let phentsize = u16::from_le_bytes([elf[42], elf[43]]) as usize;
+    let phnum = u16::from_le_bytes([elf[44], elf[45]]) as usize;
+    (0..phnum)
+        .map(|i| phoff + i * phentsize)
+        .filter(|&ph| get(elf, ph) == 1 && get(elf, ph + 16) > 0)
+        .map(|ph| {
+            (
+                get(elf, ph + 4) as usize,
+                get(elf, ph + 16) as usize,
+                get(elf, ph + 12),
+            )
+        })
+        .collect()
+}
+
 fn put(v: &mut [u8], off: usize, val: u32) {
     v[off..off + 4].copy_from_slice(&val.to_le_bytes());
 }
@@ -107,7 +128,7 @@ fn a_real_bootgen_image_is_read_completely() {
             p[2].length,
             p[2].data_offset
         ),
-        (0x0010_0000, 0x0010_0000, 2364, 0x18C0)
+        (0x0010_0000, 0x0010_0000, 2384, 0x18C0)
     );
     assert_eq!(
         (
@@ -116,7 +137,7 @@ fn a_real_bootgen_image_is_read_completely() {
             p[3].length,
             p[3].data_offset
         ),
-        (0x0010_093C, 0, 300, 0x2200)
+        (0x0010_0950, 0, 300, 0x2240)
     );
     assert_eq!(p[2].attributes, 0x1010);
     assert_eq!(p[2].checksum_type, ChecksumType::Md5);
@@ -135,9 +156,15 @@ fn application_payloads_equal_the_elf_segments_bootgen_was_given() {
     let bytes = real();
     let img = BootImage::parse(&bytes).unwrap();
     let elf = fixture("elf/rust_hello.elf");
-    // PT_LOAD #0 and #1 of rust_hello.elf: (file offset, size) = (65536, 2364), (67900, 300).
-    assert_eq!(img.payload(&bytes, 2).unwrap(), &elf[65536..65536 + 2364]);
-    assert_eq!(img.payload(&bytes, 3).unwrap(), &elf[67900..67900 + 300]);
+    let loads = elf_loads(&elf);
+    assert_eq!(
+        loads.len(),
+        2,
+        "rust_hello.elf has two PT_LOAD segments with bytes"
+    );
+    for (i, &(off, size, _)) in loads.iter().enumerate() {
+        assert_eq!(img.payload(&bytes, 2 + i).unwrap(), &elf[off..off + size]);
+    }
     assert!(img.payload(&bytes, 9).is_err());
 }
 
@@ -148,7 +175,8 @@ fn the_load_plan_becomes_an_elf_with_the_same_segments() {
     let plan = img.load_plan(&bytes).unwrap();
     assert_eq!(plan.entry, 0x10_0000);
     assert_eq!(plan.segments.len(), 2);
-    assert_eq!(plan.total_bytes(), 2364 + 300);
+    let loads = elf_loads(&fixture("elf/rust_hello.elf"));
+    assert_eq!(plan.total_bytes(), loads.iter().map(|l| l.1).sum::<usize>());
     let elf = plan.to_elf();
     assert_eq!(&elf[..4], b"\x7fELF");
     assert_eq!(u16::from_le_bytes([elf[18], elf[19]]), 40, "EM_ARM");
