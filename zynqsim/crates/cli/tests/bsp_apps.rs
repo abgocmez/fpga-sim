@@ -57,6 +57,10 @@ fn zynqsim(args: &[&str]) -> Output {
 }
 
 fn qemu_available() -> bool {
+    if std::env::var("ZYNQSIM_FAST").as_deref() == Ok("1") {
+        eprintln!("SKIPPED: fast mode (ZYNQSIM_FAST=1)");
+        return false;
+    }
     let o = zynqsim(&["--json", "inspect"]);
     let v: Value = serde_json::from_slice(&o.stdout).expect("inspect prints JSON");
     v["backends"]

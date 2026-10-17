@@ -11,6 +11,10 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 fn find_qemu() -> Option<PathBuf> {
+    if std::env::var("ZYNQSIM_FAST").as_deref() == Ok("1") {
+        eprintln!("SKIPPED: fast mode (ZYNQSIM_FAST=1)");
+        return None;
+    }
     if let Some(p) = std::env::var_os("ZYNQSIM_QEMU") {
         return Some(PathBuf::from(p));
     }

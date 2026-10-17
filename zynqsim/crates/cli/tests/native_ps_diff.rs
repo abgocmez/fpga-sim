@@ -24,6 +24,10 @@ fn zynqsim(args: &[&str]) -> Output {
 }
 
 fn qemu_present() -> bool {
+    if std::env::var("ZYNQSIM_FAST").as_deref() == Ok("1") {
+        eprintln!("SKIPPED: fast mode (ZYNQSIM_FAST=1)");
+        return false;
+    }
     std::env::var_os("ZYNQSIM_QEMU").is_some()
         || sim_api::locate_binary("qemu-system-aarch64").is_some()
 }

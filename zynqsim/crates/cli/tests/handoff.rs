@@ -48,6 +48,10 @@ fn s(p: &Path) -> &str {
 }
 
 fn backend_found(name: &str) -> bool {
+    if std::env::var("ZYNQSIM_FAST").as_deref() == Ok("1") {
+        eprintln!("SKIPPED: fast mode (ZYNQSIM_FAST=1)");
+        return false;
+    }
     let o = zynqsim(&["--json", "inspect"]);
     let v: Value = serde_json::from_str(&stdout(&o)).unwrap();
     v["backends"]
@@ -151,6 +155,10 @@ fn assert_all_pass(r: &Value) {
 }
 
 fn tools_present() -> bool {
+    if std::env::var("ZYNQSIM_FAST").as_deref() == Ok("1") {
+        eprintln!("SKIPPED: fast mode (ZYNQSIM_FAST=1)");
+        return false;
+    }
     if !backend_found("qemu") || !backend_found("xsim") {
         eprintln!("SKIPPED: needs the Xilinx QEMU and Vivado XSim");
         return false;

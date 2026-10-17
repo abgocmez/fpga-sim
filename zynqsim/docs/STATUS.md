@@ -34,6 +34,7 @@ control plane drive it). Caveats are listed under *Known limits of the P1 engine
 | Continuous run (`Play`/`Pause`), engine faults stop it and are reported | verified | `sim-api::server::tests::play_advances_time_and_pause_stops_it` |
 | `project.toml` parse + validation incl. `[native]`, `[rtl]`, `[host]` | verified | `sim-api::project::tests::*`, CLI/MCP tests |
 | Backend inventory; tool detection on PATH and Xilinx install dirs (binaries, never `.bat` wrappers, for QEMU) | verified | `sim-api::tools::tests::*` |
+| Gate tooling: per-step times and summary table, `ci --fast` (`ZYNQSIM_FAST=1` skips tool-backed tests), `ci --det-only` (`ZYNQSIM_DET_ONLY`), `changed-examples` | partly verified | Verified: argument parsing, durations, summary and `changed_examples` (`xtask::ci::tests::*`, 10 pass); `ci --fast` run once on p10 (2026-10-17): 18m02s wall (clippy 1m49s, test 16m06s), fmt 4s; 1293 passed, 1 failed, 2 ignored. The failure is `mcp::scenario::project_diagnostics_do_not_replace_a_running_simulation` (expects an Icarus `backends.pl` diagnostic; Icarus is implemented now, so the test is stale; not fixed here). `ci --det-only` and `changed-examples` implemented-untested; the fast gate does not replace the full gate |
 
 ## Remote-port, QEMU, PL engines
 

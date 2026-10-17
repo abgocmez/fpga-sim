@@ -265,6 +265,10 @@ fn zynqsim(args: &[String]) -> Result<Value, String> {
 }
 
 fn backend_found(name: &str) -> bool {
+    if std::env::var("ZYNQSIM_FAST").as_deref() == Ok("1") {
+        eprintln!("SKIPPED: fast mode (ZYNQSIM_FAST=1)");
+        return false;
+    }
     let v = zynqsim(&["--json".into(), "inspect".into()]).unwrap_or(Value::Null);
     v["backends"]
         .as_array()
@@ -321,6 +325,39 @@ fn fingerprint(case: &Case, project: &str) -> Result<Fingerprint, String> {
     })
 }
 
+/// `ZYNQSIM_DET_ONLY=name1,name2` restricts the cases to these example names (set by
+/// `cargo xtask ci --det-only`). Unset or empty means every case. A name that is in
+/// neither CASES nor EXCLUDED is an error, so a typo cannot make the run pass vacuously.
+fn det_only_names() -> Option<Vec<String>> {
+    let raw = std::env::var("ZYNQSIM_DET_ONLY").ok()?;
+    let names: Vec<String> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(String::from)
+        .collect();
+    if names.is_empty() {
+        return None;
+    }
+    let unknown: Vec<&String> = names
+        .iter()
+        .filter(|n| {
+            !CASES.iter().any(|c| c.name == n.as_str()) && !EXCLUDED.iter().any(|(e, _)| e == n)
+        })
+        .collect();
+    assert!(
+        unknown.is_empty(),
+        "ZYNQSIM_DET_ONLY names no example in CASES or EXCLUDED: {unknown:?}"
+    );
+    for n in &names {
+        if EXCLUDED.iter().any(|(e, _)| e == n) {
+            eprintln!("SKIPPED: {n} is in EXCLUDED, nothing to run for it");
+        }
+    }
+    eprintln!("ZYNQSIM_DET_ONLY: running only {names:?}");
+    Some(names)
+}
+
 /// Prompt §14.6 over every example: identical digests, times and UART text across
 /// separate processes. Known non-deterministic examples are reported, not asserted.
 #[test]
@@ -352,8 +389,10 @@ fn every_example_runs_five_times_with_identical_trace_hashes() {
     if xsim && qemu {
         ensure_dpi_lib();
     }
+    let only = det_only_names();
     let cases: Vec<&Case> = CASES
         .iter()
+        .filter(|c| only.as_ref().is_none_or(|o| o.iter().any(|n| n == c.name)))
         .filter(|c| {
             (!c.qemu || qemu)
                 && (!c.xsim || xsim)

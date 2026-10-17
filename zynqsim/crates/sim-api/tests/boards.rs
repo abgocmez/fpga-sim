@@ -308,6 +308,10 @@ fn a_recording_carries_a_custom_board_and_replays_without_the_file() {
 // ---- the ZedBoard through a real RTL testbench (QEMU + XSim) -----------------------------
 
 fn tools_present() -> bool {
+    if std::env::var("ZYNQSIM_FAST").as_deref() == Ok("1") {
+        eprintln!("SKIPPED: fast mode (ZYNQSIM_FAST=1)");
+        return false;
+    }
     let qemu = std::env::var_os("ZYNQSIM_QEMU").is_some()
         || sim_api::locate_binary("qemu-system-aarch64").is_some();
     qemu && sim_api::find_vivado().is_some() && sim_api::find_dpi_lib().is_some()

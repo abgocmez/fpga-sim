@@ -6,6 +6,17 @@ external engine are skipped and listed here; **at P0 no test needs one**, so non
 Run everything: `cargo xtask ci` (fmt check, clippy `-D warnings`, `cargo test --workspace`,
 release build). Regenerate golden images: `cargo xtask golden` (review the diff).
 
+## Gates
+
+| Gate | Command | What runs | Wall time | Use it for |
+|---|---|---|---|---|
+| **Full** | `cargo xtask ci` | fmt check, clippy `-D warnings` (workspace, and the freestanding DPI crate), `cargo test --workspace` (tests that need a tool run it), release build | 45-60 min; each step's time is printed as it ends, and a summary table at the end (pass or fail) | **Before merging.** Only this gate runs the QEMU, XSim, Verilator and Icarus tests |
+| **Fast** | `cargo xtask ci --fast` | fmt check, clippy `-D warnings` (workspace), `cargo test --workspace` with `ZYNQSIM_FAST=1`: every test that needs an external tool prints `SKIPPED: ... (fast mode)` and passes | measured in `docs/STATUS.md` | Feedback while working. It does **not** replace the full gate |
+| **Determinism, restricted** | `cargo xtask ci --det-only name,name` | only `crates/cli/tests/determinism.rs`, with `ZYNQSIM_DET_ONLY` set to the listed examples. Unknown names fail the test; every `examples/` directory must still be in `CASES` or `EXCLUDED` | depends on the examples | Checking the 5-run digests of changed examples. `cargo xtask changed-examples` prints the examples changed since `origin/main` |
+
+A skip is a pass. A green fast gate says nothing about QEMU or XSim behaviour: the full gate
+(or `--nocapture` output showing no `SKIPPED:` lines) is what proves those.
+
 ## Status by §14 item
 
 | §14 item | P0 status | Where |
