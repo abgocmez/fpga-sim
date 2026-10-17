@@ -685,12 +685,17 @@ mod tests {
         // Core 0 sends SGI 5 to all other CPUs (filter 0b01): core 1 only.
         g.set_cpu(0);
         g.write_dist(0xF00, 4, (0b01 << 24) | 5).unwrap();
-        assert!(!g.signal(0), "the 'all other CPUs' filter excludes the sender");
+        assert!(
+            !g.signal(0),
+            "the 'all other CPUs' filter excludes the sender"
+        );
         assert!(g.signal(1));
         // The PPI is more urgent than the SGI, so it is acknowledged first.
         g.accept(&[level(29, Some(1), true)]);
         g.set_cpu(1);
         assert_eq!(g.read_cpu(0x0C, 4).unwrap(), 29);
+        // The device drops its level, then the handler ends the PPI.
+        g.accept(&[level(29, Some(1), false)]);
         g.write_cpu(0x10, 4, 29).unwrap();
         let iar = g.read_cpu(0x0C, 4).unwrap();
         assert_eq!(iar & 0x3FF, 5, "then the SGI");

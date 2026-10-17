@@ -296,22 +296,93 @@ fn inspect_lists_the_native_ps_as_available() {
 }
 
 #[test]
-fn a_native_project_with_a_second_core_is_refused_with_the_reason() {
-    let base = root().join("examples/native-hello");
-    let mut p = Project::load(&base.join("project.toml")).expect("project");
-    p.cpu1 = Some(sim_api::CpuSection {
-        elf: "../../fixtures/elf/rust_hello.elf".to_string(),
-    });
+fn a_native_project_with_a_second_core_is_accepted() {
+    let base = root().join("examples/dual-core-native");
+    let p = Project::load(&base.join("project.toml")).expect("project");
+    assert!(p.cpu1.is_some());
     let errors: Vec<String> = p
         .validate(&base)
         .into_iter()
         .filter(|d| d.severity == sim_api::Severity::Error)
         .map(|d| format!("{}: {}", d.field, d.message))
         .collect();
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+fn uart_port(e: &mut dyn Engine, port: u8) -> String {
+    match e.query(
+        &Query::UartRead {
+            port,
+            from: 0,
+            max: 1 << 20,
+        },
+        false,
+    ) {
+        Ok(Response::Uart { data, .. }) => String::from_utf8_lossy(&data).into_owned(),
+        other => panic!("uart_read: {other:?}"),
+    }
+}
+
+/// The dual-core demo on both engines. UART1 (core 0's console) must be identical and end in
+/// `RESULT: ALL PASS`. UART0 (core 1's console) is only observable natively: the QEMU engine
+/// wires UART0 to `-serial null`, so that difference is pinned here, not hidden.
+#[test]
+fn dual_core_demo_prints_the_same_uart1_text_on_qemu_and_natively() {
+    let mut n = engine("dual-core-native", "native");
+    let native_text = run_until_marker(n.as_mut(), "RESULT:", Ps::from_ms(200));
+    let native_uart0 = uart_port(n.as_mut(), 0);
     assert!(
-        errors
-            .iter()
-            .any(|e| e.starts_with("cpu1.elf:") && e.contains("core 0 only")),
-        "{errors:?}"
+        native_text.ends_with("RESULT: ALL PASS\r\n"),
+        "{native_text:?}"
     );
+    assert!(
+        native_uart0.contains("core 1 (MPIDR 1): released through 0xFFFFFFF0")
+            && native_uart0.contains("core 1: SGI 1 received, ping-pong done"),
+        "core 1 printed on UART0: {native_uart0:?}"
+    );
+    if !qemu_present() {
+        eprintln!("SKIPPED: the QEMU half needs the Xilinx QEMU");
+        return;
+    }
+    let mut q = engine("dual-core-qemu", "qemu");
+    let qemu_text = run_until_marker(q.as_mut(), "RESULT:", Ps::from_ms(200));
+    assert_eq!(
+        native_text, qemu_text,
+        "UART1 text differs between the engines"
+    );
+    assert_eq!(
+        uart_port(q.as_mut(), 0),
+        "",
+        "pinned difference: QEMU's UART0 is `-serial null`, so core 1's lines are not seen"
+    );
+    same_contract(&q.status(false), &n.status(false));
+}
+
+/// Five separate processes give one trace digest for the dual-core demo.
+#[test]
+fn dual_core_five_processes_give_one_trace_digest() {
+    let digests: Vec<String> = (0..5)
+        .map(|_| {
+            let o = zynqsim(&[
+                "--json",
+                "run",
+                "--project",
+                root()
+                    .join("examples/dual-core-native/project.toml")
+                    .to_str()
+                    .expect("utf-8 path"),
+                "--for",
+                "80ms",
+            ]);
+            assert_eq!(
+                o.status.code(),
+                Some(0),
+                "{}",
+                String::from_utf8_lossy(&o.stderr)
+            );
+            let v: Value = serde_json::from_slice(&o.stdout).expect("run prints JSON");
+            v["trace_hash"].as_str().expect("trace hash").to_string()
+        })
+        .collect();
+    assert!(digests.iter().all(|d| *d == digests[0]), "{digests:?}");
 }

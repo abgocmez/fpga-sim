@@ -75,10 +75,11 @@ is `true` (warnings), `false` (off) or `"strict"` (errors fail the run). See
 ### Run real firmware
 
 The PS can also run natively, with no Xilinx QEMU: `backends.ps = "native"` runs the pure-Rust
-Cortex-A9 interpreter (core 0 only, no PL, not cycle-accurate; ADR-033):
+Cortex-A9 interpreter (one or two cores, no PL, not cycle-accurate; ADR-033):
 
 ```
 zynqsim run --project examples/native-hello/project.toml --for 10ms    # same text as rust-hello
+zynqsim run --project examples/dual-core-native/project.toml --for 80ms # two cores: mailbox release, LDREX/STREX, WFE/SEV, SGI
 ```
 
 ```

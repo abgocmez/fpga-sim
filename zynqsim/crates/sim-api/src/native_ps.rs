@@ -233,8 +233,8 @@ impl NativePsEngine {
         let (mut bus, handles) = zynq_system(&PsConfig::default())
             .map_err(|e| ApiError::internal(format!("the PS address map: {e}")))?;
         let cpu1_image = spec.cpu1.as_deref().map(load_image).transpose()?;
-        for (path, img) in std::iter::once((&spec.elf, &image))
-            .chain(spec.cpu1.as_ref().zip(cpu1_image.as_ref()))
+        for (path, img) in
+            std::iter::once((&spec.elf, &image)).chain(spec.cpu1.as_ref().zip(cpu1_image.as_ref()))
         {
             for (addr, data) in &img.segments {
                 bus.load(*addr, data).map_err(|_| {
@@ -289,7 +289,9 @@ impl NativePsEngine {
             None => "parked".to_string(),
             Some(p) => format!(
                 "boot-rom elf={} sched_batch={SCHED_BATCH}",
-                p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+                p.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default()
             ),
         };
         trace.push(
@@ -615,7 +617,11 @@ impl NativePsEngine {
             }
             b.push(u8::from(cpu.is_waiting()));
             b.push(u8::from(cpu.event_register()));
-            b.extend_from_slice(&cpu.exclusive_address().map_or(u64::MAX, u64::from).to_le_bytes());
+            b.extend_from_slice(
+                &cpu.exclusive_address()
+                    .map_or(u64::MAX, u64::from)
+                    .to_le_bytes(),
+            );
         }
         b.extend_from_slice(&self.stops.to_le_bytes());
         b.push(u8::from(self.resume_past.is_some()));
@@ -1062,9 +1068,7 @@ impl NativePsEngine {
                 let Some(cpu) = self.cpus.get(usize::from(*core)) else {
                     return Err(unsupported(
                         "cpu_regs",
-                        &format!(
-                            "core {core} does not exist: core 1 exists only with `[cpu1]`"
-                        ),
+                        &format!("core {core} does not exist: core 1 exists only with `[cpu1]`"),
                     ));
                 };
                 let r: [u32; 16] = std::array::from_fn(|n| cpu.reg(n as u8));
@@ -1669,20 +1673,41 @@ mod tests {
             parked.r[15]
         );
         assert!(e.cpus[1].is_waiting(), "waiting in WFE");
-        assert_eq!(read_word(&mut e, FLAG), 0, "core 1 has not run its software");
+        assert_eq!(
+            read_word(&mut e, FLAG),
+            0,
+            "core 1 has not run its software"
+        );
         e.run_for(Ps::from_us(20)).expect("run on");
-        assert_eq!(read_word(&mut e, FLAG), 0x55, "core 1 ran after the release");
-        let text = match e.query(&Query::Trace { from: 0, max: 1 << 20 }, false) {
+        assert_eq!(
+            read_word(&mut e, FLAG),
+            0x55,
+            "core 1 ran after the release"
+        );
+        let text = match e.query(
+            &Query::Trace {
+                from: 0,
+                max: 1 << 20,
+            },
+            false,
+        ) {
             Ok(Response::Trace { records, .. }) => format!("{records:?}"),
             other => panic!("{other:?}"),
         };
-        assert!(text.contains("wrote the CPU1 mailbox"), "the release is traced");
+        assert!(
+            text.contains("wrote the CPU1 mailbox"),
+            "the release is traced"
+        );
         // The entry address written by core 0 is what core 1 jumped to.
         let r1 = match e.query(&Query::CpuRegs { core: 1 }, false) {
             Ok(Response::CpuRegs(r)) => r,
             other => panic!("{other:?}"),
         };
-        assert!(r1.r[15] >= CORE1_BASE && r1.r[15] < CORE1_BASE + 0x20, "{:#x}", r1.r[15]);
+        assert!(
+            r1.r[15] >= CORE1_BASE && r1.r[15] < CORE1_BASE + 0x20,
+            "{:#x}",
+            r1.r[15]
+        );
     }
 
     /// Core 0 takes the reservation with LDREX, core 1 stores to the same granule (or not),
@@ -1690,11 +1715,9 @@ mod tests {
     /// same 8-byte granule clears it; a store to the next granule does not.
     #[test]
     fn a_store_by_another_core_clears_the_exclusive_reservation_of_its_granule() {
-        for (store_at, want_status, want_word) in [
-            (DATA, 1, 0xBB),
-            (DATA + 4, 1, 0),
-            (DATA + 8, 0, 0xAA),
-        ] {
+        for (store_at, want_status, want_word) in
+            [(DATA, 1, 0xBB), (DATA + 4, 1, 0), (DATA + 8, 0, 0xAA)]
+        {
             let mut c0 = Asm::new(CORE0_BASE);
             c0.release_core1(CORE1_BASE);
             c0.li(0, DATA).op(a32::ldrex(1, 0));
@@ -1708,8 +1731,16 @@ mod tests {
             c1.b(a32::AL, c1.pc());
             let mut e = dual(&format!("excl-{:x}", store_at), &c0, &c1);
             e.run_for(Ps::from_us(30)).expect("run");
-            assert_eq!(read_word(&mut e, RESULT), want_status, "STREX status at {store_at:#x}");
-            assert_eq!(read_word(&mut e, DATA), want_word, "the word after the race");
+            assert_eq!(
+                read_word(&mut e, RESULT),
+                want_status,
+                "STREX status at {store_at:#x}"
+            );
+            assert_eq!(
+                read_word(&mut e, DATA),
+                want_word,
+                "the word after the race"
+            );
         }
     }
 
@@ -1743,13 +1774,19 @@ mod tests {
         c0.release_core1(CORE1_BASE);
         c0.delay(500);
         // ICDSGIR: SGI 0 to core 1 (target list bit 1, filter 0).
-        c0.li(2, GIC_DIST + 0xF00).li(3, 0x0002_0000).op(a32::str(3, 2));
+        c0.li(2, GIC_DIST + 0xF00)
+            .li(3, 0x0002_0000)
+            .op(a32::str(3, 2));
         c0.b(a32::AL, c0.pc());
         let mut c1 = Asm::new(CORE1_BASE);
         // CPU interface on, priority mask open, SGI 0 enabled for this core.
         c1.li(0, GIC_CPU).op(a32::mov(1, 1)).op(a32::str(1, 0));
-        c1.li(0, GIC_CPU + 4).op(a32::mov(1, 0xF0)).op(a32::str(1, 0));
-        c1.li(0, GIC_DIST + 0x100).op(a32::mov(1, 1)).op(a32::str(1, 0));
+        c1.li(0, GIC_CPU + 4)
+            .op(a32::mov(1, 0xF0))
+            .op(a32::str(1, 0));
+        c1.li(0, GIC_DIST + 0x100)
+            .op(a32::mov(1, 1))
+            .op(a32::str(1, 0));
         c1.op(a32::WFI);
         c1.li(2, 0x33).li(3, FLAG).op(a32::str(2, 3));
         c1.b(a32::AL, c1.pc());

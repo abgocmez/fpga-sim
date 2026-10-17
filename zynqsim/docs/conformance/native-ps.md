@@ -71,3 +71,18 @@ the firmware shows up.
 * Anything the native engine does not drive yet: LEDs, Pmod devices, HDMI, Ethernet. The examples
   compared here use only the UART, SLCR, the private and global timers, TTC and the GIC.
 * Firmware that needs a PL or the MMU, Thumb or VFP: refused by the native engine (ADR-033).
+
+## Two cores (`[cpu1]`)
+
+Checked with `examples/dual-core-native` and `examples/dual-core-qemu`: the same ELF
+(`firmware/dual_core_demo`) on both cores.
+
+| Item | QEMU | Native | Difference |
+|---|---|---|---|
+| UART1 (core 0): the lines and `RESULT: ALL PASS` | printed | printed | none (compared byte for byte) |
+| UART0 (core 1): its lines | discarded (`-serial null`) | printed | pinned: native-only; the test asserts QEMU reads nothing on port 0 |
+| Core 1 start | the loader sets its PC; `_start` parks it on the mailbox | boot-ROM loop at 0xFFFFFE00 polls the mailbox | both reach the same entry through the mailbox |
+| Timing | instruction count (icount) | one cycle per instruction, round-robin batches of 8 | not compared (F0 on both) |
+
+The native half always runs; the QEMU half skips without the Xilinx QEMU. Five processes give one
+trace digest (`cli/tests/native_ps_diff::dual_core_five_processes_give_one_trace_digest`).

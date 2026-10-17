@@ -284,7 +284,11 @@ mod tests {
         w(&mut m, SCU_FILTER_END, 0xABCD_EF01);
         w(&mut m, SCU_ACCESS, 0x0000_1F00);
         w(&mut m, SCU_NS_ACCESS, 0x0000_0C00);
-        assert_eq!(m.read(SCU_FILTER_START, 4), Ok(0x1230_0000), "bits 31:20 only");
+        assert_eq!(
+            m.read(SCU_FILTER_START, 4),
+            Ok(0x1230_0000),
+            "bits 31:20 only"
+        );
         assert_eq!(m.read(SCU_FILTER_END, 4), Ok(0xABC0_0000));
         assert_eq!(m.read(SCU_ACCESS, 4), Ok(0x1F00));
         assert_eq!(m.read(SCU_NS_ACCESS, 4), Ok(0x0C00));
@@ -297,7 +301,7 @@ mod tests {
     fn the_gic_cpu_interface_is_banked_by_the_accessing_core() {
         let mut m = MpCore::new();
         m.select_cpu(0);
-        m.write(0x100, 4, 0xF0).expect("core 0 PMR");
+        m.write(0x104, 4, 0xF0).expect("core 0 PMR");
         m.select_cpu(1);
         assert_eq!(m.read(0x104, 4), Ok(0), "core 1 PMR is still reset");
         m.select_cpu(0);

@@ -130,7 +130,11 @@ mod tests {
     fn mpidr_carries_the_core_number_and_actlr_keeps_the_smp_bit() {
         for id in 0..2u32 {
             let cp = Cp15::new(id);
-            assert_eq!(cp.read(0, 0, 0, 5), Some(0x8000_0000 | id), "MPIDR of core {id}");
+            assert_eq!(
+                cp.read(0, 0, 0, 5),
+                Some(0x8000_0000 | id),
+                "MPIDR of core {id}"
+            );
         }
         let mut cp = Cp15::new(1);
         // ACTLR bit 6 is SMP: the core joins the coherent cluster when it is set.
