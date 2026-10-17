@@ -4,8 +4,9 @@ Written by `cargo test -p rtl-engine --test corpus`. Each row is one design from
 `tests/rtl` run with its `tb/corpus_tb.sv` (top `corpus_tb`) for at most 10 ms of
 simulated time. *accepted* means the front end and the engine's elaboration took it
 with no diagnostic. *runs* means no run-time error. *passes* means the testbench printed
-`CORPUS_PASS`. The engine is 2-state (x and z read as 0); a testbench that depends on
-x or z comparisons is not decided the same way as in XSim.
+`CORPUS_PASS`. The engine is 4-state (0, 1, x, z; `docs/adr/036-rtl-4state.md`); the
+testbenches run with their X-initialised variables, and a verdict that depends on a
+difference from XSim is not claimed here.
 
 | design | accepted | runs | passes | note |
 |---|---|---|---|---|

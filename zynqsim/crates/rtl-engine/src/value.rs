@@ -366,13 +366,17 @@ pub(crate) fn lor(a: Value4, b: Value4) -> Value4 {
     }
 }
 
-/// Logical equality (`==`, `!=` negated by the caller): X when either operand has an
-/// unknown bit, else whether the bits are equal.
+/// Logical equality (`==`, `!=` negated by the caller). A bit where both operands are known
+/// and differ makes the result 0 (as XSim does); otherwise any unknown bit makes it X; else
+/// the operands are equal and the result is 1.
 pub(crate) fn logical_eq(a: Value4, b: Value4, m: u128) -> Value4 {
-    if (a.unknown | b.unknown) & m != 0 {
+    let both_known = m & !(a.unknown | b.unknown);
+    if (a.bits ^ b.bits) & both_known != 0 {
+        Value4::known(0)
+    } else if (a.unknown | b.unknown) & m != 0 {
         Value4::all_x(1)
     } else {
-        Value4::known(((a.bits ^ b.bits) & m == 0) as u128)
+        Value4::known(1)
     }
 }
 
@@ -440,10 +444,11 @@ pub(crate) fn shl(a: Value4, n: u32, m: u128) -> Value4 {
     if n >= 128 {
         return Value4::known(0);
     }
+    // Shifts move the bits, Z included (XSim keeps a shifted z).
     Value4 {
         bits: (a.bits << n) & m,
         unknown: (a.unknown << n) & m,
-        z: 0,
+        z: (a.z << n) & m,
     }
 }
 
@@ -456,7 +461,7 @@ pub(crate) fn shr(a: Value4, n: u32, w: u32) -> Value4 {
     Value4 {
         bits: (a.bits >> n) & m,
         unknown: (a.unknown >> n) & m,
-        z: 0,
+        z: (a.z >> n) & m,
     }
 }
 

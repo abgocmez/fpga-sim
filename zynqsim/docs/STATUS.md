@@ -773,7 +773,7 @@ pinned in `docs/conformance/native-ps.md`.
 
 The front end (`crates/rtl-frontend`) reads Verilog-2001 and the synthesizable SystemVerilog subset
 without any external tool, and elaborates the hierarchy. The native engine (`crates/rtl-engine`, ADR-034)
-simulates the subset on its own flattened netlist, 2-state and up to 128 bits. It is **not** selectable
+simulates the subset on its own flattened netlist, 4-state (0, 1, X, Z; ADR-036) and up to 128 bits. It is **not** selectable
 as a backend yet (`backends.pl = "rtl-native"` is refused). "Verified" means a named test checks the
 behaviour; for the engine, one design is compared with Vivado XSim and six corpus designs with their own
 self-checking testbenches. Those are the only evidence that the results match a real simulator.
@@ -809,7 +809,8 @@ self-checking testbenches. Those are the only evidence that the results match a 
 | Native engine as an AXI4-Lite slave: `RtlModule` implements `pl_native::RegisterBlock`; each register access is a handshake over clock cycles of the engine's clock | verified | `rtl-engine` `math_ip::*` (7 tests against `pl_native::MathIp`, the firmware golden model; the RTL decodes 4 address bits, so offset 0x10 aliases to 0x0, pinned as a known difference) |
 | Native engine vs Vivado XSim: `my_math_ip` answers the same register stimulus with the same values (through `XsimPl`) | verified (one design, Windows, XSim) | `rtl-engine` `xsim_diff::my_math_ip_registers_agree_between_xsim_and_the_engine` |
 | Native engine on the corpus (`tests/rtl`, self-checking testbenches printing `CORPUS_PASS`): picorv32, serv, Forencich LFSR, UART and AXI stream FIFO, dpretet async FIFO **pass** (6 of 9); uriscv refused (hierarchical task call), pulp-common-cells refused (package-typed parameters), vivado-funcsim refused (needs a netlist that is not in the repository) | verified (6 pass, 3 refused) | `rtl-engine` `corpus::corpus_results_are_pinned_and_written_to_docs`; table in `docs/CORPUS_NATIVE.md` |
-| Native engine: 4-state (X and Z), `x`/`z` comparisons | not-planned for this subset (2-state by decision, ADR-034) | `docs/RTL_SUBSET.md` |
+| Native engine: 4-state values (X, Z) with the IEEE 1364 operator tables, `casez`/`casex`, X-aware edges, net resolution of continuous drivers, uninitialised X, `$display` x/z digits, VCD x/z, `get4`/`set4` | verified (Rust tests, and an X-propagation testbench of about 35 checks that agrees with XSim) | `rtl-engine` `fourstate::*` (30 tests: operator tables written from IEEE, resolution, casez/casex, edges, counter without reset, initial blocks, tri-state bus, known-input and X-soundness properties, formatting, snapshot and hash) |
+| Native engine: 4-state differences from a commercial simulator still open: drive strength, `wand`/`wor`, `inout`, X-propagation beyond the one testbench | not-verified | `docs/RTL_SUBSET.md` (native engine limits); the differential is `rtl-engine` `xprop_diff::x_propagation_testbench_agrees_between_xsim_and_the_engine` |
 | Native engine: `#` delays on intra-assignments and on continuous assigns | implemented-untested | `elab`/`lower` emit `Delay` before the assignment; no test |
 | Native engine: SystemVerilog beyond the subset (interfaces, classes, packages, assertions, `fork`, `disable`, DPI, hierarchical references in expressions) | stub: refused by name | `docs/RTL_SUBSET.md` |
 | Native engine: VHDL, UNISIM and netlists | stub | not started |

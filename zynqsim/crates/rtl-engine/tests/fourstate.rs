@@ -231,14 +231,15 @@ fn equality_is_x_on_unknown_and_case_equality_is_exact() {
         }
     }
     assert_eq!(low(&eval(&exprs)), want);
-    // Vectors: any unknown bit makes `==` unknown, even when a known bit differs.
+    // Vectors: a known differing bit gives 0; otherwise an unknown bit gives x.
     let v = eval(&[
         "4'b1x00 == 4'b0100".into(),
         "4'b10x0 === 4'b10x0".into(),
         "4'b10x0 === 4'b1000".into(),
         "4'b1z00 !== 4'b1x00".into(),
     ]);
-    assert_eq!(low(&v), vec!['x', '1', '0', '1']);
+    // A known differing bit (bit 3) makes == 0 even with unknown bits elsewhere (as XSim).
+    assert_eq!(low(&v), vec!['0', '1', '0', '1']);
 }
 
 #[test]
@@ -880,7 +881,11 @@ fn x_pessimism_is_documented_and_limited() {
         "0 & anything is 0: not pessimistic"
     );
     assert_eq!(v[1].to_bin_string(4), "xxxx", "arithmetic is all x");
-    assert_eq!(v[2].bit(0).ch(), 'x', "== is x whenever an operand has x");
+    assert_eq!(
+        v[2].bit(0).ch(),
+        '0',
+        "== is 0 when a known bit differs (as XSim)"
+    );
 }
 
 #[test]
