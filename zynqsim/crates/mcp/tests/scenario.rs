@@ -283,12 +283,12 @@ fn project_diagnostics_do_not_replace_a_running_simulation() {
     h.ok("sim_run", json!({ "duration": "1ms" }));
     std::fs::write(
         h.root.join("p").join("bad.toml"),
-        "schema_version = 1\n[board]\nname = \"zybo-z7-20\"\n[backends]\nps = \"qemu\"\npl = \"icarus\"\n",
+        "schema_version = 1\n[board]\nname = \"zybo-z7-20\"\n[backends]\nps = \"qemu\"\npl = \"questa\"\n",
     )
     .unwrap();
     let open = h.ok("project_open", json!({ "path": "p/bad.toml" }));
     assert_eq!(open["simulation_started"], false);
-    // Icarus is not implemented + cpu0.elf is required (the native PS exists now, so QEMU is used here).
+    // An unknown PL backend + cpu0.elf required (every known backend is built now).
     assert_eq!(open["errors"], 2);
     let fields: Vec<&str> = open["diagnostics"]
         .as_array()
