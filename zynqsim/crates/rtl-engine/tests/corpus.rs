@@ -192,8 +192,9 @@ fn markdown(rows: &[Row], fixtures: &[Row]) -> String {
          `tests/rtl` run with its `tb/corpus_tb.sv` (top `corpus_tb`) for at most 10 ms of\n\
          simulated time. *accepted* means the front end and the engine's elaboration took it\n\
          with no diagnostic. *runs* means no run-time error. *passes* means the testbench printed\n\
-         `CORPUS_PASS`. The engine is 2-state (x and z read as 0); a testbench that depends on\n\
-         x or z comparisons is not decided the same way as in XSim.\n\n\
+         `CORPUS_PASS`. The engine is 4-state (0, 1, x, z; `docs/adr/036-rtl-4state.md`); the\n\
+         testbenches run with their X-initialised variables, and a verdict that depends on a\n\
+         difference from XSim is not claimed here.\n\n\
          | design | accepted | runs | passes | note |\n|---|---|---|---|---|\n",
     );
     for r in rows {

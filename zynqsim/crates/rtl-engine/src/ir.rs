@@ -6,6 +6,7 @@
 //! every behavioural statement is a flat list of [`Op`]s that the scheduler can
 //! suspend and resume.
 
+use crate::value::{CaseMode, Value4};
 use rtl_frontend::ast::{BinOp, UnOp};
 
 /// Index of a signal in [`Design::signals`].
@@ -35,6 +36,8 @@ pub struct Signal {
     pub off: i64,
     /// Compiler-generated (locals of blocks, functions and tasks): not in name lookups.
     pub hidden: bool,
+    /// Storage class (sets the value before the first assignment).
+    pub kind: SigKind,
 }
 
 /// An expression with its width and signedness fixed.
@@ -111,15 +114,32 @@ pub enum K {
     },
     /// `$time` in units of `unit_ps`.
     Time(u64),
-    /// `(a ^ b) & mask == 0` (case-item match with don't-care bits); `w` = 1.
-    MaskEq {
+    /// A literal with X or Z bits (`4'b10xz`, `'x`); a literal without them is `Const`.
+    Lit(Value4),
+    /// A `case` item match of the selector `a` against the label `b` (`w` = 1). The
+    /// operands have the same width; `mode` picks the don't-care bits.
+    CaseEq {
         /// Selector.
         a: Box<Ex>,
         /// Label.
         b: Box<Ex>,
-        /// Bits that must match.
-        mask: u128,
+        /// Comparison of `case`, `casez` or `casex`.
+        mode: CaseMode,
     },
+}
+
+/// Storage class of a signal, which sets its value before any assignment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SigKind {
+    /// A net (`wire`, `tri`, ports without a type): Z until driven. Its value is the
+    /// resolution of its continuous drivers (and of an external value set by the caller).
+    Net,
+    /// A 4-state variable (`reg`, `logic`, `integer`, `time`, function locals): X
+    /// until assigned.
+    Variable,
+    /// A 2-state variable (`bit`, `int`): 0 until assigned, and X or Z written to it
+    /// become 0.
+    TwoState,
 }
 
 /// Edge filter of a [`Trigger`].
