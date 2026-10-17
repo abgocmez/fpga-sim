@@ -60,6 +60,8 @@ pub const BATCH_CYCLES: u64 = 128;
 const _: () = assert!(BATCH_CYCLES * PS_PER_CYCLE < 1_000_000);
 /// Cycles one core runs in a turn before the scheduler gives the other core its turn.
 pub const SCHED_BATCH: u64 = 8;
+/// A scheduler turn never straddles a device tick.
+const _: () = assert!(BATCH_CYCLES % SCHED_BATCH == 0);
 /// Where core 1 starts: the boot ROM's parking loop, written into the top of the on-chip RAM
 /// at reset (`VERIFY:` the boot ROM's own mapping; the model keeps the loop in OCM).
 pub const BOOT_ROM_PARK: u32 = 0xFFFF_FE00;
@@ -1819,7 +1821,6 @@ mod tests {
         assert_eq!(e.cyc[0], e.cyc[1], "equal cycles");
         assert_eq!(e.cycle, e.cyc[0]);
         assert_eq!(e.now_ps().0, e.cycle * PS_PER_CYCLE);
-        assert!(SCHED_BATCH >= 1 && BATCH_CYCLES % SCHED_BATCH == 0);
     }
 
     /// A snapshot of a two-core session restores both cores: the run after the restore has the
