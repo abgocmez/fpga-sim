@@ -14,12 +14,19 @@ use crate::design::Design;
 use crate::sim::Simulator;
 use pl_native::RegisterBlock;
 
-/// Clock period of the adapter's clock, in picoseconds (10 ns, 100 MHz).
-const PERIOD_PS: u64 = 10_000;
+/// Clock period of the adapter's clock, in picoseconds (10 ns, 100 MHz: the PL clock FCLK0 of
+/// the Zynq at its default rate).
+pub const PERIOD_PS: u64 = 10_000;
 /// Cycles one transaction may take before it is reported as stuck.
 const TIMEOUT_CYCLES: u32 = 1_000;
 
 /// An elaborated RTL design with an AXI4-Lite slave, usable as a [`RegisterBlock`].
+///
+/// Its clock runs on engine time. A register access takes the cycles the design needs; the
+/// [`RegisterBlock::advance`] of the PS time brings the clock up to the PS time (idle cycles),
+/// so an interrupt output of the design is seen at the PS time it changed, at most one clock
+/// period late. The engine time of the first reset is the origin: PS time 0 is the engine time
+/// the module had when it was built.
 pub struct RtlModule {
     sim: Simulator,
     name: String,
@@ -28,6 +35,10 @@ pub struct RtlModule {
     reset: Option<(String, bool)>,
     window: u64,
     last_error: Option<String>,
+    /// Interrupt output (1 bit) reported by [`RegisterBlock::irq_level`], if any.
+    irq: Option<String>,
+    /// Engine time (ps) that PS time 0 corresponds to.
+    origin_ps: u64,
 }
 
 impl RtlModule {
@@ -89,9 +100,32 @@ impl RtlModule {
             reset,
             window: window.max(0x1000),
             last_error: None,
+            irq: None,
+            origin_ps: 0,
         };
         m.reset_hw()?;
+        m.origin_ps = m.sim.now_ps();
         Ok(m)
+    }
+
+    /// Names the 1-bit output that [`RegisterBlock::irq_level`] reports (an interrupt).
+    pub fn set_irq_output(&mut self, port: &str) -> Result<(), String> {
+        match self.sim.design().signal(port) {
+            Some(_) => {
+                self.irq = Some(port.to_string());
+                Ok(())
+            }
+            None => Err(format!("no signal `{port}` in `{}`", self.name)),
+        }
+    }
+
+    /// Runs idle clock cycles until the engine time reaches `ps` (engine time, not PS time).
+    /// A cycle that would end after `ps` is not run, so the clock never passes it.
+    pub fn run_idle_until(&mut self, ps: u64) -> Result<(), String> {
+        while self.sim.now_ps() + PERIOD_PS <= ps {
+            self.cycle()?;
+        }
+        Ok(())
     }
 
     /// The simulator, for inspection (signal values, the log, snapshots).
@@ -121,15 +155,19 @@ impl RtlModule {
         self.sim.get(name).unwrap_or(0)
     }
 
-    /// One full clock period: rising edge, then falling edge, with settling after each.
+    /// One full clock period: the rising edge at `t`, the high phase to `t + PERIOD/2`, the
+    /// falling edge there, and the low phase up to `t + PERIOD`, the next rising edge.
     fn cycle(&mut self) -> Result<(), String> {
         let clk = self.clock.clone();
-        self.drive(&clk, 1)?;
         let t = self.sim.now_ps();
+        self.drive(&clk, 1)?;
         self.sim.run_until(t).map_err(|e| e.to_string())?;
-        self.drive(&clk, 0)?;
         self.sim
             .run_until(t + PERIOD_PS / 2)
+            .map_err(|e| e.to_string())?;
+        self.drive(&clk, 0)?;
+        self.sim
+            .run_until(t + PERIOD_PS)
             .map_err(|e| e.to_string())?;
         Ok(())
     }
@@ -282,5 +320,16 @@ impl RegisterBlock for RtlModule {
         if let Err(e) = self.reset_hw() {
             self.last_error = Some(e);
         }
+    }
+
+    fn advance(&mut self, now_ns: u64) {
+        let target = self.origin_ps + now_ns * 1_000;
+        if let Err(e) = self.run_idle_until(target) {
+            self.last_error = Some(e);
+        }
+    }
+
+    fn irq_level(&self) -> bool {
+        self.irq.as_ref().is_some_and(|n| self.get(n) != 0)
     }
 }

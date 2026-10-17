@@ -5,8 +5,11 @@
 //! With a `[cpu1] elf` there is a second core (MPIDR 1). It starts in the boot ROM's parking
 //! loop (see [`PARK_LOOP`]) and runs its own software only after core 0 writes that software's
 //! entry address to the mailbox at [`CPU1_MAILBOX`] and sends an event (SEV), as the boot code
-//! of the Xilinx BSP does. Without `[cpu1]` core 1 is not instantiated. There is no PL: the
-//! native PS attaches no programmable logic, so `backends.pl` must be `demo`.
+//! of the Xilinx BSP does. Without `[cpu1]` core 1 is not instantiated.
+//!
+//! **The PL is optional** (ADR-035): native models and an RTL design on the native RTL engine,
+//! on the `M_AXI_GP0`/`GP1` windows of the bus ([`crate::native_pl`]). Without one,
+//! `backends.pl` is `demo`. A PL access is stamped with the cycle of the core that made it.
 //!
 //! **Fidelity F0.** One instruction is one CPU cycle at 666.67 MHz, so one cycle is 1500 ps
 //! exactly. Peripherals tick every [`BATCH_CYCLES`] cycles, and each core samples its interrupt
@@ -31,6 +34,11 @@ use crate::bytelog::ByteLog;
 use crate::elf::Symbols;
 use crate::engine::Engine;
 use crate::error::ApiError;
+use crate::native_pl::{self, PlHandle};
+use crate::pl_attach::{
+    BoardPin, NativeInstance, RtlNativeSpec, build_pl, pl_uart_write, push_board_inputs,
+    rtl_native_target, set_board_pin,
+};
 use crate::qemu_engine::{cpsr_mode, resolve_locations, source_ref};
 use crate::recording::{Recording, SimConfig};
 use crate::source::SourceMap;
@@ -42,6 +50,7 @@ use board_zybo::{BoardDef, BoardState};
 use cpu_a9::{Cpu, Event, Mode, StepResult};
 use mem_sys::{Bus, BusResult, CoreBus, OCM_BASE, OCM_SIZE, SystemBus, fnv1a64};
 use object::{Object, ObjectSegment};
+use pl_api::PlTarget;
 use ps_periph::system::{PsConfig, zynq_system};
 use ps_periph::uart::Uart;
 use sim_core::Ps;
@@ -116,6 +125,10 @@ pub struct NativeSpec {
     /// Directories searched for the sources of the ELF's line table, besides its compilation
     /// directory.
     pub source_dirs: Vec<PathBuf>,
+    /// Native PL models (`[native]`), placed on the GP ports (ADR-035). Empty without a PL.
+    pub natives: Vec<NativeInstance>,
+    /// An RTL design on the native RTL engine (`backends.pl = "rtl-native"`), on a GP port.
+    pub rtl_native: Option<RtlNativeSpec>,
 }
 
 /// The loadable part of an ELF: the entry point and the segments (addresses and bytes, with
@@ -214,6 +227,11 @@ pub struct NativePsEngine {
     trace: TraceLog,
     uart0_log: ByteLog,
     uart1_log: ByteLog,
+    /// The PL, when one is attached (ADR-035), and the bytes its UART Lite instances sent.
+    pl: Option<PlHandle>,
+    pl_uart: Vec<ByteLog>,
+    /// The PL's name in the status: `none`, `native`, `rtl-native` or `native+rtl-native`.
+    pl_name: &'static str,
     symbols: Symbols,
     source: SourceMap,
     breakpoints: Vec<BreakpointInfo>,
@@ -264,6 +282,24 @@ impl NativePsEngine {
             uart_write(&mut bus, base + UART_BAUDDIV, 6)?;
             uart_write(&mut bus, base + UART_CR, CR_TX_EN | CR_RX_EN)?;
         }
+        // The PL on the GP ports (ADR-035): native models and/or the RTL design.
+        let pl_name = match (spec.natives.is_empty(), spec.rtl_native.is_some()) {
+            (true, false) => "none",
+            (false, false) => "native",
+            (true, true) => "rtl-native",
+            (false, true) => "native+rtl-native",
+        };
+        let pl = if spec.natives.is_empty() && spec.rtl_native.is_none() {
+            None
+        } else {
+            let rtl = match &spec.rtl_native {
+                Some(r) => Some(rtl_native_target(r)?),
+                None => None,
+            };
+            let handle = native_pl::new_handle(build_pl(&spec.natives, rtl)?);
+            native_pl::attach(&mut bus, &handle)?;
+            Some(handle)
+        };
         let mut cpus = vec![Cpu::new(0)];
         // A Thumb entry point is an odd address (the symbol's value has bit 0 set): the core
         // starts in Thumb state at the even address.
@@ -330,6 +366,9 @@ impl NativePsEngine {
             trace,
             uart0_log: ByteLog::default(),
             uart1_log: ByteLog::default(),
+            pl,
+            pl_uart: Vec::new(),
+            pl_name,
             symbols,
             source,
             breakpoints,
@@ -397,6 +436,8 @@ impl NativePsEngine {
                     cpus,
                     dirty,
                     stores,
+                    pl,
+                    cyc,
                     ..
                 } = self;
                 let ddr_size = bus.ddr_size();
@@ -405,6 +446,8 @@ impl NativePsEngine {
                     ddr_size,
                     dirty,
                     stores,
+                    pl: pl.as_ref(),
+                    cycle: cyc[c],
                 };
                 cpus[c].step(&mut view)
             };
@@ -540,6 +583,21 @@ impl NativePsEngine {
         }
         self.dirty = true;
         self.flush_uart();
+        self.flush_pl();
+    }
+
+    /// Records what the PL reported (accesses, LEDs, Pmod pins, UART Lite bytes) since the last
+    /// window, as the QEMU engine does.
+    fn flush_pl(&mut self) {
+        if let Some(pl) = &self.pl {
+            native_pl::flush(
+                pl,
+                &mut self.trace,
+                &mut self.board,
+                &self.def,
+                &mut self.pl_uart,
+            );
+        }
     }
 
     fn advance_to_cycle(&mut self, end: u64) -> Result<(), ApiError> {
@@ -714,6 +772,18 @@ impl NativePsEngine {
                     now_ps: self.now_ps().0,
                 })
             }
+            Command::Input(Input::UartWrite { port, data }) if port >= 2 => {
+                // A PL UART (AXI UART Lite): delivered at the current time.
+                let pl = self
+                    .pl
+                    .clone()
+                    .ok_or_else(|| ApiError::invalid_argument(format!("no uart {port}")))?;
+                let now_ns = self.cycle * PS_PER_CYCLE / 1000;
+                let now = self.now_ps();
+                let mut st = native_pl::lock(&pl);
+                pl_uart_write(st.target(), port, &data, now_ns, now, &mut self.trace)?;
+                Ok(Response::Ok)
+            }
             Command::Input(Input::UartWrite { port, data }) => {
                 let uart = match port {
                     0 => &self.uart0,
@@ -743,15 +813,17 @@ impl NativePsEngine {
                 }
                 Ok(Response::Ok)
             }
-            Command::Input(Input::SetSwitch { .. } | Input::SetButton { .. }) => Err(unsupported(
-                "board inputs",
-                "the native PS does not drive the board pins yet (no PL is attached; PL \
-                 attachment is out of scope for this engine, use `backends.ps = \"qemu\"`)",
-            )),
+            Command::Input(Input::SetSwitch { index, on }) => {
+                self.set_pin(BoardPin::Switch, index, on)
+            }
+            Command::Input(Input::SetButton { index, pressed }) => {
+                self.set_pin(BoardPin::Button, index, pressed)
+            }
             Command::Input(Input::Reset { .. }) => self.reset_in_place(),
             Command::AttachDevice { .. } | Command::SetDeviceValue { .. } => Err(unsupported(
                 "pmod devices",
-                "Pmod devices are attached through the PL, which the native PS does not have",
+                "Pmod devices are not attached to the native PS yet (ADR-035); the PL pins are \
+                 traced, but no board device answers them",
             )),
             Command::SetMediaSource { .. } => Err(unsupported(
                 "media sources",
@@ -827,6 +899,37 @@ impl NativePsEngine {
     }
 
     /// Starts over with the same firmware, as the QEMU engine's reset does.
+    /// A board switch or button. The PL must have board pins: a GPIO channel bound to
+    /// `board.sw` or `board.btn`, or a timer's capture input.
+    fn set_pin(&mut self, pin: BoardPin, index: usize, on: bool) -> Result<Response, ApiError> {
+        let Some(pl) = self.pl.clone() else {
+            return Err(unsupported(
+                "board inputs",
+                "no PL is attached: the board switches and buttons are PL pins",
+            ));
+        };
+        let mut st = native_pl::lock(&pl);
+        if !st.target().has_board_pins() {
+            return Err(unsupported(
+                "board inputs",
+                "this PL is not connected to the board pins (add a `[connect]` entry such as \
+                 `\"<instance>.GPIO\" = \"board.sw\"`)",
+            ));
+        }
+        let now = self.now_ps();
+        set_board_pin(
+            &mut self.board,
+            &self.def,
+            &mut self.trace,
+            now,
+            pin,
+            index,
+            on,
+        )?;
+        push_board_inputs(st.target(), &self.board, self.cycle * PS_PER_CYCLE / 1000);
+        Ok(Response::Ok)
+    }
+
     fn reset_in_place(&mut self) -> Result<Response, ApiError> {
         let mut fresh = NativePsEngine::new(&self.spec)?;
         std::mem::swap(self, &mut fresh);
@@ -858,11 +961,23 @@ struct CoreView<'a> {
     ddr_size: u64,
     dirty: &'a mut bool,
     stores: &'a mut Vec<Store>,
+    /// The PL, when attached: an access in a GP window first brings its clock to `cycle`.
+    pl: Option<&'a PlHandle>,
+    /// Cycles the core that makes the access has run: the instruction's own cycle.
+    cycle: u64,
 }
 
 impl CoreView<'_> {
     fn touches_devices(&self, addr: u64) -> bool {
         !(addr < self.ddr_size || (OCM_BASE..OCM_BASE + OCM_SIZE).contains(&addr))
+    }
+
+    fn stamp_pl(&self, addr: u64) {
+        if let Some(pl) = self.pl {
+            if native_pl::in_gp_windows(addr) {
+                native_pl::lock(pl).at_cycle(self.cycle);
+            }
+        }
     }
 }
 
@@ -870,6 +985,7 @@ impl Bus for CoreView<'_> {
     fn read(&mut self, addr: u64, size: u8) -> BusResult<u64> {
         if self.touches_devices(addr) {
             *self.dirty = true;
+            self.stamp_pl(addr);
         }
         self.bus.read(addr, size)
     }
@@ -877,6 +993,7 @@ impl Bus for CoreView<'_> {
     fn write(&mut self, addr: u64, size: u8, value: u64) -> BusResult<()> {
         if self.touches_devices(addr) {
             *self.dirty = true;
+            self.stamp_pl(addr);
         }
         self.bus.write(addr, size, value)?;
         self.stores.push(Store { addr, size, value });
@@ -941,7 +1058,7 @@ impl Engine for NativePsEngine {
             seed: 0,
             board: self.def.name.clone(),
             ps_backend: "native".to_string(),
-            pl_backend: "none".to_string(),
+            pl_backend: self.pl_name.to_string(),
             fidelity: Fidelity::F0,
             capabilities: vec![
                 Capability::Uart,
@@ -1022,6 +1139,25 @@ impl NativePsEngine {
                 })
                 .ok_or_else(|| ApiError::not_found(format!("no pin or control named `{name}`"))),
             Query::UartRead { port, from, max } => {
+                if *port >= 2 {
+                    // The PL's UART Lite instances (ports 2..), as the QEMU engine reports them.
+                    let channels = self
+                        .pl
+                        .as_ref()
+                        .map_or(0, |pl| native_pl::lock(pl).target().uart_channels().len());
+                    let ch = usize::from(*port) - 2;
+                    if ch >= channels {
+                        return Err(ApiError::invalid_argument(format!("no uart {port}")));
+                    }
+                    let empty = ByteLog::default();
+                    let log = self.pl_uart.get(ch).unwrap_or(&empty);
+                    let (data, next) = log.read(*from, *max);
+                    return Ok(Response::Uart {
+                        data,
+                        next,
+                        oldest: log.base,
+                    });
+                }
                 let log = match port {
                     0 => &self.uart0_log,
                     1 => &self.uart1_log,
@@ -1237,6 +1373,8 @@ mod tests {
             quantum_ns: 1000,
             breakpoints: Vec::new(),
             source_dirs: Vec::new(),
+            natives: Vec::new(),
+            rtl_native: None,
         }
     }
 
@@ -1504,8 +1642,15 @@ mod tests {
     fn validation_refuses_what_the_native_ps_cannot_attach() {
         let text = native_hello_text();
         assert!(errors_of(&text).is_empty(), "{:?}", errors_of(&text));
+        // `native` is accepted since ADR-035; an RTL simulator over remote-port is refused.
         let pl = text.replace("pl = \"demo\"", "pl = \"native\"");
-        assert!(errors_of(&pl).iter().any(|e| e.starts_with("backends.pl:")));
+        assert!(errors_of(&pl).is_empty(), "{:?}", errors_of(&pl));
+        let xsim = text.replace("pl = \"demo\"", "pl = \"xsim\"");
+        assert!(
+            errors_of(&xsim)
+                .iter()
+                .any(|e| e.starts_with("backends.pl:") && e.contains("remote-port"))
+        );
         let devices = text.replace("[sim]", "[devices]\npmod_ja = \"oled\"\n\n[sim]");
         assert!(
             errors_of(&devices)

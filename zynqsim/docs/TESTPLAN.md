@@ -61,6 +61,15 @@ Needs Vivado/XSim; skipped with a message when it is not found.
 | Corpus manifest: licence, commit and source files exist for every design | `the_manifest_matches_the_files_on_disk` | no design without provenance |
 | Table is current | `corpus_table_is_current` | `docs/CORPUS.md` matches the test results |
 
+## Native PL (P9, ADR-035)
+
+No external tool. `crates/cli/tests/native_pl.rs`: GPIO/timer/UART Lite firmware on the native
+PS (UART text, PL UART Lite bytes, switch to GPIO, five engines give one digest) and the
+validation of PS/PL pairs. Unit tests: `sim-api` `pl_attach` and `native_pl` (the RTL
+`my_math_ip` answers on the bus, GP windows, PL clock follows the cycles), `rtl-engine` (the
+XSim differential is `xsim_diff`, which needs `cargo xtask dpi`). Not run: `examples/native-math`
+(see ADR-035).
+
 ## Tests that need external engines (P1)
 
 | Test | Needs | Skip behaviour |
