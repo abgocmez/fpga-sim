@@ -680,11 +680,11 @@ fn warn(field: &str, message: impl Into<String>) -> Diagnostic {
 }
 
 const PS_BACKENDS: &[&str] = &["demo", "qemu", "native"];
-const PL_BACKENDS: &[&str] = &["demo", "verilator", "icarus", "xsim", "native"];
+const PL_BACKENDS: &[&str] = &["demo", "verilator", "icarus", "xsim", "native", "rtl-native"];
 /// PS backends that exist in this build.
 const IMPLEMENTED_PS: &[&str] = &["demo", "qemu", "native"];
 /// PL backends that exist in this build.
-const IMPLEMENTED_PL: &[&str] = &["demo", "native", "xsim", "verilator"];
+const IMPLEMENTED_PL: &[&str] = &["demo", "native", "xsim", "verilator", "rtl-native"];
 
 impl Project {
     /// The `[rtl] protocol_checkers` setting (the default when there is no `[rtl]`).
@@ -825,6 +825,75 @@ impl Project {
         p
     }
 
+    /// The `[native]` instances with their placement, parameters and bindings (ADR-016, ADR-035).
+    pub fn native_instances(&self) -> Result<Vec<crate::NativeInstance>, ApiError> {
+        let mut natives = Vec::new();
+        for (name, model) in &self.native {
+            let (gp, addr) = self.native_placement(name).ok_or_else(|| {
+                ApiError::invalid_argument(format!("native.{name} has no [connect] entry"))
+            })?;
+            let mut params: BTreeMap<String, String> = self
+                .native_params
+                .get(name)
+                .map(|m| m.iter().map(|(k, v)| (k.clone(), v.to_string())).collect())
+                .unwrap_or_default();
+            let size = params
+                .remove("ADDRESS_SIZE")
+                .map(|v| {
+                    vendor_ip::parse_number(&v).ok_or_else(|| {
+                        ApiError::invalid_argument(format!(
+                            "native_params.{name}.ADDRESS_SIZE = `{v}` is not a number"
+                        ))
+                    })
+                })
+                .transpose()?;
+            natives.push(crate::NativeInstance {
+                name: name.clone(),
+                model: model.clone(),
+                gp,
+                base: addr,
+                size,
+                irq: self.native_irq(name),
+                irqs: self.native_irqs(name),
+                params,
+                bindings: self.native_bindings(name),
+            });
+        }
+        Ok(natives)
+    }
+
+    /// The RTL design of `backends.pl = "rtl-native"` (ADR-035): `[rtl] files` and `top`, placed
+    /// by the `[connect]` entry `"<top>.S_AXI" = "M_AXI_GP<n>@<addr>"`. `None` for other PLs.
+    pub fn rtl_native_spec(&self, base: &Path) -> Result<Option<crate::RtlNativeSpec>, ApiError> {
+        if self.backends.pl != "rtl-native" {
+            return Ok(None);
+        }
+        let r = self.rtl.as_ref().ok_or_else(|| {
+            ApiError::invalid_argument("backends.pl = \"rtl-native\" needs [rtl] with `files` and `top`")
+        })?;
+        let resolved = crate::exportsim::resolve_rtl(r, base);
+        if let Some(e) = resolved.first_error() {
+            return Err(ApiError::invalid_argument(e));
+        }
+        let top = r.top.clone().or(resolved.top.clone()).ok_or_else(|| {
+            ApiError::invalid_argument("backends.pl = \"rtl-native\" needs `top` in [rtl]")
+        })?;
+        let (gp, addr) = self.native_placement(&top).ok_or_else(|| {
+            ApiError::invalid_argument(format!(
+                "the RTL top `{top}` has no [connect] entry such as \
+                 `\"{top}.S_AXI\" = \"M_AXI_GP0@0x43C00000\"`"
+            ))
+        })?;
+        Ok(Some(crate::RtlNativeSpec {
+            top: top.clone(),
+            sources: resolved.files,
+            defines: r.defines.clone(),
+            gp,
+            base: addr,
+            irqs: self.native_irqs(&top),
+        }))
+    }
+
     /// Validates the project and builds the engine it asks for.
     ///
     /// `base` is the directory relative paths resolve against. Fails with every
@@ -881,39 +950,9 @@ impl Project {
                     None => cpu(&self.cpu0)
                         .ok_or_else(|| ApiError::invalid_argument("cpu0.elf is required"))?,
                 };
-                let mut natives = Vec::new();
-                for (name, model) in &self.native {
-                    let (gp, addr) = self.native_placement(name).ok_or_else(|| {
-                        ApiError::invalid_argument(format!("native.{name} has no [connect] entry"))
-                    })?;
-                    let mut params: BTreeMap<String, String> = self
-                        .native_params
-                        .get(name)
-                        .map(|m| m.iter().map(|(k, v)| (k.clone(), v.to_string())).collect())
-                        .unwrap_or_default();
-                    let size = params
-                        .remove("ADDRESS_SIZE")
-                        .map(|v| {
-                            vendor_ip::parse_number(&v).ok_or_else(|| {
-                                ApiError::invalid_argument(format!(
-                                    "native_params.{name}.ADDRESS_SIZE = `{v}` is not a number"
-                                ))
-                            })
-                        })
-                        .transpose()?;
-                    natives.push(crate::NativeInstance {
-                        name: name.clone(),
-                        model: model.clone(),
-                        gp,
-                        base: addr,
-                        size,
-                        irq: self.native_irq(name),
-                        irqs: self.native_irqs(name),
-                        params,
-                        bindings: self.native_bindings(name),
-                    });
-                }
+                let natives = self.native_instances()?;
                 let rtl = self.rtl_spec(base)?;
+                let rtl_native = self.rtl_native_spec(base)?;
                 let uart = match self.host.get("uart1").map(String::as_str) {
                     Some("tcp") => backend_qemu::UartMode::Tcp,
                     _ => backend_qemu::UartMode::File,
@@ -951,6 +990,7 @@ impl Project {
                     uart,
                     natives,
                     rtl,
+                    rtl_native,
                     board: board_def.name.clone(),
                     board_def: Some(board_def),
                     pl_name: if matches!(self.backends.pl.as_str(), "xsim" | "verilator") {
@@ -961,10 +1001,8 @@ impl Project {
                             _ => "verilator+native",
                         }
                         .to_string()
-                    } else if self.native.is_empty() {
-                        "none".to_string()
                     } else {
-                        "native".to_string()
+                        pl_name_of(self.backends.pl.as_str(), self.native.is_empty()).to_string()
                     },
                     net: match &self.network {
                         Some(n) if n.enable => Some(n.config().map_err(|p| {
@@ -1016,6 +1054,8 @@ impl Project {
                     source_dirs: std::iter::once(base.to_path_buf())
                         .chain(debug.source_dirs.iter().map(|d| resolve(base, d)))
                         .collect(),
+                    natives: self.native_instances()?,
+                    rtl_native: self.rtl_native_spec(base)?,
                 };
                 Ok(Box::new(crate::NativePsEngine::new(&spec)?))
             }
@@ -1138,6 +1178,44 @@ impl Project {
                 ));
             }
         }
+        if self.backends.pl == "rtl-native" {
+            match &self.rtl {
+                Some(r) if (!r.files.is_empty() && r.top.is_some()) => {
+                    let resolved = crate::exportsim::resolve_rtl(r, base);
+                    for e in resolved.diagnostics.iter().filter(|x| x.severity == Severity::Error) {
+                        d.push(err("rtl", e.message.clone()));
+                    }
+                    if r.export_dir.is_some() || r.filelist.is_some() || r.waves {
+                        d.push(err(
+                            "rtl",
+                            "backends.pl = \"rtl-native\" takes `files` and `top` only: no \
+                             `export_dir`, `filelist` or `waves` (use backends.pl = \"xsim\")",
+                        ));
+                    }
+                    if let Some(top) = r.top.as_deref() {
+                        if self.native_placement(top).is_none() {
+                            d.push(err(
+                                "rtl",
+                                format!(
+                                    "the RTL top `{top}` needs a [connect] entry such as \
+                                     `\"{top}.S_AXI\" = \"M_AXI_GP0@0x43C00000\"`"
+                                ),
+                            ));
+                        }
+                    }
+                }
+                _ => d.push(err(
+                    "rtl",
+                    "backends.pl = \"rtl-native\" needs [rtl] with `files` and `top`",
+                )),
+            }
+            if self.backends.ps == "demo" {
+                d.push(err(
+                    "backends.pl",
+                    "an RTL design needs a PS that issues bus accesses; set `backends.ps = \"native\"` or \"qemu\"",
+                ));
+            }
+        }
         if self.backends.pl == "native" && self.backends.ps == "demo" {
             d.push(err(
                 "backends.pl",
@@ -1147,16 +1225,38 @@ impl Project {
         if self.backends.ps == "native" {
             // The native PS is PS-only (ADR-033): what needs a PL, a QEMU-only feature or a
             // second core is refused here, with the reason, instead of being ignored.
-            if self.backends.pl != "demo" {
+            if matches!(self.backends.pl.as_str(), "xsim" | "verilator" | "icarus") {
                 d.push(err(
                     "backends.pl",
                     format!(
-                        "`{}` cannot be attached to the native PS yet (PL attachment through \
-                         remote-port is out of scope); use `backends.pl = \"demo\"` or \
+                        "`{}` cannot be attached to the native PS: an RTL simulator is driven \
+                         through remote-port, which the native PS does not speak (out of scope, \
+                         ADR-035); use `backends.pl = \"rtl-native\"` (the native RTL engine) or \
                          `backends.ps = \"qemu\"`",
                         self.backends.pl
                     ),
                 ));
+            }
+            if self.backends.pl == "demo" && !self.native.is_empty() {
+                d.push(err(
+                    "backends.pl",
+                    "native PL models need the PL: set `backends.pl = \"native\"`",
+                ));
+            }
+            if self.backends.pl == "native" && self.native.is_empty() {
+                d.push(warn(
+                    "backends.pl",
+                    "no `[native]` models: the PL is empty (every GP access is a decode error)",
+                ));
+            }
+            for (inst, model) in &self.native {
+                if model == "axi_dma" {
+                    d.push(err(
+                        &format!("native.{inst}"),
+                        "the native PS has no HP/ACP master port, so a DMA cannot move data \
+                         (ADR-035); use `backends.ps = \"qemu\"`",
+                    ));
+                }
             }
             if self.cpu1.is_some() {
                 d.push(err(
@@ -1165,17 +1265,10 @@ impl Project {
                      so remove `[cpu1]` (two native cores are not implemented yet)",
                 ));
             }
-            if !self.native.is_empty() {
-                d.push(err(
-                    "native",
-                    "native PL models need the PL, which the native PS does not have; use \
-                     `backends.ps = \"qemu\"`",
-                ));
-            }
             if !self.devices.is_empty() {
                 d.push(err(
                     "devices",
-                    "Pmod devices are on the PL side, which the native PS does not have; use \
+                    "Pmod devices are not attached to the native PS yet (ADR-035); use \
                      `backends.ps = \"qemu\"`",
                 ));
             }
@@ -1241,7 +1334,10 @@ impl Project {
             }
         }
         if !self.native.is_empty()
-            && !matches!(self.backends.pl.as_str(), "native" | "xsim" | "verilator")
+            && !matches!(
+                self.backends.pl.as_str(),
+                "native" | "rtl-native" | "xsim" | "verilator"
+            )
         {
             d.push(warn(
                 "native",
@@ -1861,6 +1957,17 @@ fn verilator_rtl_problems(r: &RtlSection, files: &[PathBuf]) -> Vec<String> {
         }
     }
     out
+}
+
+/// The PL name a status reports for a PL backend that is not an RTL simulator through remote-port
+/// (`none`, `native`, `rtl-native` or `native+rtl-native`).
+fn pl_name_of(pl: &str, natives_empty: bool) -> &'static str {
+    match (pl == "rtl-native", natives_empty) {
+        (true, true) => "rtl-native",
+        (true, false) => "native+rtl-native",
+        (false, true) => "none",
+        (false, false) => "native",
+    }
 }
 
 fn resolve(base: &Path, rel: &str) -> PathBuf {

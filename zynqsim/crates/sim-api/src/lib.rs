@@ -16,8 +16,10 @@ mod engine;
 mod error;
 pub mod exportinit;
 pub mod exportsim;
+mod native_pl;
 mod native_ps;
 mod netlog;
+mod pl_attach;
 mod project;
 pub mod protocol;
 mod qemu_engine;
@@ -36,6 +38,7 @@ pub use duration::parse_duration;
 pub use engine::Engine;
 pub use error::{ApiError, ErrorCode};
 pub use native_ps::{BATCH_CYCLES, NativePsEngine, NativeSpec, PS_PER_CYCLE};
+pub use pl_attach::RtlNativeSpec;
 pub use project::{
     BackendsSection, BoardSection, BootSection, CpuSection, DebugSection, Diagnostic, MediaSection,
     NetworkSection, Project, ProtocolCheckers, RtlSection, Severity, SimSection, StorageSection,

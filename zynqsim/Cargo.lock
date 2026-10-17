@@ -3168,6 +3168,7 @@ dependencies = [
  "pl-api",
  "pl-native",
  "ps-periph",
+ "rtl-engine",
  "serde",
  "serde_json",
  "sim-core",

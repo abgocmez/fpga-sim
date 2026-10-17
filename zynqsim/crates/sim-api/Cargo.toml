@@ -24,6 +24,7 @@ board-zybo = { version = "0.1.0", path = "../board-zybo" }
 boot = { version = "0.1.0", path = "../boot" }
 pl-api = { version = "0.1.0", path = "../pl-api" }
 pl-native = { version = "0.1.0", path = "../pl-native" }
+rtl-engine = { version = "0.1.0", path = "../rtl-engine" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sim-core = { version = "0.1.0", path = "../sim-core" }

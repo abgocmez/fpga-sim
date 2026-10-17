@@ -20,18 +20,18 @@ use crate::types::{
 use backend_qemu::{BreakKind as GdbKind, QemuConfig, QemuError, QemuMachine, RunEnd, UartMode};
 use board_zybo::{BoardDef, BoardState};
 use devices::BoardDevice;
-use pl_api::media::{SAMPLE_RATE, wav_bytes};
-use pl_api::{
-    AudioSource, BusResult, MasterAccess, MediaEvent, PlTarget, PsMasterPort, PsPort, VideoSource,
+use crate::pl_attach::{
+    BankSink, BoardPin, TracedPl, pl_uart_write, push_board_inputs, set_board_pin,
+    trace_leds, trace_master_accesses, trace_pl_uart, trace_pmod_pins, trace_ps_accesses,
 };
-use pl_native::{MathIp, NativePl, RegisterBlock};
+use pl_api::media::{SAMPLE_RATE, wav_bytes};
+use pl_api::{AudioSource, MediaEvent, PlTarget, VideoSource};
 use sim_core::Ps;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use trace::{TraceEvent, TraceLog};
-use vendor_ip::{VendorInstance, VendorPl};
 
 /// Flush the UART and PL accesses into the trace at this virtual-time
 /// granularity. Fixed, so the trace is identical however the caller slices
@@ -47,30 +47,7 @@ const JOURNAL_MAX_BYTES: usize = 64 << 20;
 /// Real-time limit for one `run_until`.
 const WALL_LIMIT: Duration = Duration::from_secs(120);
 
-/// A native PL model to place on a GP port.
-#[derive(Clone, Debug)]
-pub struct NativeInstance {
-    /// Instance name from the project, for diagnostics.
-    pub name: String,
-    /// Model name (`my_math_ip`).
-    pub model: String,
-    /// `M_AXI_GP` port, 0 or 1.
-    pub gp: u8,
-    /// Base address.
-    pub base: u64,
-    /// Size of the address window; `None` uses the model's default (64 KiB).
-    pub size: Option<u64>,
-    /// `IRQ_F2P` bit the instance's interrupt output drives.
-    pub irq: Option<u32>,
-    /// Interrupt outputs by port name with their destination (`IRQ_F2P[n]`, or an interrupt
-    /// controller input `axi_intc_0.intr[k]`); when not empty it replaces `irq`.
-    pub irqs: Vec<(String, String)>,
-    /// IP parameters by Vivado name (`C_GPIO_WIDTH`), plus `CLK_FREQ_HZ`.
-    pub params: std::collections::BTreeMap<String, String>,
-    /// Board bindings: GPIO interface (`GPIO`, `GPIO2`) to board signal (`board.leds`); the AXI
-    /// IIC's `IIC` to a Pmod port.
-    pub bindings: std::collections::BTreeMap<String, String>,
-}
+pub use crate::pl_attach::{NativeInstance, NATIVE_MODELS};
 
 /// The RTL simulator a design runs in.
 #[derive(Clone, Debug)]
@@ -186,6 +163,9 @@ pub struct QemuSpec {
     /// An RTL design. Native models placed next to it answer in their own windows; every
     /// other access goes to the RTL (ADR-016).
     pub rtl: Option<RtlSpec>,
+    /// An RTL design run by the native RTL engine (`backends.pl = "rtl-native"`, ADR-035),
+    /// on its GP port next to the native models.
+    pub rtl_native: Option<crate::pl_attach::RtlNativeSpec>,
     /// Board machine name.
     pub board: String,
     /// The board description when it is not looked up by `board` (a custom board file).
@@ -212,200 +192,6 @@ pub struct QemuSpec {
     pub ps_extra_blocks: bool,
     /// CPU clock in Hz for the A9 timers (`[ps] cpu_clock`), see ADR-029.
     pub cpu_clock_hz: Option<u32>,
-}
-
-struct BusEvent {
-    t_ns: u64,
-    port: u8,
-    write: bool,
-    addr: u64,
-    len: u32,
-    data: u64,
-    ok: bool,
-}
-
-/// Wraps a PL target and remembers every PS access for the trace.
-struct TracedPl {
-    inner: Box<dyn PlTarget + Send>,
-    events: Vec<BusEvent>,
-}
-
-fn first8(b: &[u8]) -> u64 {
-    let mut a = [0u8; 8];
-    let n = b.len().min(8);
-    a[..n].copy_from_slice(&b[..n]);
-    u64::from_le_bytes(a)
-}
-
-impl PlTarget for TracedPl {
-    fn read(
-        &mut self,
-        gp: u8,
-        addr: u64,
-        buf: &mut [u8],
-        now_ns: u64,
-        ps: &mut dyn PsPort,
-    ) -> BusResult<()> {
-        let r = self.inner.read(gp, addr, buf, now_ns, ps);
-        self.events.push(BusEvent {
-            t_ns: now_ns,
-            port: gp,
-            write: false,
-            addr,
-            len: buf.len() as u32,
-            data: first8(buf),
-            ok: r.is_ok(),
-        });
-        r
-    }
-
-    fn write(
-        &mut self,
-        gp: u8,
-        addr: u64,
-        data: &[u8],
-        now_ns: u64,
-        ps: &mut dyn PsPort,
-    ) -> BusResult<()> {
-        let r = self.inner.write(gp, addr, data, now_ns, ps);
-        self.events.push(BusEvent {
-            t_ns: now_ns,
-            port: gp,
-            write: true,
-            addr,
-            len: data.len() as u32,
-            data: first8(data),
-            ok: r.is_ok(),
-        });
-        r
-    }
-
-    fn wire(&mut self, line: u32, level: bool, now_ns: u64) {
-        self.inner.wire(line, level, now_ns);
-    }
-
-    fn advance(&mut self, now_ns: u64, ps: &mut dyn PsPort) {
-        self.inner.advance(now_ns, ps);
-    }
-
-    fn drain_master_log(&mut self) -> Vec<MasterAccess> {
-        self.inner.drain_master_log()
-    }
-
-    fn drain_media(&mut self) -> Vec<pl_api::MediaEvent> {
-        self.inner.drain_media()
-    }
-
-    fn set_media_sources(
-        &mut self,
-        video: Option<pl_api::VideoSource>,
-        audio: Option<pl_api::AudioSource>,
-    ) {
-        self.inner.set_media_sources(video, audio);
-    }
-
-    fn has_media(&self) -> bool {
-        self.inner.has_media()
-    }
-
-    fn has_board_pins(&self) -> bool {
-        self.inner.has_board_pins()
-    }
-
-    fn uart_channels(&self) -> Vec<String> {
-        self.inner.uart_channels()
-    }
-
-    fn drain_uart_tx(&mut self) -> Vec<pl_api::UartByte> {
-        self.inner.drain_uart_tx()
-    }
-
-    fn uart_rx(&mut self, channel: u8, data: &[u8], now_ns: u64) -> usize {
-        self.inner.uart_rx(channel, data, now_ns)
-    }
-
-    fn has_pin_groups(&self) -> bool {
-        self.inner.has_pin_groups()
-    }
-
-    fn drain_pin_events(&mut self) -> Vec<pl_api::PinEvent> {
-        self.inner.drain_pin_events()
-    }
-
-    fn set_pin_inputs(&mut self, group: u8, levels: u8, now_ns: u64) {
-        self.inner.set_pin_inputs(group, levels, now_ns);
-    }
-
-    fn set_pin_sink(&mut self, sink: Box<dyn pl_api::PinSink>) {
-        self.inner.set_pin_sink(sink);
-    }
-
-    fn set_board_inputs(&mut self, switches: u8, buttons: u8, now_ns: u64) {
-        self.inner.set_board_inputs(switches, buttons, now_ns);
-    }
-
-    fn drain_board_outputs(&mut self) -> Vec<pl_api::BoardOutput> {
-        self.inner.drain_board_outputs()
-    }
-
-    fn drain_protocol_findings(&mut self) -> Vec<pl_api::ProtocolFinding> {
-        self.inner.drain_protocol_findings()
-    }
-
-    fn finished(&self) -> bool {
-        self.inner.finished()
-    }
-}
-
-fn master_port_name(p: PsMasterPort) -> &'static str {
-    match p {
-        PsMasterPort::SAxiGp0 => "S_AXI_GP0",
-        PsMasterPort::SAxiGp1 => "S_AXI_GP1",
-        PsMasterPort::SAxiHp0 => "S_AXI_HP0",
-        PsMasterPort::SAxiHp1 => "S_AXI_HP1",
-        PsMasterPort::SAxiHp2 => "S_AXI_HP2",
-        PsMasterPort::SAxiHp3 => "S_AXI_HP3",
-        PsMasterPort::SAxiAcp => "S_AXI_ACP",
-    }
-}
-
-/// Builds a native model by name.
-fn model(name: &str) -> Option<Box<dyn RegisterBlock>> {
-    match name {
-        "my_math_ip" => Some(Box::new(MathIp::new())),
-        _ => None,
-    }
-}
-
-/// Names accepted for `[native]` models.
-pub const NATIVE_MODELS: &[&str] = &[
-    "my_math_ip",
-    "axi_gpio",
-    "axi_timer",
-    "axi_uartlite",
-    "axi_dma",
-    "axi_iic",
-    "axi_bram_ctrl",
-    "axi_intc",
-];
-
-/// Gives the PL adapter access to the devices on the Pmod ports.
-struct BankSink(Arc<Mutex<devices::Bank>>);
-
-impl pl_api::PinSink for BankSink {
-    fn pin_change(&mut self, group: u8, t_ns: u64, levels: u8) -> u8 {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .pins(group, t_ns, levels)
-    }
-
-    fn video_line(&mut self, frame: u32, y: u32, w: u32, h: u32) -> Option<Vec<u8>> {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .video_line(frame, y, w, h)
-    }
 }
 
 fn make_device(port: u8, kind: &str) -> Result<Box<dyn BoardDevice>, ApiError> {
@@ -841,55 +627,12 @@ impl QemuEngine {
             None => BoardDef::builtin(&spec.board)
                 .ok_or_else(|| ApiError::not_found(format!("unknown board `{}`", spec.board)))?,
         };
-        let rtl_pl: Option<Box<dyn PlTarget + Send>> = match &spec.rtl {
-            Some(rtl) => Some(start_rtl(rtl, &spec.work_dir)?),
-            None => None,
+        let rtl_pl: Option<Box<dyn PlTarget + Send>> = match (&spec.rtl, &spec.rtl_native) {
+            (Some(rtl), _) => Some(start_rtl(rtl, &spec.work_dir)?),
+            (None, Some(native)) => Some(crate::pl_attach::rtl_native_target(native)?),
+            (None, None) => None,
         };
-        let pl: Box<dyn PlTarget + Send> = if spec.natives.is_empty() {
-            rtl_pl.unwrap_or_else(|| Box::new(NativePl::new()))
-        } else {
-            // Native models (the prototype's math IP, the vendor-ip library), next to the
-            // RTL design when there is one.
-            let mut vp = VendorPl::new(rtl_pl);
-            let mut vendor: Vec<VendorInstance> = Vec::new();
-            for n in &spec.natives {
-                if n.gp > 1 {
-                    return Err(ApiError::invalid_argument(format!(
-                        "instance `{}`: M_AXI_GP{} does not exist",
-                        n.name, n.gp
-                    )));
-                }
-                if vendor_ip::is_model(&n.model) {
-                    let inst = VendorInstance {
-                        name: n.name.clone(),
-                        model: n.model.clone(),
-                        gp: n.gp,
-                        base: n.base,
-                        size: n.size,
-                        irq: n.irq,
-                        irqs: n.irqs.clone(),
-                        params: n.params.clone(),
-                        bindings: n.bindings.clone(),
-                    };
-                    vp.add(&inst).map_err(ApiError::invalid_argument)?;
-                    vendor.push(inst);
-                } else {
-                    let block = model(&n.model).ok_or_else(|| {
-                        ApiError::invalid_argument(format!(
-                            "unknown native model `{}` for instance `{}`; available: {}",
-                            n.model,
-                            n.name,
-                            NATIVE_MODELS.join(", ")
-                        ))
-                    })?;
-                    vp.add_block(&n.name, n.gp, n.base, block)
-                        .map_err(ApiError::invalid_argument)?;
-                }
-            }
-            vp.check_routes(&vendor)
-                .map_err(ApiError::invalid_argument)?;
-            Box::new(vp)
-        };
+        let pl: Box<dyn PlTarget + Send> = crate::pl_attach::build_pl(&spec.natives, rtl_pl)?;
 
         let mut cfg = QemuConfig::new(
             spec.qemu.clone(),
@@ -1252,19 +995,7 @@ impl QemuEngine {
 
     /// Moves PL accesses and UART output into the trace and the UART log.
     fn flush(&mut self) {
-        for e in self.pl.events.drain(..) {
-            self.trace.push(
-                Ps(e.t_ns.saturating_mul(1000)),
-                TraceEvent::Bus {
-                    port: format!("M_AXI_GP{}", e.port),
-                    write: e.write,
-                    addr: e.addr,
-                    len: e.len,
-                    data: e.data,
-                    ok: e.ok,
-                },
-            );
-        }
+        trace_ps_accesses(std::mem::take(&mut self.pl.events), &mut self.trace);
         let mut rgb_event = false;
         // AXI protocol-checker findings of the testbench (ADR-025), as trace markers.
         for f in self.pl.drain_protocol_findings() {
@@ -1289,29 +1020,7 @@ impl QemuEngine {
                         width: 6,
                     },
                 );
-            } else if let Some(row) = self.board.pmod_pins.get_mut(usize::from(ev.group)) {
-                for (i, p) in row.iter_mut().enumerate() {
-                    *p = if ev.levels >> i & 1 != 0 {
-                        board_zybo::PinLevel::High
-                    } else {
-                        board_zybo::PinLevel::Low
-                    };
-                }
-                let name = format!(
-                    "pmod.{}",
-                    self.def
-                        .pmods
-                        .get(usize::from(ev.group))
-                        .map_or_else(|| ev.group.to_string(), |p| p.id.to_lowercase())
-                );
-                self.trace.push(
-                    t,
-                    TraceEvent::Signal {
-                        name,
-                        value: u64::from(ev.levels),
-                        width: 8,
-                    },
-                );
+            } else if trace_pmod_pins(&ev, &mut self.board, &self.def, &mut self.trace) {
                 // The devices were fed when the event arrived (`BankSink`).
             } else if ev.group == devices::CAMERA_PORT {
                 self.trace.push(
@@ -1339,22 +1048,12 @@ impl QemuEngine {
                 }
             }
         }
-        for o in self.pl.drain_board_outputs() {
-            for i in 0..self.board.leds.len().min(board_zybo::MAX_BITS) {
-                let duty = if o.leds & (1 << i) != 0 { 255 } else { 0 };
-                if self.board.leds[i] != duty {
-                    self.board.leds[i] = duty;
-                    self.trace.push(
-                        Ps(o.t_ns.saturating_mul(1000)),
-                        TraceEvent::Signal {
-                            name: format!("board.{}", self.def.leds[i].id),
-                            value: u64::from(duty),
-                            width: 8,
-                        },
-                    );
-                }
-            }
-        }
+        trace_leds(
+            self.pl.drain_board_outputs(),
+            &mut self.board,
+            &self.def,
+            &mut self.trace,
+        );
         for ev in self.pl.drain_media() {
             match ev {
                 MediaEvent::Audio {
@@ -1394,19 +1093,7 @@ impl QemuEngine {
                 }
             }
         }
-        for m in self.pl.drain_master_log() {
-            self.trace.push(
-                Ps(m.t_ns.saturating_mul(1000)),
-                TraceEvent::Bus {
-                    port: master_port_name(m.port).to_string(),
-                    write: m.write,
-                    addr: m.addr,
-                    len: m.len,
-                    data: m.data,
-                    ok: m.ok,
-                },
-            );
-        }
+        trace_master_accesses(self.pl.drain_master_log(), &mut self.trace);
         if self.pl.finished() && !self.pl_finish_noted {
             self.pl_finish_noted = true;
             let t = self.now_ps();
@@ -1435,21 +1122,7 @@ impl QemuEngine {
             );
             self.uart1.push(b);
         }
-        for b in self.pl.drain_uart_tx() {
-            let ch = usize::from(b.channel);
-            if self.pl_uart.len() <= ch {
-                self.pl_uart.resize_with(ch + 1, ByteLog::default);
-            }
-            self.pl_uart[ch].push(b.byte);
-            self.trace.push(
-                Ps(b.t_ns.saturating_mul(1000)),
-                TraceEvent::Uart {
-                    port: 2 + b.channel,
-                    tx: true,
-                    byte: b.byte,
-                },
-            );
-        }
+        trace_pl_uart(self.pl.drain_uart_tx(), &mut self.pl_uart, &mut self.trace);
     }
 
     /// Runs QEMU to `end_ns`, in chunks that end on multiples of [`CHUNK_NS`],
@@ -1597,15 +1270,7 @@ impl QemuEngine {
     }
 
     fn push_board_inputs(&mut self) {
-        let bits = |v: &[bool]| {
-            // Bit n = component n of the board; a board file has at most 8 (ADR-022).
-            v.iter()
-                .take(board_zybo::MAX_BITS)
-                .enumerate()
-                .fold(0u8, |a, (i, &b)| a | (u8::from(b) << i))
-        };
-        let (sw, btn) = (bits(&self.board.switches), bits(&self.board.buttons));
-        self.pl.set_board_inputs(sw, btn, self.machine.now_ns());
+        push_board_inputs(&mut self.pl, &self.board, self.machine.now_ns());
     }
 
     fn unsupported(&self, what: &str, why: &str) -> ApiError {
@@ -1788,28 +1453,9 @@ impl QemuEngine {
             }
             Command::Input(Input::UartWrite { port, data }) if port >= 2 => {
                 // A PL UART (AXI UART Lite): deterministic, delivered at the current time.
-                let ch = port - 2;
-                if usize::from(ch) >= self.pl.uart_channels().len() {
-                    return Err(ApiError::invalid_argument(format!(
-                        "no uart {port}: the PL has {} UART Lite instance(s) (ports 2..)",
-                        self.pl.uart_channels().len()
-                    )));
-                }
                 let now_ns = self.machine.now_ns();
-                let n = self.pl.uart_rx(ch, &data, now_ns);
                 let now = self.now_ps();
-                self.trace.push(
-                    now,
-                    TraceEvent::Input {
-                        what: format!("uart{port} write {n} byte(s)"),
-                    },
-                );
-                if n < data.len() {
-                    return Err(ApiError::invalid_argument(format!(
-                        "uart{port}: only {n} of {} byte(s) fit the receive queue",
-                        data.len()
-                    )));
-                }
+                pl_uart_write(&mut self.pl, port, &data, now_ns, now, &mut self.trace)?;
                 Ok(Response::Ok)
             }
             Command::Input(Input::UartWrite { port, data }) => {
@@ -1836,60 +1482,31 @@ impl QemuEngine {
             }
             Command::Input(Input::SetSwitch { index, on }) => {
                 self.require_pins()?;
-                if index >= self.board.switches.len() {
-                    return Err(ApiError::invalid_argument(format!(
-                        "switch index {index} out of range 0..{}",
-                        self.board.switches.len()
-                    )));
-                }
-                self.board.switches[index] = on;
-                let id = self.def.switches[index].id.clone();
                 let now = self.now_ps();
-                self.trace.push(
+                set_board_pin(
+                    &mut self.board,
+                    &self.def,
+                    &mut self.trace,
                     now,
-                    TraceEvent::Input {
-                        what: format!("switch {index} = {}", if on { "on" } else { "off" }),
-                    },
-                );
-                self.trace.push(
-                    now,
-                    TraceEvent::Signal {
-                        name: format!("board.{id}"),
-                        value: u64::from(on),
-                        width: 1,
-                    },
-                );
+                    BoardPin::Switch,
+                    index,
+                    on,
+                )?;
                 self.push_board_inputs();
                 Ok(Response::Ok)
             }
             Command::Input(Input::SetButton { index, pressed }) => {
                 self.require_pins()?;
-                if index >= self.board.buttons.len() {
-                    return Err(ApiError::invalid_argument(format!(
-                        "button index {index} out of range 0..{}",
-                        self.board.buttons.len()
-                    )));
-                }
-                self.board.buttons[index] = pressed;
-                let id = self.def.buttons[index].id.clone();
                 let now = self.now_ps();
-                self.trace.push(
+                set_board_pin(
+                    &mut self.board,
+                    &self.def,
+                    &mut self.trace,
                     now,
-                    TraceEvent::Input {
-                        what: format!(
-                            "button {index} = {}",
-                            if pressed { "pressed" } else { "released" }
-                        ),
-                    },
-                );
-                self.trace.push(
-                    now,
-                    TraceEvent::Signal {
-                        name: format!("board.{id}"),
-                        value: u64::from(pressed),
-                        width: 1,
-                    },
-                );
+                    BoardPin::Button,
+                    index,
+                    pressed,
+                )?;
                 self.push_board_inputs();
                 Ok(Response::Ok)
             }
