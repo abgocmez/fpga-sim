@@ -181,11 +181,39 @@ fn examples_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples")
 }
 
+/// One run gets this much wall time. A QEMU that hangs (seen once with three examples running
+/// in parallel; the same example then finished alone, twice) is killed and the run reported as
+/// failed, instead of blocking the suite for an hour.
+const RUN_LIMIT: std::time::Duration = std::time::Duration::from_secs(600);
+
 fn zynqsim(args: &[String]) -> Result<Value, String> {
-    let o = Command::new(env!("CARGO_BIN_EXE_zynqsim"))
+    let child = Command::new(env!("CARGO_BIN_EXE_zynqsim"))
         .args(args)
-        .output()
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|e| format!("zynqsim does not start: {e}"))?;
+    let pid = child.id();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    let o = match rx.recv_timeout(RUN_LIMIT) {
+        Ok(o) => o.map_err(|e| format!("zynqsim failed: {e}"))?,
+        Err(_) => {
+            if cfg!(windows) {
+                let _ = Command::new("taskkill")
+                    .args(["/F", "/T", "/PID", &pid.to_string()])
+                    .output();
+            } else {
+                let _ = Command::new("kill").args(["-9", &pid.to_string()]).output();
+            }
+            return Err(format!(
+                "`zynqsim {}` did not finish within {RUN_LIMIT:?} (killed)",
+                args.join(" ")
+            ));
+        }
+    };
     if o.status.code() != Some(0) {
         return Err(format!(
             "exit {:?}: {}",
