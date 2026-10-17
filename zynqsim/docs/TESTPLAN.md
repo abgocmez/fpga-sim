@@ -327,3 +327,19 @@ checks of the XSim path on other hosts.
   sequences, watchdog reset and timer modes, private timer rate), `determinism_periph2`.
 * `cargo clippy -p ps-periph -p mem-sys --all-targets -- -D warnings`.
 * Not in the gate: the QEMU BSP examples are unchanged; no native-engine run of BSP ELFs.
+
+## Dual-core native PS (ADR-033, "Two cores")
+
+| Requirement | Test |
+|---|---|
+| Core 1 parks in the boot-ROM loop; runs only after the mailbox release | `sim-api` `native_ps::tests::core1_stays_in_the_boot_rom_until_core0_writes_the_mailbox` (hand-written A32) |
+| Exclusive monitor across cores: a store to the word or its 8-byte granule clears the other reservation; the next granule does not | `native_ps::tests::a_store_by_another_core_clears_the_exclusive_reservation_of_its_granule` |
+| SEV wakes WFE on another core | `native_ps::tests::sev_on_core0_wakes_a_wfe_on_core1` |
+| WFI wakes on a pending SGI with IRQs masked | `native_ps::tests::an_sgi_from_core0_wakes_a_wfi_on_core1_with_irqs_masked` |
+| SGI filters; SGI versus PPI priority | `ps-periph` `gic::tests::sgi_filters_pick_the_cores_and_priorities_order_sgi_against_a_ppi` |
+| MPIDR per core; ACTLR SMP bit | `cpu-a9` `cp15::tests::mpidr_carries_the_core_number_and_actlr_keeps_the_smp_bit` |
+| SCU registers | `ps-periph` `mpcore::tests::{scu_control_config_and_invalidate_all, scu_filter_and_access_registers_store_their_fields}` |
+| Round-robin interleaving, equal cycles per core | `native_ps::tests::the_cores_interleave_round_robin_and_run_the_same_cycles` |
+| Snapshot of two cores | `native_ps::tests::a_two_core_snapshot_restores_both_cores` |
+| Dual-core demo: UART1 identical to QEMU with the RESULT line; UART0 native-only | `cli/tests/native_ps_diff::dual_core_demo_prints_the_same_uart1_text_on_qemu_and_natively` |
+| Determinism: 5 in-process runs; 5 processes | `native_ps::tests::a_two_core_session_gives_one_trace_digest_five_times`, `native_ps_diff::dual_core_five_processes_give_one_trace_digest` |

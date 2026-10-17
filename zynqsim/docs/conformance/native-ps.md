@@ -94,3 +94,18 @@ firmware is run by the QEMU tests only. The table in this file is unchanged; see
 peripherals, batch 2* in `STATUS.md` for the per-block results (GPIO 12/12, SPI 28/28, I2C 22/22,
 XADC 15/15 checks PASS; the XADC temperature finding is documented there).
 Running the BSP driver ELFs on the native engine was not attempted (ADR-033 refuses VFP and MMU).
+
+## Two cores (`[cpu1]`)
+
+Checked with `examples/dual-core-native` and `examples/dual-core-qemu`: the same ELF
+(`firmware/dual_core_demo`) on both cores.
+
+| Item | QEMU | Native | Difference |
+|---|---|---|---|
+| UART1 (core 0): the lines and `RESULT: ALL PASS` | printed | printed | none (compared byte for byte) |
+| UART0 (core 1): its lines | discarded (`-serial null`) | printed | pinned: native-only; the test asserts QEMU reads nothing on port 0 |
+| Core 1 start | the loader sets its PC; `_start` parks it on the mailbox | boot-ROM loop at 0xFFFFFE00 polls the mailbox | both reach the same entry through the mailbox |
+| Timing | instruction count (icount) | one cycle per instruction, round-robin batches of 8 | not compared (F0 on both) |
+
+The native half always runs; the QEMU half skips without the Xilinx QEMU. Five processes give one
+trace digest (`cli/tests/native_ps_diff::dual_core_five_processes_give_one_trace_digest`).

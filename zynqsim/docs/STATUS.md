@@ -747,7 +747,7 @@ VFP and NEON are `stub`. Every row below names its evidence; the firmware rows a
 
 ### The native engine (`backends.ps = "native"`, ADR-033)
 
-PS only: core 0 runs `[cpu0] elf`, core 1 stays parked, no PL is attached. Fidelity F0: one
+PS only: core 0 runs `[cpu0] elf`; with `[cpu1] elf` core 1 runs too (parked in the boot-ROM loop until released through the mailbox, see the dual-core rows). No PL is attached. Fidelity F0: one
 instruction per cycle at 666.67 MHz (1.5 ns), not cycle-accurate. Differences from QEMU are
 pinned in `docs/conformance/native-ps.md`.
 
@@ -777,11 +777,21 @@ pinned in `docs/conformance/native-ps.md`.
 | Thumb-2 firmware (`examples/native-thumb`, `firmware/thumb_hello` built for `thumbv7a-none-eabi`): 13 checks pass natively and the UART text equals QEMU's | verified | `zynqsim::native_thumb_diff::{the_thumb_firmware_passes_its_checks_on_the_native_ps, the_thumb_firmware_prints_the_same_text_on_qemu_and_natively}` |
 | VFP, NEON, the MMU | stub | reported as `Unimplemented`; the engine stops with a message (see the cpu-a9 table above) |
 | PL attachment through remote-port (native PL models, RTL) | not-planned | out of scope for P5; `backends.pl` must be `demo` |
-| Dual core (`[cpu1]`) | not-planned | refused by validation: core 1 is parked |
+| Dual core (`[cpu1]`): two `cpu-a9` cores, MPIDR 0/1, boot-ROM parking loop at 0xFFFFFE00 polling the mailbox 0xFFFFFFF0, release by a store plus SEV, round-robin scheduler (batch `SCHED_BATCH` = 8 cycles per core per turn, recorded in the trace start marker), core-1 stops and registers, one trace digest | verified (model, F0) | `native_ps::tests::{core1_stays_in_the_boot_rom_until_core0_writes_the_mailbox, the_cores_interleave_round_robin_and_run_the_same_cycles, cpu_regs_answers_for_core1_only_when_it_exists}`; `cli/tests/native_ps_diff::{dual_core_five_processes_give_one_trace_digest, dual_core_demo_prints_the_same_uart1_text_on_qemu_and_natively, a_native_project_with_a_second_core_is_accepted}`. Core 1's UART0 text is native-only (see below) |
+| Global exclusive monitor: a store by one core clears another core's reservation on its 8-byte granule (VERIFY), STREX from the other core fails | verified (model) | `native_ps::tests::a_store_by_another_core_clears_the_exclusive_reservation_of_its_granule` (store to the word and to the same granule fails, the next granule succeeds) |
+| SEV from one core sets the event register of every core; WFE waits for it | verified (model) | `native_ps::tests::sev_on_core0_wakes_a_wfe_on_core1`, `native_ps::tests::core1_stays_in_the_boot_rom_until_core0_writes_the_mailbox` |
+| WFI wakes on a pending SGI with IRQs masked; SGI filters (self, others, target list) and SGI-versus-PPI priority | verified (model) | `native_ps::tests::an_sgi_from_core0_wakes_a_wfi_on_core1_with_irqs_masked`, `ps_periph::gic::tests::sgi_filters_pick_the_cores_and_priorities_order_sgi_against_a_ppi` |
+| SCU control, configuration, invalidate-all (counted, no tag RAM), filter and access registers | implemented-untested (model; SCU snoop not modelled) | `ps_periph::mpcore::tests::{scu_control_config_and_invalidate_all, scu_filter_and_access_registers_store_their_fields}`. The SCU enable bit does not gate the cores; ACTLR.SMP is stored (`cpu-a9::cp15::tests`) |
+| Two-core snapshot restores both cores (re-execution, verified against digest and state hash) | verified, by re-execution | `native_ps::tests::a_two_core_snapshot_restores_both_cores` |
+| Two-core session: one trace digest in five runs in one process, and across five processes | verified | `native_ps::tests::a_two_core_session_gives_one_trace_digest_five_times`, `cli/tests/native_ps_diff::dual_core_five_processes_give_one_trace_digest` |
+| Dual-core demo firmware (`firmware/dual_core_demo`): mailbox release, LDREX/STREX spinlock counter 2×500, 50 WFE/SEV ping-pong rounds, SGI 1 to core 1, `RESULT: ALL PASS` | verified (native and QEMU, UART1) | `cli/tests/native_ps_diff::dual_core_demo_prints_the_same_uart1_text_on_qemu_and_natively` (QEMU half skips without Xilinx QEMU) |
+| Core 1's UART0 text (`uart_read` port 0) on the QEMU engine | not observable here | QEMU runs UART0 to `-serial null`; a native-only difference, pinned in the same test |
+| Boot ROM: only the parking loop exists (no FSBL, no boot modes, no CPU1 reset through SLCR `A9_CPU_RST_CTRL`); the core-1 entry is written by the guest, not by the engine | stub | ADR-033 "Two cores" |
+| Cache coherence beyond one shared memory, SMP-specific timing, interrupts to core 1 from core 0 outside the GIC model | not-planned | F0 model |
 | Board switches, buttons, LEDs; Pmod devices; HDMI and audio; Ethernet; screenshots on the native PS | not-planned | refused with the reason; `qemu` has them |
 | Cycle-accurate timing, caches, DDR timing, bus contention | not-planned | F0 only, by design |
 | Snapshot by copying core and RAM state | not-planned | ADR-033 explains why re-execution is used |
-| Two cores, SMP, the boot ROM | not-planned | core 1 stays parked |
+| SMP cache maintenance, a real boot ROM image, FSBL core-1 start | not-planned | see the dual-core rows above |
 
 ## Native RTL (P6, optional)
 
