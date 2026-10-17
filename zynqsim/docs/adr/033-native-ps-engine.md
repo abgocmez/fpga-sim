@@ -47,7 +47,7 @@ at the baud rate by `ps-periph`, as on hardware; QEMU does not pace.
 
 ### Faults and breakpoints
 
-* An instruction the core does not implement (Thumb, VFP/NEON, MMU, the rest listed in ADR-030)
+* An instruction the core does not implement (VFP/NEON, MMU, the rest listed in ADR-030)
   stops the engine with a message naming the pc, the symbol and source line when known, the
   word, and the cycle. The instruction did not run; no state changed. The fault is sticky: later
   runs report it again. Nothing is computed wrongly.
@@ -88,7 +88,7 @@ workspace `Cargo.toml` builds these three crates at opt-level 3 in the dev profi
 
 ### Not implemented (stub, reported as such)
 
-Thumb, VFP and NEON, the MMU and TLB walk, two cores, a PL (remote-port attachment), board pins,
+VFP and NEON, the MMU and TLB walk, two cores, a PL (remote-port attachment), board pins,
 LEDs and switches, Pmod devices, HDMI and audio, Ethernet, screenshots, watchpoints,
 `set_quantum`, BOOT.BIN, OCM low remap, caches and cycle-accurate timing. `docs/STATUS.md` lists
 each with its status.

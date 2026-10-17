@@ -46,7 +46,7 @@ impl Cpu {
     }
 
     /// The condition code check of the ARM ARM (`cond` is not 0b1111 here).
-    fn cond_passed(&self, cond: u32) -> bool {
+    pub(crate) fn cond_passed(&self, cond: u32) -> bool {
         let (n, z, c, v) = (
             self.cpsr & N_BIT != 0,
             self.cpsr & Z_BIT != 0,

@@ -6,6 +6,8 @@
 //! state untouched. Address translation is the ARMv7-A short-descriptor MMU of [`mmu`] (the
 //! [`Translate`] hook, default [`mmu::Mmu`]). There is no Thumb, no VFP or NEON. See
 //! `docs/adr/030-cpu-a9.md` for the instruction table and the MMU scope.
+//! state untouched. There is no MMU (virtual = physical; the [`Translate`] hook is the seam
+//! for one), no VFP or NEON; Thumb and Thumb-2 are in `thumb.rs`. See `docs/adr/030-cpu-a9.md` for the instruction table.
 
 #![forbid(unsafe_code)]
 
@@ -17,6 +19,7 @@ mod mem;
 pub mod mmu;
 mod state;
 mod vfp;
+mod thumb;
 mod xlate;
 
 pub use state::{Cpu, Event, Mode, StepResult};

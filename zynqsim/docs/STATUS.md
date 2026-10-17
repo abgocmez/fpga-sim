@@ -703,8 +703,8 @@ on the native engine.
 | DDRC (0xF8006000) and DEVCFG (0xF8007000, XADC not included) | stub | named stubs, read zero (`ps_periph::system`) |
 | Not modelled, unmapped and logged: DMAC, SWDT, SMC, USB, I2C, SPI, CAN, GPIO, GEM, QSPI controller, SDIO, XADC | not-planned for P5 | `mem_sys::ZYNQ_MAP` / `IOP_BLOCKS` list them; a native access to them is an unmapped access |
 | Comparison of these models with QEMU or with a board (P5 exit: differential tests) | not-planned here | the QEMU-differential runs need the native CPU core (other engineer) |
-The native ARMv7-A core `crates/cpu-a9` (ADR-030). Integer A32 only; the MMU, Thumb, VFP and NEON are
-`stub`. Every row below names its evidence; the firmware rows are per image in ADR-030.
+The native ARMv7-A core `crates/cpu-a9` (ADR-030). Integer A32 and Thumb/Thumb-2 (`thumb.rs`); the MMU,
+VFP and NEON are `stub`. Every row below names its evidence; the firmware rows are per image in ADR-030.
 
 | Feature | Status | Evidence / note |
 |---|---|---|
@@ -728,6 +728,12 @@ The native ARMv7-A core `crates/cpu-a9` (ADR-030). Integer A32 only; the MMU, Th
 | MMU ATS1CPR/CPW/CUR/CUW and PAR | verified (PAR fault FST simplified: no domain) | `mmu::ats_writes_par_for_a_mapped_and_for_an_unmapped_address` |
 | MMU caches: TEX/C/B/S/NS recorded only; TEX remap, access flag, LPAE, Hyp not modelled | not-planned here (TEX/C/B recorded) | `mmu::texture_cacheability_and_sharing_bits_are_recorded_for_every_descriptor_type` |
 | Thumb (T=1, BX to an odd address): reported, not run | stub | `isa::bx_to_an_odd_address_enters_thumb_which_is_reported` |
+| MMU: setting SCTLR.M stops the core, never runs untranslated | verified (no translation exists) | `isa::enabling_the_mmu_stops_the_core_rather_than_running_untranslated` |
+| Thumb and Thumb-2 (T=1): 16-bit shifts, ALU, high registers, loads and stores, PUSH and POP, LDM and STM, branches, CBZ and CBNZ, SVC, BKPT, hints, CPS, SXT, UXT, REV (listed classes) | verified | `cpu-a9/tests/thumb.rs::every_corpus_group_decodes_and_runs_without_unimplemented` (every group of `thumb_groups.s` decodes and runs without Unimplemented), `shifts_and_adds_*`, `add_and_subtract_*`, `compare_and_branch_on_zero`, `push_and_pop_*`, `stm_writes_back_*`, `tbb_and_tbh_*` |
+| Thumb-2 32-bit: modified and shifted immediates, shift by register, MOVW, MOVT, ADDW, SUBW, ADR, bitfields, MUL/MLA/MLS/long multiplies, LDR/STR/LDRB/LDRH/LDRSB/LDRSH/LDRD/STRD all modes, LDM/STM/PUSH/POP.W, LDREX family, TBB/TBH, MRS/MSR, DMB/DSB/ISB, CLREX, MRC/MCR p15, B.W, BL, BLX, SSAT, USAT, extends with rotation | verified | `cpu-a9/tests/thumb_props.rs` (9 properties, 10000 seeded cases each: every class against its A32 twin, or against the same operation in A32 form), `thumb.rs` corpus smoke |
+| Thumb IT blocks (ITSTATE advance, flags not set inside IT, state cleared on exception entry), interworking (BX, BLX, POP {pc}, LDR pc, ALU writes to PC), exception returns with the T bit | verified | `cpu-a9/tests/thumb.rs::it_block_*`, `flag_setting_16bit_*`, `an_svc_inside_it_*`, `bx_and_blx_*`, `blx_register_*`, `pop_into_pc_*`, `ldr_into_pc_*`, `alu_writes_to_pc_*` |
+| Thumb divides (UDIV, SDIV), undefined encodings | verified (undefined on the Cortex-A9) | `cpu-a9/tests/thumb.rs::divides_are_undefined_on_the_cortex_a9`, `undefined_thumb_instruction_*` |
+| Thumb parallel ops (SADD8 and kin), SXTB16 and UXTB16, SMLAD and kin, SMULWy, LDRT and STRT, coprocessor 10/11 in Thumb | stub (`Unimplemented`) | not decoded; reported, never guessed |
 | VFP, NEON, coprocessor 10/11 | stub (`Unimplemented`) | `isa::vfp_is_reported_unimplemented_and_nothing_changes` |
 | MMU walk, TLB, the `Translate` hook | verified (short-descriptor; see the MMU rows above) | `cpu-a9::mmu`, `cpu-a9::xlate` |
 | VFPv3-D32 scalar, transfers, loads and stores | verified | `vfp_isa::*`, `vfp_props::*` (10000 cases per operation, all rounding modes, FZ, DN; mutation-checked) |
@@ -768,6 +774,8 @@ pinned in `docs/conformance/native-ps.md`.
 | CLI: `zynqsim run` on a native project; `inspect` lists `native` as an available PS | verified | `zynqsim::native_ps_diff::{five_processes_give_one_trace_digest, inspect_lists_the_native_ps_as_available}`; `examples/native-hello` |
 | GUI project window: "native Rust" PS choice | implemented-untested | `crates/gui/src/app/project.rs`, `loader.rs`; no GUI test drives it |
 | Thumb, VFP and NEON | stub | reported as `Unimplemented`; the engine stops with a message (see the cpu-a9 table above). The MMU is implemented (`cpu-a9` table) |
+| Thumb-2 firmware (`examples/native-thumb`, `firmware/thumb_hello` built for `thumbv7a-none-eabi`): 13 checks pass natively and the UART text equals QEMU's | verified | `zynqsim::native_thumb_diff::{the_thumb_firmware_passes_its_checks_on_the_native_ps, the_thumb_firmware_prints_the_same_text_on_qemu_and_natively}` |
+| VFP, NEON, the MMU | stub | reported as `Unimplemented`; the engine stops with a message (see the cpu-a9 table above) |
 | PL attachment through remote-port (native PL models, RTL) | not-planned | out of scope for P5; `backends.pl` must be `demo` |
 | Dual core (`[cpu1]`) | not-planned | refused by validation: core 1 is parked |
 | Board switches, buttons, LEDs; Pmod devices; HDMI and audio; Ethernet; screenshots on the native PS | not-planned | refused with the reason; `qemu` has them |

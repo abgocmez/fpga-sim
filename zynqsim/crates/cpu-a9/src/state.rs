@@ -24,7 +24,7 @@ pub(crate) const A_BIT: u32 = 1 << 8;
 pub(crate) const I_BIT: u32 = 1 << 7;
 /// CPSR.F (FIQ mask).
 pub(crate) const F_BIT: u32 = 1 << 6;
-/// CPSR.T (Thumb state). Thumb is not implemented: a set T stops the core.
+/// CPSR.T (Thumb state): the instructions are decoded by `thumb.rs`.
 pub(crate) const T_BIT: u32 = 1 << 5;
 /// PSR bits that MSR cannot write from CPSR (E, the J bit and the reserved gap).
 pub(crate) const PSR_RESERVED: u32 = (1 << 24) | (0xF << 20) | (1 << 9);
@@ -348,12 +348,7 @@ impl Cpu {
             return executed(pc, Some(Event::Irq));
         }
         if self.cpsr & T_BIT != 0 {
-            // Thumb is not implemented; report the halfword and do not run it.
-            let hw = self.fetch16(bus, pc).unwrap_or(0);
-            return StepResult::Unimplemented {
-                pc,
-                insn: u32::from(hw),
-            };
+            return self.step_thumb(bus, pc);
         }
         let insn = match self.fetch(bus, pc) {
             Ok(v) => v,
@@ -386,6 +381,8 @@ impl Cpu {
     fn fetch16(&mut self, bus: &mut dyn Bus, pc: u32) -> Result<u16, u16> {
         let regs = self.xlate_regs(self.mode() != Mode::User);
         let pa = self.xlate.translate(bus, &regs, pc, Access::Fetch)?;
+    pub(crate) fn fetch16(&mut self, bus: &mut dyn Bus, pc: u32) -> Result<u16, u8> {
+        let pa = self.xlate.translate(pc, crate::xlate::Access::Fetch)?;
         bus.read(pa, 2)
             .map(|v| v as u16)
             .map_err(|_| crate::mem::FSR_EXTERNAL)
@@ -412,7 +409,7 @@ impl Cpu {
         if fiq {
             self.cpsr |= F_BIT;
         }
-        self.cpsr &= !T_BIT;
+        self.cpsr &= !(T_BIT | crate::thumb::IT_MASK);
         if self.cp15.sctlr & SCTLR_TE != 0 {
             self.cpsr |= T_BIT;
         }
