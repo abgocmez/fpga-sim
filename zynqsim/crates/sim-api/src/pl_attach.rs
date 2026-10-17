@@ -17,9 +17,9 @@ use pl_api::{
 };
 use pl_native::{MathIp, NativePl, RegisterBlock};
 use rtl_engine::{Design, RtlModule};
+use sim_core::Ps;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
-use sim_core::Ps;
 use trace::{TraceEvent, TraceLog};
 use vendor_ip::{VendorInstance, VendorPl};
 
@@ -184,9 +184,9 @@ pub fn rtl_native_target(spec: &RtlNativeSpec) -> Result<Box<dyn PlTarget + Send
                     )));
                 }
             };
-            module.set_irq_output(port).map_err(|e| {
-                ApiError::invalid_argument(format!("`{}.{port}`: {e}", spec.top))
-            })?;
+            module
+                .set_irq_output(port)
+                .map_err(|e| ApiError::invalid_argument(format!("`{}.{port}`: {e}", spec.top)))?;
             Some(n)
         }
         _ => {
@@ -422,7 +422,12 @@ pub(crate) fn trace_master_accesses(accesses: Vec<MasterAccess>, trace: &mut Tra
 }
 
 /// Shows the PL's LED outputs on the board: a `board.<led>` signal record per change.
-pub(crate) fn trace_leds(outs: Vec<BoardOutput>, board: &mut BoardState, def: &BoardDef, trace: &mut TraceLog) {
+pub(crate) fn trace_leds(
+    outs: Vec<BoardOutput>,
+    board: &mut BoardState,
+    def: &BoardDef,
+    trace: &mut TraceLog,
+) {
     for o in outs {
         for i in 0..board.leds.len().min(board_zybo::MAX_BITS) {
             let duty = if o.leds & (1 << i) != 0 { 255 } else { 0 };
@@ -671,7 +676,10 @@ mod tests {
              output irq_out); endmodule\n",
         )
         .unwrap();
-        assert_eq!(detect_irq_ports(std::slice::from_ref(&file), "t"), vec!["irq_out".to_string()]);
+        assert_eq!(
+            detect_irq_ports(std::slice::from_ref(&file), "t"),
+            vec!["irq_out".to_string()]
+        );
         assert!(detect_irq_ports(std::slice::from_ref(&file), "missing").is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }

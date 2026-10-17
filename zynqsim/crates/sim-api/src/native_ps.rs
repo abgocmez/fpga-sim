@@ -34,8 +34,8 @@ use crate::types::{
 use board_zybo::{BoardDef, BoardState};
 use cpu_a9::{Cpu, Mode, StepResult};
 use mem_sys::{Bus, BusResult, OCM_BASE, OCM_SIZE, SystemBus, fnv1a64};
-use pl_api::PlTarget;
 use object::{Object, ObjectSegment};
+use pl_api::PlTarget;
 use ps_periph::system::{PsConfig, zynq_system};
 use ps_periph::uart::Uart;
 use sim_core::Ps;
@@ -729,7 +729,15 @@ impl NativePsEngine {
             ));
         }
         let now = self.now_ps();
-        set_board_pin(&mut self.board, &self.def, &mut self.trace, now, pin, index, on)?;
+        set_board_pin(
+            &mut self.board,
+            &self.def,
+            &mut self.trace,
+            now,
+            pin,
+            index,
+            on,
+        )?;
         push_board_inputs(st.target(), &self.board, self.cycle * PS_PER_CYCLE / 1000);
         Ok(Response::Ok)
     }
@@ -1439,8 +1447,15 @@ mod tests {
     fn validation_refuses_what_the_native_ps_cannot_attach() {
         let text = native_hello_text();
         assert!(errors_of(&text).is_empty(), "{:?}", errors_of(&text));
+        // `native` is accepted since ADR-035; an RTL simulator over remote-port is refused.
         let pl = text.replace("pl = \"demo\"", "pl = \"native\"");
-        assert!(errors_of(&pl).iter().any(|e| e.starts_with("backends.pl:")));
+        assert!(errors_of(&pl).is_empty(), "{:?}", errors_of(&pl));
+        let xsim = text.replace("pl = \"demo\"", "pl = \"xsim\"");
+        assert!(
+            errors_of(&xsim)
+                .iter()
+                .any(|e| e.starts_with("backends.pl:") && e.contains("remote-port"))
+        );
         let devices = text.replace("[sim]", "[devices]\npmod_ja = \"oled\"\n\n[sim]");
         assert!(
             errors_of(&devices)

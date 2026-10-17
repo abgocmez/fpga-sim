@@ -309,9 +309,9 @@ mod tests {
         let mut bus = SystemBus::new(0x2000_0000).unwrap();
         attach(&mut bus, &handle).unwrap();
         bus.tick(1000);
-        assert_eq!(lock(&handle).now_ns(), 1500);
+        assert_eq!(lock(&handle).now_ns, 1500);
         // An access earlier than the bus clock does not move the PL backwards.
         lock(&handle).at_cycle(10);
-        assert_eq!(lock(&handle).now_ns(), 1500);
+        assert_eq!(lock(&handle).now_ns, 1500);
     }
 }

@@ -90,7 +90,9 @@ fn gpio_timer_uart_firmware_runs_on_the_native_ps_with_the_vendor_models() {
 
 #[test]
 fn gpio_timer_uart_on_the_native_ps_matches_the_qemu_text() {
-    if std::env::var_os("ZYNQSIM_QEMU").is_none() && sim_api::locate_binary("qemu-system-aarch64").is_none() {
+    if std::env::var_os("ZYNQSIM_QEMU").is_none()
+        && sim_api::locate_binary("qemu-system-aarch64").is_none()
+    {
         println!("SKIPPED: qemu-system-aarch64 is not installed");
         return;
     }
@@ -136,11 +138,8 @@ fn the_switches_drive_the_leds_on_the_native_ps_through_the_gpio() {
         duration_ps: 60_000_000_000,
     })
     .unwrap();
-    e.command(Command::Input(Input::SetSwitch {
-        index: 0,
-        on: true,
-    }))
-    .expect("the GPIO binds board.sw");
+    e.command(Command::Input(Input::SetSwitch { index: 0, on: true }))
+        .expect("the GPIO binds board.sw");
     e.command(Command::Run {
         duration_ps: 1_000_000_000,
     })
@@ -179,7 +178,10 @@ fn the_validation_accepts_native_pl_and_refuses_remote_port_pl_with_the_reason()
     ));
     assert!(rtl.is_empty(), "rtl-native on the native PS: {rtl:?}");
     for pl in ["xsim", "verilator"] {
-        let e = errors_of(&native_project(&format!("ps = \"native\"\npl = \"{pl}\""), ""));
+        let e = errors_of(&native_project(
+            &format!("ps = \"native\"\npl = \"{pl}\""),
+            "",
+        ));
         assert!(
             e.iter()
                 .any(|m| m.starts_with("backends.pl") && m.contains("remote-port")),
@@ -211,7 +213,8 @@ fn the_native_ps_refuses_a_dma_master_and_pmod_devices_with_the_reason() {
         "[devices]\npmod_ja = \"tmp2\"\n",
     ));
     assert!(
-        dev.iter().any(|m| m.contains("not attached to the native PS")),
+        dev.iter()
+            .any(|m| m.contains("not attached to the native PS")),
         "Pmod devices are refused: {dev:?}"
     );
 }

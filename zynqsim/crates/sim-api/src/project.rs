@@ -680,7 +680,14 @@ fn warn(field: &str, message: impl Into<String>) -> Diagnostic {
 }
 
 const PS_BACKENDS: &[&str] = &["demo", "qemu", "native"];
-const PL_BACKENDS: &[&str] = &["demo", "verilator", "icarus", "xsim", "native", "rtl-native"];
+const PL_BACKENDS: &[&str] = &[
+    "demo",
+    "verilator",
+    "icarus",
+    "xsim",
+    "native",
+    "rtl-native",
+];
 /// PS backends that exist in this build.
 const IMPLEMENTED_PS: &[&str] = &["demo", "qemu", "native"];
 /// PL backends that exist in this build.
@@ -869,7 +876,9 @@ impl Project {
             return Ok(None);
         }
         let r = self.rtl.as_ref().ok_or_else(|| {
-            ApiError::invalid_argument("backends.pl = \"rtl-native\" needs [rtl] with `files` and `top`")
+            ApiError::invalid_argument(
+                "backends.pl = \"rtl-native\" needs [rtl] with `files` and `top`",
+            )
         })?;
         let resolved = crate::exportsim::resolve_rtl(r, base);
         if let Some(e) = resolved.first_error() {
@@ -1182,7 +1191,11 @@ impl Project {
             match &self.rtl {
                 Some(r) if (!r.files.is_empty() && r.top.is_some()) => {
                     let resolved = crate::exportsim::resolve_rtl(r, base);
-                    for e in resolved.diagnostics.iter().filter(|x| x.severity == Severity::Error) {
+                    for e in resolved
+                        .diagnostics
+                        .iter()
+                        .filter(|x| x.severity == Severity::Error)
+                    {
                         d.push(err("rtl", e.message.clone()));
                     }
                     if r.export_dir.is_some() || r.filelist.is_some() || r.waves {

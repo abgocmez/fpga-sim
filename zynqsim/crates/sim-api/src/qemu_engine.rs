@@ -10,6 +10,10 @@ use crate::elf::Symbols;
 use crate::engine::Engine;
 use crate::error::ApiError;
 use crate::netlog::NetLog;
+use crate::pl_attach::{
+    BankSink, BoardPin, TracedPl, pl_uart_write, push_board_inputs, set_board_pin, trace_leds,
+    trace_master_accesses, trace_pl_uart, trace_pmod_pins, trace_ps_accesses,
+};
 use crate::source::SourceMap;
 use crate::types::DeviceStatus;
 use crate::types::{
@@ -20,10 +24,6 @@ use crate::types::{
 use backend_qemu::{BreakKind as GdbKind, QemuConfig, QemuError, QemuMachine, RunEnd, UartMode};
 use board_zybo::{BoardDef, BoardState};
 use devices::BoardDevice;
-use crate::pl_attach::{
-    BankSink, BoardPin, TracedPl, pl_uart_write, push_board_inputs, set_board_pin,
-    trace_leds, trace_master_accesses, trace_pl_uart, trace_pmod_pins, trace_ps_accesses,
-};
 use pl_api::media::{SAMPLE_RATE, wav_bytes};
 use pl_api::{AudioSource, MediaEvent, PlTarget, VideoSource};
 use sim_core::Ps;
@@ -47,7 +47,7 @@ const JOURNAL_MAX_BYTES: usize = 64 << 20;
 /// Real-time limit for one `run_until`.
 const WALL_LIMIT: Duration = Duration::from_secs(120);
 
-pub use crate::pl_attach::{NativeInstance, NATIVE_MODELS};
+pub use crate::pl_attach::{NATIVE_MODELS, NativeInstance};
 
 /// The RTL simulator a design runs in.
 #[derive(Clone, Debug)]
