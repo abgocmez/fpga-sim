@@ -59,9 +59,18 @@ module zs_axi_checker #(
     input  wire [1:0]        rresp,
     input  wire              rlast
 );
+`ifdef ZS_ICARUS
+    // Icarus Verilog has no DPI-C (ADR-037): the VPI system task of zynqsim.vpi.
+    task automatic zs_protocol_check(input int port, input int channel,
+                                     input int rule, input int info,
+                                     input longint detail, input longint now_ns);
+        $zs_protocol_check(port, channel, rule, info, detail, now_ns);
+    endtask
+`else
     import "DPI-C" function void zs_protocol_check(input int port, input int channel,
                                                    input int rule, input int info,
                                                    input longint detail, input longint now_ns);
+`endif
 
     // One finding: `info` 0 = violation, 1 = informational.
     task note(input integer ch, input integer rule, input integer info, input [63:0] detail);

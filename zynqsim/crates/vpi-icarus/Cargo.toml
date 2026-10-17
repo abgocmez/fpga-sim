@@ -1,0 +1,26 @@
+[package]
+name = "vpi-icarus"
+version.workspace = true
+# 2021: the VPI entry point is a plain `#[no_mangle]` static, as in `dpi-cdylib`.
+edition = "2021"
+license.workspace = true
+rust-version.workspace = true
+description = "VPI module (zynqsim.vpi) that gives Icarus Verilog's vvp the remote-port DPI functions as system functions"
+
+[lib]
+# The file is zynqsim.dll on Windows; `cargo xtask vpi` copies it to zynqsim.vpi, the
+# name `vvp -mzynqsim` loads.
+name = "zynqsim"
+crate-type = ["cdylib"]
+
+# An FFI boundary: the VPI C ABI is declared here and called through pointers, so it does
+# not inherit the workspace `unsafe_code = "forbid"`. Same exemption as `dpi-cdylib`
+# (ADR-037). The unsafe is `vpi.rs` (the ABI and the run-time symbol lookup) and the
+# calls in `systf.rs`; the protocol logic is in `xsim-dpi`.
+[lints.rust]
+missing_docs = "deny"
+
+[dependencies]
+# The remote-port DPI library, the same one the XSim and Verilator paths use (`hosted`
+# gives the socket transport and the one instance).
+xsim-dpi = { path = "../xsim-dpi", features = ["hosted"] }

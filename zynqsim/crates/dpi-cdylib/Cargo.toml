@@ -19,7 +19,7 @@ crate-type = ["cdylib"]
 missing_docs = "deny"
 
 [dependencies]
-xsim-dpi = { path = "../xsim-dpi" }
+xsim-dpi = { path = "../xsim-dpi", features = ["hosted"] }
 
 [dev-dependencies]
 # Tests only: the shared object is loaded the way a simulator loads it.

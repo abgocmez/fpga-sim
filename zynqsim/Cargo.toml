@@ -26,8 +26,10 @@ members = [
     "crates/backend-qemu",
     "crates/xsim-dpi",
     "crates/dpi-cdylib",
+    "crates/vpi-icarus",
     "crates/backend-rtl-xsim",
     "crates/backend-rtl-verilator",
+    "crates/backend-rtl-icarus",
     "crates/rtl-frontend",
     "crates/rtl-engine",
 ]
@@ -55,6 +57,7 @@ default-members = [
     "crates/xsim-dpi",
     "crates/backend-rtl-xsim",
     "crates/backend-rtl-verilator",
+    "crates/backend-rtl-icarus",
     "crates/rtl-frontend",
     "crates/rtl-engine",
 ]

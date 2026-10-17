@@ -22,6 +22,8 @@ missing_docs = "deny"
 # only, DPI exports. Off by default so `cargo test` / `clippy` see a normal
 # (std) crate that exercises the same protocol core.
 freestanding = []
+# Std sockets and the one instance, for shared objects and VPI modules (see `hosted`).
+hosted = []
 
 [dependencies]
 interop = { path = "../interop", default-features = false }
