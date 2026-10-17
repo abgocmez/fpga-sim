@@ -39,6 +39,8 @@ Options for automated checks:
   --waves-tab      open the Waveforms tab with the default signals
   --trace-filter T set the trace strip's filter text to T
   --project-window open the project window
+  --debugger       restart the project under the debugger at start-up; with
+                   --screenshot, the picture is taken once the guest has stopped
 ";
 
 fn die(msg: &str) -> ! {
@@ -103,6 +105,7 @@ fn main() -> eframe::Result {
             "--waves-tab" => opts.waves_tab = true,
             "--trace-filter" => opts.trace_text = value("--trace-filter"),
             "--project-window" => opts.project_window = true,
+            "--debugger" => opts.restart_debugger = true,
             "--mem" => {
                 let v = value("--mem");
                 let t = v.trim();

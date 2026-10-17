@@ -37,6 +37,10 @@ pub enum Action {
     Reset,
     SnapshotSave,
     SnapshotRestore,
+    /// Rebuild the project with the debugger on or off, and run it to its first stop.
+    RestartDebugger(bool),
+    /// Build the project on the native PS engine instead of QEMU.
+    UseNativeEngine,
     SetView(View),
     ToggleSide,
     ToggleConsole,
@@ -260,6 +264,8 @@ impl App {
             Action::Reset => self.model.reset(),
             Action::SnapshotSave => self.model.snapshot_save(),
             Action::SnapshotRestore => self.model.snapshot_restore(),
+            Action::RestartDebugger(on) => self.restart_under_debugger(on),
+            Action::UseNativeEngine => self.use_native_engine(),
             Action::SetView(v) => {
                 self.view_3d = v == View::Board3d;
                 self.wave_ui.tab = v == View::Waves;
@@ -367,6 +373,7 @@ impl App {
     pub(super) fn menu_bar(&mut self, ui: &mut egui::Ui) -> Vec<Action> {
         let mut acts: Vec<Action> = Vec::new();
         let playing = self.model.status.playing;
+        let debugger_on = self.model.status.debug.is_some();
         let current = self.current_view();
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
@@ -421,7 +428,8 @@ impl App {
                 }
             });
             ui.menu_button("Simulation", |ui| {
-                if item(ui, if playing { "Pause" } else { "Play" }, "Space") {
+                let run = if playing { "Pause" } else { self.run_label() };
+                if item(ui, run, "Space") {
                     acts.push(Action::PlayPause);
                 }
                 if item(ui, "Step", "F6") {
@@ -440,6 +448,23 @@ impl App {
                 if item(ui, "Restore snapshot", "") {
                     acts.push(Action::SnapshotRestore);
                 }
+                ui.separator();
+                // On when the QEMU engine has the debugger; a click rebuilds the
+                // project with the other setting and runs it to its first stop.
+                let qemu = self.model.status.ps_backend == "qemu";
+                let busy = self.model.load.is_some();
+                ui.add_enabled_ui(qemu && !busy, |ui| {
+                    let mut on = debugger_on;
+                    let resp = ui.checkbox(&mut on, "Debugger (restart)").on_hover_text(
+                        "Rebuild this project with [debug] enabled and run it to the first \
+                             stop (registers, source line). Timing is not reproducible under \
+                             the debugger. The project file is not changed.",
+                    );
+                    if resp.clicked() {
+                        acts.push(Action::RestartDebugger(on));
+                        ui.close();
+                    }
+                });
             });
             ui.menu_button("View", |ui| {
                 for (label, v) in [
@@ -530,8 +555,15 @@ impl App {
             .clone()
             .or_else(|| self.model.last_error.clone())
             .map(|e| e.lines().next().unwrap_or("").to_string());
+        // Right after the time, so it stays visible when the rest is cut short.
+        let under = self.under_debugger();
+        let note = if under {
+            format!("{}   |   ", super::debugger::DEBUGGER_NOTE)
+        } else {
+            String::new()
+        };
         let left = format!(
-            "t = {}   |   {state}   |   speed {speed}   |   {project}  [{backends}]",
+            "t = {}   |   {note}{state}   |   speed {speed}   |   {project}  [{backends}]",
             Ps(s.now_ps)
         );
         ui.horizontal(|ui| {

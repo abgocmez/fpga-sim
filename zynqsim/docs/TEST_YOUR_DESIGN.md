@@ -191,6 +191,9 @@ protocol  : 1 warning(s), 0 error(s), 0 info (warn)
 * Stop the CPU: `[debug] enabled = true`, `breakpoints = ["main"]`, then through the GUI or
   MCP `sim_run` / `cpu_regs` / `cpu_disasm` / `symbol_lookup`. Registers exist at stops, and
   timing under the debugger is not reproducible.
+* To see the registers in the GUI without editing `project.toml`: in the CPU registers section
+  press **Restart under debugger** (or tick Simulation > Debugger (restart)); `--debugger` does it
+  at start-up. The project then runs to `main` and stops there.
 * `zynqsim-gui --project mytest/project.toml` shows the console, the PL bus accesses, memory and
   the board.
 

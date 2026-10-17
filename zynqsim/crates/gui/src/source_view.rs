@@ -118,18 +118,25 @@ pub struct PanelRects {
     pub less: Option<egui::Rect>,
 }
 
-/// Draws the panel body (inside a collapsing header or a window).
-pub fn show(ui: &mut egui::Ui, tracker: &mut SourceTracker) -> PanelRects {
+/// Draws the panel body (inside a collapsing header or a window). `stopped_at`
+/// describes the pc of a stopped core, when there is one: then the panel says
+/// that the ELF has no line for it instead of that the guest is not stopped.
+pub fn show(
+    ui: &mut egui::Ui,
+    tracker: &mut SourceTracker,
+    stopped_at: Option<&str>,
+) -> PanelRects {
     let mut rects = PanelRects::default();
     let Some(v) = tracker.view.clone() else {
-        ui.label(
-            RichText::new(
-                "No source line: the guest is not stopped, or its ELF was built without \
-                 debug info.",
-            )
-            .color(Color32::GRAY)
-            .small(),
-        );
+        let text = match stopped_at {
+            Some(pc) => format!(
+                "No line information for {pc}: its ELF has no debug line table for this pc."
+            ),
+            None => "No source line: the guest is not stopped at a breakpoint, or its ELF was \
+                     built without debug info."
+                .to_string(),
+        };
+        ui.label(RichText::new(text).color(Color32::GRAY).small());
         return rects;
     };
     ui.label(RichText::new(format!("core {}  {}:{}", v.core, v.file, v.line)).strong());
@@ -231,7 +238,7 @@ mod tests {
         let mut rects = PanelRects::default();
         let out = ctx.run(input, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                rects = show(ui, t);
+                rects = show(ui, t, None);
             });
         });
         let mut texts = Vec::new();

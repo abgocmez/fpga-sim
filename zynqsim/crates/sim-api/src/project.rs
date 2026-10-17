@@ -796,6 +796,35 @@ impl Project {
             .collect()
     }
 
+    /// This project with the debugger switched on or off, for a restart from
+    /// the GUI. The project file is not changed: the caller builds the result.
+    ///
+    /// Switching it on keeps the project's own breakpoints; with none, it plants
+    /// one at the start of core 0's program ([`start_breakpoint`]). `base` is the
+    /// directory relative paths resolve against.
+    pub fn with_debugger(&self, base: &Path, enabled: bool) -> Project {
+        let mut p = self.clone();
+        if !enabled {
+            if let Some(d) = p.debug.as_mut() {
+                d.enabled = false;
+            }
+            return p;
+        }
+        let mut d = p.debug.clone().unwrap_or_default();
+        d.enabled = true;
+        if d.breakpoints.is_empty() {
+            if let Some(bp) = self
+                .cpu0
+                .as_ref()
+                .and_then(|c| start_breakpoint(&resolve(base, &c.elf)))
+            {
+                d.breakpoints.push(bp);
+            }
+        }
+        p.debug = Some(d);
+        p
+    }
+
     /// Validates the project and builds the engine it asks for.
     ///
     /// `base` is the directory relative paths resolve against. Fails with every
@@ -1843,6 +1872,19 @@ fn resolve(base: &Path, rel: &str) -> PathBuf {
     }
 }
 
+/// The `[debug] breakpoints` entry that stops a program at its start: `main`
+/// when the ELF has that symbol, else its entry point as an address. `None`
+/// when the file is not a 32-bit little-endian ELF with either.
+pub fn start_breakpoint(elf: &Path) -> Option<String> {
+    if crate::elf::Symbols::load(elf)
+        .ok()
+        .is_some_and(|s| s.by_name("main").is_some())
+    {
+        return Some("main".to_string());
+    }
+    crate::elf::entry_point(elf).map(|e| format!("{e:#x}"))
+}
+
 /// Validates one `[connect]` target; returns a message when it is wrong.
 fn check_connection(value: &str, board: Option<&BoardDef>) -> Option<String> {
     let (port, addr) = match value.split_once('@') {
@@ -2425,6 +2467,72 @@ tmr = \"axi_timer\"
         assert!(vhdl.iter().any(|m| m.contains("VHDL")), "{vhdl:?}");
         let none = errors_for("top = \"top\"");
         assert!(none.iter().any(|m| m.contains("needs [rtl]")), "{none:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_debugger_restart_plants_main_and_keeps_the_rest_of_the_project() {
+        let file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/rust-hello/project.toml");
+        let p = Project::load(&file).unwrap();
+        assert!(p.debug.is_none(), "rust-hello has no [debug] section");
+        let base = file.parent().unwrap();
+        let on = p.with_debugger(base, true);
+        let d = on.debug.clone().expect("a debug section");
+        assert!(d.enabled);
+        assert_eq!(
+            d.breakpoints,
+            vec!["main".to_string()],
+            "rust_hello has main"
+        );
+        // Everything else is the same project.
+        assert_eq!(
+            Project {
+                debug: None,
+                ..on.clone()
+            },
+            Project {
+                debug: None,
+                ..p.clone()
+            }
+        );
+        assert_eq!(on.cpu0, p.cpu0);
+        assert_eq!(on.backends, p.backends);
+        // The file itself is untouched.
+        assert!(Project::load(&file).unwrap().debug.is_none());
+        // Switching off keeps the breakpoints but disables the debugger, and
+        // switching on again plants nothing twice.
+        let off = on.with_debugger(base, false);
+        assert!(!off.debug.as_ref().unwrap().enabled);
+        assert_eq!(on.with_debugger(base, true), on);
+        // A project's own breakpoints win over the planted one.
+        let mut own = on.clone();
+        own.debug.as_mut().unwrap().breakpoints = vec!["0x100614".to_string()];
+        assert_eq!(
+            own.with_debugger(base, true).debug.unwrap().breakpoints,
+            vec!["0x100614".to_string()]
+        );
+    }
+
+    #[test]
+    fn the_start_breakpoint_falls_back_to_the_entry_point() {
+        let dir = std::env::temp_dir().join(format!("zs-start-bp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // A 32-bit ELF header with no section table: the entry point is the breakpoint.
+        let mut e = vec![0u8; 64];
+        e[..4].copy_from_slice(b"\x7fELF");
+        e[4] = 1;
+        e[5] = 1;
+        e[24..28].copy_from_slice(&0x0010_0040u32.to_le_bytes());
+        let path = dir.join("bare.elf");
+        std::fs::write(&path, &e).unwrap();
+        assert_eq!(start_breakpoint(&path).as_deref(), Some("0x100040"));
+        assert_eq!(crate::elf::entry_point(&path), Some(0x0010_0040));
+        // Not an ELF, or missing: no breakpoint.
+        let text = dir.join("text.elf");
+        std::fs::write(&text, b"hello").unwrap();
+        assert_eq!(start_breakpoint(&text), None);
+        assert_eq!(start_breakpoint(&dir.join("missing.elf")), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

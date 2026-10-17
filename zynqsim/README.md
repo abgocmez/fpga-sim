@@ -38,6 +38,22 @@ Keys in the GUI: `1`-`4` toggle switches, `Q` `W` `E` `R` hold buttons. Shell ke
 pause, `F6` step, `F5` reset, `F1` the shortcuts window, `Ctrl+O` open a project, `Ctrl+=` / `Ctrl+-` /
 `Ctrl+0` UI scale, `Ctrl+Q` quit.
 
+### Registers in the GUI (the debugger)
+
+The side panel's **CPU registers** and **Source** sections need a stop of the debugger. A QEMU
+project without `[debug]` (most examples) shows **Restart under debugger** instead: the project is
+rebuilt in memory with the debugger on and a breakpoint at `main` (or the entry point), runs to that
+first stop, and the registers and source line appear. The project file is not written. The same
+switch is **Simulation > Debugger (restart)**; `zynqsim-gui --project P --debugger --screenshot F`
+does it at start-up. Under the debugger timing is not reproducible, and the status bar says so.
+The run button reads **Continue** while the guest is stopped; it runs on to the next breakpoint.
+
+For a PS-only project (no PL, one core) the offer also has **Use the native engine**
+(`backends.ps = "native"`): its registers can be read whenever the simulation is paused, with no
+QEMU. The native engine does not implement Thumb or VFP instructions; it stops with a message when
+the firmware uses one. Whether a project can move there is decided by its validation, not by
+scanning the ELF.
+
 ### Waveforms
 
 The **Waveforms** tab (next to 2D/3D board) shows the signals the trace recorded: board switches,
@@ -393,6 +409,8 @@ looked at by hand; the layout defects found in that review, and what was changed
 | ![Source panel](docs/screenshots/rust-debug-source.png) | ![Storage table](docs/screenshots/sd-demo-storage-table.png) |
 | **Keyboard shortcuts (F1)** | |
 | ![Shortcuts](docs/screenshots/shell-shortcuts.png) | |
+| **Registers after "Restart under debugger"** (`examples/rust-hello --debugger`: stopped at `main`, no line info) | **The offer on a QEMU run without the debugger** (`examples/rust-hello`) |
+| ![Registers after the restart](docs/screenshots/rust-hello-debugger.png) | ![The debugger offer](docs/screenshots/rust-hello-offer.png) |
 
 The window has a menu bar (File: open, recent projects, examples; Simulation; View: 2D, 3D,
 Waveforms, side panel, console, UI scale, theme; Help) and a status line at the bottom (time, run

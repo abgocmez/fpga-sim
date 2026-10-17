@@ -16,6 +16,10 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sim-api = { version = "0.1.0", path = "../sim-api" }
 
+[dev-dependencies]
+# Reads the ELF's `.text` range in the end-to-end tests (already in the lock file via sim-api).
+object = { version = "0.40.0", default-features = false, features = ["read_core", "elf", "std"] }
+
 [features]
 default = ["audio", "dialogs"]
 # Speaker output for the codec (cpal; needs ALSA development files on Linux).
