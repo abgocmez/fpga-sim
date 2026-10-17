@@ -1569,8 +1569,14 @@ mod tests {
         let icarus = icarus.split_once("`ifdef ZS_ICARUS").expect("the guard").1;
         let dpi = dpi.split_once("`endif").expect("the end of the guard").0;
         assert!(dpi.contains("import \"DPI-C\" function int  rp_open(input string descr);"));
-        assert!(dpi.contains("import \"DPI-C\" function int  rp_next("), "rp_next keeps its import");
-        assert!(!icarus.contains("import \"DPI-C\""), "no DPI-C in the Icarus branch");
+        assert!(
+            dpi.contains("import \"DPI-C\" function int  rp_next("),
+            "rp_next keeps its import"
+        );
+        assert!(
+            !icarus.contains("import \"DPI-C\""),
+            "no DPI-C in the Icarus branch"
+        );
         for name in [
             "rp_open",
             "rp_done_t",
@@ -1586,14 +1592,29 @@ mod tests {
             "rp_mem_get",
             "rp_mem_free",
         ] {
-            assert!(icarus.contains(&format!("$zs_{name}(")), "{name} has no $zs_ call");
+            assert!(
+                icarus.contains(&format!("$zs_{name}(")),
+                "{name} has no $zs_ call"
+            );
         }
         // rp_next has output arguments: its call site calls the system function instead.
-        assert!(tb.contains("st = $zs_rp_next(zs_now, -1, a_i, wd_i, ws_i, iw_i);"), "{tb}");
-        assert!(tb.contains("st = rp_next($time, -1, a_i, wd_i, ws_i, iw_i);"), "{tb}");
+        assert!(
+            tb.contains("st = $zs_rp_next(zs_now, -1, a_i, wd_i, ws_i, iw_i);"),
+            "{tb}"
+        );
+        assert!(
+            tb.contains("st = rp_next($time, -1, a_i, wd_i, ws_i, iw_i);"),
+            "{tb}"
+        );
         // The pin imports of the testbench have the same two forms.
-        assert!(tb.contains("$zs_pin_out(group, levels, now_ns);"), "the pin wrapper is written");
-        assert!(tb.contains("import \"DPI-C\" function void zs_pin_out("), "{tb}");
+        assert!(
+            tb.contains("$zs_pin_out(group, levels, now_ns);"),
+            "the pin wrapper is written"
+        );
+        assert!(
+            tb.contains("import \"DPI-C\" function void zs_pin_out("),
+            "{tb}"
+        );
         let opened = tb.matches("`ifdef").count() + tb.matches("`ifndef").count();
         assert_eq!(tb.matches("`endif").count(), opened, "{tb}");
     }

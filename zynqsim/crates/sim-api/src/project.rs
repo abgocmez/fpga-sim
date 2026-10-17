@@ -953,11 +953,14 @@ impl Project {
                     rtl,
                     board: board_def.name.clone(),
                     board_def: Some(board_def),
-                    pl_name: if matches!(self.backends.pl.as_str(), "xsim" | "verilator" | "icarus") {
+                    pl_name: if matches!(self.backends.pl.as_str(), "xsim" | "verilator" | "icarus")
+                    {
                         match (self.backends.pl.as_str(), self.native.is_empty()) {
                             ("xsim", true) => "xsim",
                             ("xsim", false) => "xsim+native",
-                            ("verilator", true) => "verilator", ("icarus", true) => "icarus", ("icarus", false) => "icarus+native",
+                            ("verilator", true) => "verilator",
+                            ("icarus", true) => "icarus",
+                            ("icarus", false) => "icarus+native",
                             _ => "verilator+native",
                         }
                         .to_string()
@@ -1241,7 +1244,10 @@ impl Project {
             }
         }
         if !self.native.is_empty()
-            && !matches!(self.backends.pl.as_str(), "native" | "xsim" | "verilator" | "icarus")
+            && !matches!(
+                self.backends.pl.as_str(),
+                "native" | "xsim" | "verilator" | "icarus"
+            )
         {
             d.push(warn(
                 "native",

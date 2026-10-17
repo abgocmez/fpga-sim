@@ -84,7 +84,11 @@ impl Call {
     pub fn long(&self, i: usize) -> i64 {
         let (b, n) = self.words(i);
         let lo = u64::from(b[0].aval as u32);
-        let hi = if n > 1 { u64::from(b[1].aval as u32) } else { 0 };
+        let hi = if n > 1 {
+            u64::from(b[1].aval as u32)
+        } else {
+            0
+        };
         ((hi << 32) | lo) as i64
     }
 
@@ -369,14 +373,7 @@ systf!(zs_codec_reg, |c| {
 });
 
 systf!(zs_protocol_check, |c| {
-    abi::zs_protocol_check(
-        c.int(0),
-        c.int(1),
-        c.int(2),
-        c.int(3),
-        c.long(4),
-        c.long(5),
-    );
+    abi::zs_protocol_check(c.int(0), c.int(1), c.int(2), c.int(3), c.long(4), c.long(5));
 });
 
 systf!(zs_pin_out, |c| {
@@ -393,37 +390,161 @@ systf!(zs_pin_in, |c| {
 
 /// Every DPI function the testbenches import, with its `$zs_` name.
 pub const TABLE: &[Def] = &[
-    Def { name: c"$zs_rp_open", ret: Ret::Int, calltf: rp_open },
-    Def { name: c"$zs_rp_next", ret: Ret::Int, calltf: rp_next },
-    Def { name: c"$zs_rp_done", ret: Ret::Task, calltf: rp_done },
-    Def { name: c"$zs_rp_done_t", ret: Ret::Task, calltf: rp_done_t },
-    Def { name: c"$zs_rp_poll", ret: Ret::Int, calltf: rp_poll },
-    Def { name: c"$zs_rp_lockstep", ret: Ret::Task, calltf: rp_lockstep },
-    Def { name: c"$zs_rp_sync_target", ret: Ret::Long, calltf: rp_sync_target },
-    Def { name: c"$zs_rp_sync_ack", ret: Ret::Task, calltf: rp_sync_ack },
-    Def { name: c"$zs_rp_req_ts", ret: Ret::Long, calltf: rp_req_ts },
-    Def { name: c"$zs_rp_mem_put", ret: Ret::Task, calltf: rp_mem_put },
-    Def { name: c"$zs_rp_mem_start", ret: Ret::Int, calltf: rp_mem_start },
-    Def { name: c"$zs_rp_mem_poll", ret: Ret::Int, calltf: rp_mem_poll },
-    Def { name: c"$zs_rp_mem_wait", ret: Ret::Int, calltf: rp_mem_wait },
-    Def { name: c"$zs_rp_mem_get", ret: Ret::Int, calltf: rp_mem_get },
-    Def { name: c"$zs_rp_mem_free", ret: Ret::Task, calltf: rp_mem_free },
-    Def { name: c"$zs_rp_irq", ret: Ret::Task, calltf: rp_irq },
-    Def { name: c"$zs_rp_close", ret: Ret::Task, calltf: rp_close },
-    Def { name: c"$zs_tel_publish", ret: Ret::Task, calltf: tel_publish },
-    Def { name: c"$zs_tel_event", ret: Ret::Task, calltf: tel_event },
-    Def { name: c"$zs_tel_ctrl", ret: Ret::Int, calltf: tel_ctrl },
-    Def { name: c"$zs_video_tx_pixel", ret: Ret::Task, calltf: zs_video_tx_pixel },
-    Def { name: c"$zs_video_rx_line", ret: Ret::Int, calltf: zs_video_rx_line },
-    Def { name: c"$zs_video_rx_pixel", ret: Ret::Int, calltf: zs_video_rx_pixel },
-    Def { name: c"$zs_audio_tx_frame", ret: Ret::Task, calltf: zs_audio_tx_frame },
-    Def { name: c"$zs_audio_flush", ret: Ret::Task, calltf: zs_audio_flush },
-    Def { name: c"$zs_audio_rx_frame", ret: Ret::Task, calltf: zs_audio_rx_frame },
-    Def { name: c"$zs_codec_reg", ret: Ret::Task, calltf: zs_codec_reg },
-    Def { name: c"$zs_protocol_check", ret: Ret::Task, calltf: zs_protocol_check },
-    Def { name: c"$zs_pin_out", ret: Ret::Task, calltf: zs_pin_out },
-    Def { name: c"$zs_pin_xchg", ret: Ret::Int, calltf: zs_pin_xchg },
-    Def { name: c"$zs_pin_in", ret: Ret::Int, calltf: zs_pin_in },
+    Def {
+        name: c"$zs_rp_open",
+        ret: Ret::Int,
+        calltf: rp_open,
+    },
+    Def {
+        name: c"$zs_rp_next",
+        ret: Ret::Int,
+        calltf: rp_next,
+    },
+    Def {
+        name: c"$zs_rp_done",
+        ret: Ret::Task,
+        calltf: rp_done,
+    },
+    Def {
+        name: c"$zs_rp_done_t",
+        ret: Ret::Task,
+        calltf: rp_done_t,
+    },
+    Def {
+        name: c"$zs_rp_poll",
+        ret: Ret::Int,
+        calltf: rp_poll,
+    },
+    Def {
+        name: c"$zs_rp_lockstep",
+        ret: Ret::Task,
+        calltf: rp_lockstep,
+    },
+    Def {
+        name: c"$zs_rp_sync_target",
+        ret: Ret::Long,
+        calltf: rp_sync_target,
+    },
+    Def {
+        name: c"$zs_rp_sync_ack",
+        ret: Ret::Task,
+        calltf: rp_sync_ack,
+    },
+    Def {
+        name: c"$zs_rp_req_ts",
+        ret: Ret::Long,
+        calltf: rp_req_ts,
+    },
+    Def {
+        name: c"$zs_rp_mem_put",
+        ret: Ret::Task,
+        calltf: rp_mem_put,
+    },
+    Def {
+        name: c"$zs_rp_mem_start",
+        ret: Ret::Int,
+        calltf: rp_mem_start,
+    },
+    Def {
+        name: c"$zs_rp_mem_poll",
+        ret: Ret::Int,
+        calltf: rp_mem_poll,
+    },
+    Def {
+        name: c"$zs_rp_mem_wait",
+        ret: Ret::Int,
+        calltf: rp_mem_wait,
+    },
+    Def {
+        name: c"$zs_rp_mem_get",
+        ret: Ret::Int,
+        calltf: rp_mem_get,
+    },
+    Def {
+        name: c"$zs_rp_mem_free",
+        ret: Ret::Task,
+        calltf: rp_mem_free,
+    },
+    Def {
+        name: c"$zs_rp_irq",
+        ret: Ret::Task,
+        calltf: rp_irq,
+    },
+    Def {
+        name: c"$zs_rp_close",
+        ret: Ret::Task,
+        calltf: rp_close,
+    },
+    Def {
+        name: c"$zs_tel_publish",
+        ret: Ret::Task,
+        calltf: tel_publish,
+    },
+    Def {
+        name: c"$zs_tel_event",
+        ret: Ret::Task,
+        calltf: tel_event,
+    },
+    Def {
+        name: c"$zs_tel_ctrl",
+        ret: Ret::Int,
+        calltf: tel_ctrl,
+    },
+    Def {
+        name: c"$zs_video_tx_pixel",
+        ret: Ret::Task,
+        calltf: zs_video_tx_pixel,
+    },
+    Def {
+        name: c"$zs_video_rx_line",
+        ret: Ret::Int,
+        calltf: zs_video_rx_line,
+    },
+    Def {
+        name: c"$zs_video_rx_pixel",
+        ret: Ret::Int,
+        calltf: zs_video_rx_pixel,
+    },
+    Def {
+        name: c"$zs_audio_tx_frame",
+        ret: Ret::Task,
+        calltf: zs_audio_tx_frame,
+    },
+    Def {
+        name: c"$zs_audio_flush",
+        ret: Ret::Task,
+        calltf: zs_audio_flush,
+    },
+    Def {
+        name: c"$zs_audio_rx_frame",
+        ret: Ret::Task,
+        calltf: zs_audio_rx_frame,
+    },
+    Def {
+        name: c"$zs_codec_reg",
+        ret: Ret::Task,
+        calltf: zs_codec_reg,
+    },
+    Def {
+        name: c"$zs_protocol_check",
+        ret: Ret::Task,
+        calltf: zs_protocol_check,
+    },
+    Def {
+        name: c"$zs_pin_out",
+        ret: Ret::Task,
+        calltf: zs_pin_out,
+    },
+    Def {
+        name: c"$zs_pin_xchg",
+        ret: Ret::Int,
+        calltf: zs_pin_xchg,
+    },
+    Def {
+        name: c"$zs_pin_in",
+        ret: Ret::Int,
+        calltf: zs_pin_in,
+    },
 ];
 
 #[cfg(test)]
@@ -446,7 +567,10 @@ mod tests {
     /// Every `$zs_` call of the math testbench (the fixture the Icarus example runs) is registered.
     #[test]
     fn the_math_testbench_calls_are_all_registered() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/rtl/math/cosim_top.sv");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/rtl/math/cosim_top.sv"
+        );
         let text = std::fs::read_to_string(path).unwrap();
         let mut calls = 0;
         for part in text.split("$zs_").skip(1) {

@@ -74,7 +74,11 @@ pub fn errors(log: &str) -> Vec<Diagnostic> {
 
 fn parse_line(line: &str) -> Option<Diagnostic> {
     let (prefix, severity, text) = if let Some(i) = line.find(": error: ") {
-        (Some(&line[..i]), Severity::Error, &line[i + ": error: ".len()..])
+        (
+            Some(&line[..i]),
+            Severity::Error,
+            &line[i + ": error: ".len()..],
+        )
     } else if let Some(i) = line.find(": warning: ") {
         (
             Some(&line[..i]),
@@ -83,10 +87,9 @@ fn parse_line(line: &str) -> Option<Diagnostic> {
         )
     } else if let Some(t) = line.strip_prefix("error: ") {
         (None, Severity::Error, t)
-    } else if let Some(t) = line.strip_prefix("warning: ") {
-        (None, Severity::Warning, t)
     } else {
-        return None;
+        let t = line.strip_prefix("warning: ")?;
+        (None, Severity::Warning, t)
     };
     let (file, lineno) = match prefix.and_then(|p| p.rsplit_once(':')) {
         Some((file, n)) => match n.trim().parse::<u32>() {

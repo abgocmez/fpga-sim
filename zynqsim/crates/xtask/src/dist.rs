@@ -194,7 +194,11 @@ pub fn run_vpi(root: &Path) -> bool {
 fn build_vpi(root: &Path) -> Result<PathBuf, String> {
     cargo(root, &["build", "--release", "-p", "vpi-icarus"])?;
     let built = root.join("target").join("release").join("zynqsim.dll");
-    let dest = root.join("target").join("vpi").join("release").join("zynqsim.vpi");
+    let dest = root
+        .join("target")
+        .join("vpi")
+        .join("release")
+        .join("zynqsim.vpi");
     copy_file(&built, &dest)?;
     Ok(dest)
 }

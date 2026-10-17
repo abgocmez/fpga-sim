@@ -338,7 +338,11 @@ impl IcarusPl {
                 "the zynqsim VPI module is built for Windows only for now".to_string(),
             ));
         }
-        for p in cfg.sources.iter().chain([&cfg.vpi, &cfg.iverilog, &cfg.vvp]) {
+        for p in cfg
+            .sources
+            .iter()
+            .chain([&cfg.vpi, &cfg.iverilog, &cfg.vvp])
+        {
             if !p.is_file() {
                 return Err(IcarusError::MissingFile(p.clone()));
             }

@@ -130,7 +130,8 @@ static API: OnceLock<Api> = OnceLock::new();
 /// The resolved VPI functions. Panics if [`load`] has not succeeded; it runs first, in
 /// the startup routine, so the system functions are only called after it.
 pub fn api() -> &'static Api {
-    API.get().expect("zynqsim.vpi: the VPI functions are not resolved")
+    API.get()
+        .expect("zynqsim.vpi: the VPI functions are not resolved")
 }
 
 /// The version of the jump table this module reads (`vpip_routines_version` of vpi_user.h).
@@ -194,6 +195,7 @@ struct Routines {
 /// `routines` is NULL or the `vpip_routines_s` of the calling vvp or compiler, valid for
 /// the life of the process.
 #[no_mangle]
+#[allow(clippy::missing_transmute_annotations)] // Each target type is the one `Api` declares.
 pub unsafe extern "C" fn vpip_set_callback(routines: *const c_void, version: u32) -> u32 {
     if routines.is_null() || version != ROUTINES_VERSION {
         return 1;
@@ -225,6 +227,7 @@ extern "system" {
 /// (`vpip_set_callback`), otherwise by name from the module that exports them. vvp
 /// exports them from `libvvp-1.dll` (the DLL it links); the executable is tried too.
 #[cfg(windows)]
+#[allow(clippy::missing_transmute_annotations)] // Each target type is the one `Api` declares.
 pub fn load() -> Result<(), String> {
     if API.get().is_some() {
         return Ok(());
