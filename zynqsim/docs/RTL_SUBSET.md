@@ -127,3 +127,59 @@ or probe cases parse clean, including picorv32, serv, the forencich AXI-stream a
 secworks crypto cores and the dpretet FIFO.
 
 Parsing clean is not elaboration or simulation: it means the front end found no construct it cannot take.
+
+## Native engine (`crates/rtl-engine`, ADR-034)
+
+The native engine simulates the subset below with no external tool. It is **2-state**: every value is
+0 or 1, and x and z in source read as 0. It is not selectable as a backend (`backends.pl = "rtl-native"`
+is refused). Anything not listed under *Supported* is refused at elaboration with a diagnostic that
+names the construct (or the signal, for width) and its position.
+
+### Supported
+
+| Area | Exact list |
+|---|---|
+| Sources | everything the front end accepts (*Native front end* above); `` `timescale `` sets the unit of `#` delays (default 1 ns; units finer than 1 ps round to 1 ps) |
+| Hierarchy | module instances with named or positional connections, `.*`, parameter overrides (named and positional, numbers and strings); port directions `input` and `output`; gate primitives `and`, `or`, `nand`, `nor`, `xor`, `xnor`, `not`, `buf` (one output) |
+| Parameters | `parameter` and `localparam` in the header and the body; constant expressions with the front end's constant evaluator (`$clog2`, `$bits`, constant functions, string comparisons) |
+| Generate | `for` (with `genvar`), `if`/`else`, `case`, blocks; names `label[i].name` and `label.name`; at most 10 000 iterations per loop |
+| Declarations | `wire`, `reg`, `logic`, `bit`, `integer`, `int`, `time`, `signed`, packed ranges up to 128 bits, unpacked one-dimensional memories up to 2^20 words, declaration initialisers (`reg` at time 0, `wire` as a continuous assign), `typedef` of vectors and enums (enum members are 32-bit constants 0, 1, ...; explicit enum values are read as the position) |
+| Continuous assignment | `assign` (with `#` delay), with concatenation targets, part and bit selects, memory words |
+| Processes | `always` (with any event control, `@*`, or none), `always_ff`, `always_comb`, `always_latch` (run at time 0 and wait on their inputs), `initial` |
+| Statements | blocking and non-blocking assignments (with `#` intra-assignment delay), `if`/`else`, `case`/`casez`/`casex` (wildcard `?`, `z` and `x` digits in labels), `for`, `while`, `repeat`, `forever`, `break`, `continue`, `begin`/`end` with names and local declarations, `#` delays, `@(...)` event controls (`posedge`, `negedge`, plain; a bit of a vector or a constant bit index), `wait (cond)`, `return` |
+| Routines | `function` (inputs; the function name is the return variable; locals including memories), `task` (inputs, outputs, `inout` copied both ways; delays allowed; inlined at each call). Not recursive: a routine that calls itself is refused |
+| Expressions | literals (sized, based, unsized, fill `'0 '1`, strings as bytes); every unary, binary, reduction, logical, ternary, concatenation, replication (a zero replication is allowed inside a wider concatenation), bit, part and indexed (`+:`, `-:`) select, on signals, memory words and ascending ranges; `$signed`, `$unsigned`, `$time`, `$clog2`, `$bits`; size casts `N'(x)` |
+| Arithmetic | width and signedness as Verilog defines them (context-determined sizing, operands extended by the expression's signedness); `>>>` is arithmetic only for a signed left operand; `/` and `%` by zero give 0 (2-state) |
+| System tasks | `$display`, `$write`, `$strobe`, `$monitor` (one display at its call), `$error`, `$warning`, `$info`, `$fatal` (display then stop), `$finish`, `$stop`, `$readmemh`, `$readmemb` (relative to the design's base directory, or the current directory); formats `%d %D %h %H %x %X %b %B %o %O %c %s %t %m %%` with width and zero-fill flags |
+| Time | a single time base per module (from its file's last `timescale`); `$time` in that unit; `#0` runs after the current events |
+| Results | `Simulator::{new, set, set_word, get, get_word, run_until, tick_clock, snapshot, restore, state_hash, signal_names, width_of, log, finished, set_recording, changes, vcd}`; `RtlModule` (AXI4-Lite slave, see below) |
+
+### Limits (each is refused or stated; none is silent)
+
+| Limit | Behaviour |
+|---|---|
+| 2-state values; x and z read as 0 | a testbench that compares with `===` against `x`, or depends on x propagation, is decided differently from XSim |
+| Width over 128 bits | refused, naming the signal (declarations) or the concatenation |
+| Recursive functions and tasks | refused |
+| Hierarchical references (`a.b` in expressions or as a task call, `u_mem.write(...)`) | refused (uriscv's testbench is refused for this) |
+| Package types, `type` parameters, interfaces, classes, assertions, covergroups, `fork`/`join`, `disable`, DPI imports, real numbers | refused (the front end names them; `pulp-common-cells` is refused for its package-typed parameters) |
+| `$random`, `$urandom`, `$fopen` and other system tasks not listed above | refused at elaboration |
+| Multi-dimensional memories; instance arrays | refused |
+| `inout` ports | refused |
+| Enum members with explicit values | read as their position; the enum base type is ignored (variables are 32-bit) |
+| Partial out-of-range writes (a part select partly outside the vector) | the whole write is skipped; Verilog writes the in-range bits |
+| Out-of-range reads | 0 (a 2-state read of a non-existent word) |
+| Time | `timescale` is taken per file (its last directive); there is no `precision` modelling, and sub-picosecond units round to 1 ps |
+| Delays in `assign` (and `#` between a process's waits) | the process sleeps for the delay and then re-evaluates its right-hand side, so the output is the input's value at that later time; input changes during the delay are not seen, and no pulse filtering is modelled beyond that |
+| `$readmemb` | implemented-untested; `$readmemh` is tested |
+| Waveforms | `Simulator::vcd()` writes the recorded changes of every visible scalar and vector (2-state, all starting at 0); the engine does not write FST |
+| Budgets | 20 million operations per process activation (a loop without timing control stops with a message); 2 million process activations or 200 000 non-blocking rounds in one time step are reported as a combinational loop |
+| Speed | not measured for this document; the engine interprets bytecode |
+
+### AXI4-Lite through `RtlModule` (ADR-034)
+
+A design with an `S_AXI_*` slave (the prototype's `my_math_ip` is the example) runs behind
+`pl_native::RegisterBlock`. Each access is one AXI4-Lite transaction of as many clock cycles as the design
+takes: VALID and data are driven, READY and VALID are sampled just before each rising edge, and VALID is
+dropped after the edge that accepted it. The clock is driven by the adapter, one 10 ns period per cycle.
+Only 32-bit data is accepted. Offsets past the slave's address width alias as the RTL decodes them.

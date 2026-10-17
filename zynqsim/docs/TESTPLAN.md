@@ -261,3 +261,23 @@ Run: `cargo test -p rtl-frontend` (93 tests, about 4 s) and `cargo test -p zynqs
 Not covered: that a parse-clean design elaborates or simulates like XSim (no differential run yet);
 the DPI, class, interface and package constructs (reported, not parsed); performance on large designs
 (the corpus is the largest input; a 2000-module input is only checked against the budget).
+
+## Native RTL engine (P6, optional; ADR-034)
+
+Run: `cargo test -p rtl-engine` (60 tests, about 20 s). The XSim test needs Vivado and `cargo xtask dpi`
+(it prints `SKIPPED:` and passes without Vivado). The corpus test rewrites `docs/CORPUS_NATIVE.md`.
+
+| Test | Needs | What it establishes |
+|---|---|---|
+| `rtl-engine` `scheduling` (11) | nothing | NBA swap (and blocking swap), race-free counter, delta cycles through assigns, `negedge`, delays in the `timescale` unit, `$finish`, combinational-loop report, budget report for a loop without timing control, `always_comb` at time 0 |
+| `rtl-engine` `expr` (18) | nothing | literals, concatenation and replication, selects (also of memory words and ascending ranges), reductions and logical operators, ternary, context width, mixed signedness, `>>>`, division, memories, constant functions, x and z as 0, the 128-bit refusal, memory bit targets, functions that write memories declared after them |
+| `rtl-engine` `property` (3) | nothing | seeded random operands against an independent Rust reference: add, subtract, multiply, shifts, comparisons, divide and modulo; every width 1 to 64 both signednesses; widths 65 to 128 |
+| `rtl-engine` `constructs` (18) | nothing | `case`/`casez`/`casex`; loops with `break`/`continue`; functions; tasks with delays and outputs; `$readmemh`; `$display` formats; `$finish`; generate and parameters with hierarchical names; refusals (recursion, unknown tasks, missing modules, `$random`, diagnostics stop a simulation); `set`/`get` rules; snapshot and restore (the same future, refused for another design or a truncated snapshot); identical state hashes over five runs; VCD structure; `tick_clock` |
+| `rtl-engine` `math_ip` (7) | `fixtures/rtl/math` | `my_math_ip` through `RtlModule` against `pl_native::MathIp` (the firmware golden model): writes, reads, strobes, reset, unmapped offsets, aliasing past the address width (a known difference, pinned) |
+| `rtl-engine` `xsim_diff` (1) | Vivado XSim, `cargo xtask dpi` | the same register stimulus on `my_math_ip` in XSim (through `XsimPl`) and in the engine: every read agrees |
+| `rtl-engine` `corpus` (1) | `tests/rtl` (no tool) | six of nine corpus designs pass their `CORPUS_PASS` testbenches; uriscv, pulp-common-cells and vivado-funcsim are refused for the stated reasons; the table is pinned and written to `docs/CORPUS_NATIVE.md`; `irq_ip`, `oled_spi`, `rgb_pwm` elaborate |
+| `rtl-engine` unit (1) | nothing | `timescale` units to picoseconds |
+
+Not covered: 4-state behaviour (none exists); the `backends.pl = "rtl-native"` switch (not wired); a
+differential run against XSim for any design but `my_math_ip`; `$readmemb`; performance; Windows-only
+checks of the XSim path on other hosts.
