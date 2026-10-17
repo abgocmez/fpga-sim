@@ -1,11 +1,19 @@
 //! HDMI and audio codec panels.
 
 use super::{App, dialogs};
-use crate::model::storage_rows;
+use crate::model::{QuantityWidget, storage_rows, toggle_state, toggle_value};
 use eframe::egui::{self, Color32, ColorImage, RichText, TextureOptions};
 
 /// Warning colour for guest writes that reach the host file.
 const WARN: Color32 = Color32::from_rgb(235, 160, 20);
+
+/// The name of a Pmod connector on the board: `JA`..`JE`, `CAM` for the camera connector.
+pub(super) fn pmod_port_name(port: u8) -> &'static str {
+    ["JA", "JB", "JC", "JD", "JE", "CAM"]
+        .get(usize::from(port))
+        .copied()
+        .unwrap_or("?")
+}
 
 /// The storage table: device, image, size, simulated part and access.
 pub(super) fn storage_table(ui: &mut egui::Ui, st: &sim_api::StorageStatus) {
@@ -338,42 +346,51 @@ impl App {
         }
     }
 
-    /// The pictures of the devices on the Pmod ports (the OLED display).
+    /// The Pmod devices: every attached device with its state line, its picture when it has one
+    /// (the OLED display), and the quantities the host may set (a checkbox for a 0/1 level, a
+    /// slider otherwise).
     pub(super) fn devices_panel(&mut self, ui: &mut egui::Ui) {
-        let ports = ["JA", "JB", "JC", "JD", "JE", "CAM"];
-        for (port, kind, state, w, h, rgba) in self.model.device_images.clone() {
-            ui.strong(format!(
-                "{} {}",
-                ports.get(usize::from(port)).copied().unwrap_or("?"),
-                kind
-            ));
-            let img = ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
-            let tex = ui
-                .ctx()
-                .load_texture(format!("device{port}"), img, TextureOptions::NEAREST);
-            let width = ui.available_width().min(w as f32 * 2.5);
-            ui.add(egui::Image::new((
-                tex.id(),
-                egui::vec2(width, width * h as f32 / w as f32),
-            )));
-            ui.label(RichText::new(state).small().color(Color32::GRAY));
-            // What a sensor measures is yours to set.
-            let values = self
+        for row in self.model.device_rows() {
+            let port = row.port;
+            ui.strong(format!("{} {}", pmod_port_name(port), row.kind));
+            if let Some((_, _, _, w, h, rgba)) = self
                 .model
-                .device_values
+                .device_images
                 .iter()
-                .find(|(p, _)| *p == port)
-                .map(|(_, v)| v.clone())
-                .unwrap_or_default();
-            for q in values {
-                let mut v = q.value;
-                let r = ui.add(
-                    egui::Slider::new(&mut v, q.min..=q.max)
-                        .text(format!("{} ({})", q.name, q.unit))
-                        .clamping(egui::SliderClamping::Always),
-                );
-                if r.changed() {
-                    self.model.set_device_value(port, &q.name, v);
+                .find(|d| d.0 == port)
+                .cloned()
+            {
+                let img = ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
+                let tex =
+                    ui.ctx()
+                        .load_texture(format!("device{port}"), img, TextureOptions::NEAREST);
+                let width = ui.available_width().min(w as f32 * 2.5);
+                ui.add(egui::Image::new((
+                    tex.id(),
+                    egui::vec2(width, width * h as f32 / w as f32),
+                )));
+            }
+            ui.label(RichText::new(&row.state).small().color(Color32::GRAY));
+            for (q, widget) in row.quantities {
+                match widget {
+                    QuantityWidget::Toggle => {
+                        let mut on = toggle_state(q.value);
+                        let r = ui.checkbox(&mut on, format!("{} ({})", q.name, q.unit));
+                        if r.changed() {
+                            self.model.set_device_value(port, &q.name, toggle_value(on));
+                        }
+                    }
+                    QuantityWidget::Slider => {
+                        let mut v = q.value;
+                        let r = ui.add(
+                            egui::Slider::new(&mut v, q.min..=q.max)
+                                .text(format!("{} ({})", q.name, q.unit))
+                                .clamping(egui::SliderClamping::Always),
+                        );
+                        if r.changed() {
+                            self.model.set_device_value(port, &q.name, v);
+                        }
+                    }
                 }
             }
         }

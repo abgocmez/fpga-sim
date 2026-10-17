@@ -14,7 +14,7 @@ Status words (verified, implemented-untested, stub) mean what docs/STATUS.md say
 | PS on real firmware | Xilinx QEMU | Vitis install, `C:\Xilinx\Vitis\2022.1`, or `ZYNQSIM_QEMU` |
 | RTL in the PL (XSim) | Vivado | `C:\Xilinx\Vivado\2022.1` (or 2023.1), or `ZYNQSIM_VIVADO` |
 | Verilator | optional | `%TEMP%\zs-tools\verilator\oss-cad-suite\bin`, or `ZYNQSIM_VERILATOR` |
-| Icarus Verilog | optional | the same archive (`iverilog.exe`, `vvp.exe`), or `ZYNQSIM_ICARUS`; then `cargo xtask vpi` |
+| Icarus Verilog | optional | the same archive (`iverilog.exe`, `vvp.exe`), or `ZYNQSIM_ICARUS`; the demo builds the `zynqsim.vpi` module (`cargo xtask vpi`) itself when the compiler is found |
 
 The firmware ELFs are committed in `fixtures/elf`; the demo rebuilds them only if one is missing.
 Run `zynqsim inspect` to see which backends were found. A step that needs a missing tool is reported
@@ -106,18 +106,20 @@ registers need the debugger ("Restart under debugger" is offered). Typing `led 5
 ### 2. oled-demo: the Pmod devices panel and the display picture
 
 ```
-target\release\zynqsim-gui.exe --project examples\oled-demo\project.toml --run-ms 3
+target\release\zynqsim-gui.exe --project examples\oled-demo\project.toml --run-ms 30
 ```
 
-The **Pmod devices** section of the side panel lists `JA oled`, the SSD1306 on Pmod JA. The UART1
-console shows `oled demo: SSD1306 128x32 on Pmod JA through oled_spi`, `sent 512 data bytes`,
+The **Pmod devices** section of the side panel lists `JA oled`, the SSD1306 on Pmod JA, with its
+picture: `ZYNQSIM OLED`, `HELLO FROM RUST`, `PS PL 100 MHZ`, `RESULT: PASS`. The picture is drawn
+once the firmware has written it, so take it after about 30 ms; at 3 ms the picture is still blank.
+The UART1 console shows `oled demo: SSD1306 128x32 on Pmod JA through oled_spi`, `sent 512 data bytes`,
 `RESULT: ALL PASS`. The Pmod JA connector LEDs light on the board picture.
 
-The text on the display itself is not drawn in the GUI in this build. Write the picture with
+The picture is also written to a PNG with
 `zynqsim run --project examples/oled-demo/project.toml --for 3ms --device-out JA=oled.png` (the tour
-step oled-demo does this and checks the PNG).
+step oled-demo does this and checks the PNG header).
 
-Screenshot: `docs/screenshots/oled-demo.png`.
+Screenshot: `docs/screenshots/oled-demo.png` (after 30 ms, viewed).
 
 ### 3. tmp2-demo: the temperature the firmware reads
 
@@ -126,13 +128,19 @@ target\release\zynqsim-gui.exe --project examples\tmp2-demo\project.toml --run-m
 ```
 
 The UART1 console prints `T13 raw=0x0BC0 mC=23500` and `T16 ...` (23.5 degrees C, the default). The
-ADT7420 model answers the firmware's I2C reads. To read another temperature, start the run with
-`--device-set JA.temperature=-12.25` (the tour does this and expects `mC=-12250`), or use the MCP tool
-`pmod_set`. In this build I did not find a slider for it in the GUI; this step is checked by the tour,
-not by hand.
+ADT7420 model answers the firmware's I2C reads.
 
-Screenshot: `docs/screenshots/tmp2-demo.png`: the board after 8 ms, the 2D board with the Pmod JA LEDs,
-the console with the two temperature lines.
+The **Pmod devices** panel lists `JA tmp2` with the sensor's readout picture, its state line and a
+slider `temperature (degC)`. Moving the slider sends the value to the running simulation; the firmware
+sees it at its next read. To start at another temperature, use
+`--device-set JA.temperature=30` (before the run), or the MCP tool `pmod_set`. The CLI flag of the same
+name is checked by `tmp2_demo_reads_the_host_set_temperature_over_i2c` (`-12.25` reads back as
+`mC=-12250`). The panel shows the slider below
+the other sections, so with `--sections cpu=0,source=0,pl=0,pmod=1 --side-scroll 150` it is in view.
+
+Screenshot: `docs/screenshots/tmp2-demo.png` (viewed, 2026-10-17): the sensor at 30 degC set with
+`--device-set`, its readout picture, the slider at 30 and the console `T13 raw=0x0BC0 mC=30000`,
+`T16 raw=0x0BC0 mC=30000`, the 2D board with the Pmod JA LEDs.
 
 ### 4. Waveforms tab
 
@@ -263,13 +271,12 @@ SKIPPED or N/A.
 - **Unmodelled IP** in a Vivado hand-off stops the run with a diagnostic (validation), by design.
 - **SPI and PS GPIO conformance**: SPI is not modelled by default and QEMU maps no PS GPIO at the
   standard address, so those checks are N/A, not PASS (docs/conformance/iic-spi-xadc.md).
-- **Verilator and Icarus**: Verilator is 2-state. Icarus is verified on Windows only, and is not
-  installed on the test machine (its step is SKIPPED there). Neither was run on Linux or macOS.
+- **Verilator and Icarus**: Verilator is 2-state. Icarus is verified on Windows only; the test machine
+  has Icarus Verilog in the portable oss-cad-suite, and the demo builds its VPI module when the compiler
+  is found. Neither was run on Linux or macOS.
   Questa, VCS and Xcelium loading the DPI library are not tested.
 - **Board comparisons**: nothing here is compared with a real Zybo board; pin locations are unverified.
 - **Pcam**: the MIPI CSI-2 link is not simulated; the sensor hands the PL a parallel pixel bus.
-- **The OLED text in the GUI**: the Pmod panel lists the device; the display picture is written with
-  `--device-out` (see section 2).
 
 ## If something fails
 
@@ -375,5 +382,12 @@ no board I/O); both were fixed in the tour and pass in the runs above. The other
 say `--for 5ms` for native-hello and native-thumb; those firmwares print their last line after 20 ms,
 so the tour uses 20 ms.
 
+Icarus after the fix (2026-10-17, same machine): the tour printed `math-icarus SKIPPED (Icarus Verilog
+not found)` because `inspect` reports Icarus found only with its `zynqsim.vpi` module, which the tour
+never built. `cargo xtask demo --only math-icarus,math-verilator` now builds the module and gives
+`math-verilator PASS (1.8s)`, `math-icarus PASS (2.7s)`, one hash group `fnv1a64:c801168503080d41`.
+The full tour table above is from before that fix; re-run the tour to refresh it.
+
 Screenshots in `docs/screenshots/` (each viewed when this document was written): board-demo.png,
-oled-demo.png, waveforms.png, net-demo.png, tmp2-demo.png, rust-debug-registers.png.
+oled-demo.png (2026-10-17, after 30 ms), waveforms.png, net-demo.png, tmp2-demo.png (2026-10-17, the
+slider at 30 degC), rust-debug-registers.png.

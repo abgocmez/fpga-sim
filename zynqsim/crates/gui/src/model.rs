@@ -292,6 +292,45 @@ pub struct VideoFrame {
     pub rgba: Vec<u8>,
 }
 
+/// How the Pmod devices panel shows a quantity the host may set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuantityWidget {
+    /// A slider over the model's range (a temperature, a light level, an acceleration).
+    Slider,
+    /// A checkbox: a 0/1 level (a button or a switch).
+    Toggle,
+}
+
+/// Whether a quantity is a 0/1 level, drawn as a checkbox rather than a slider.
+pub fn is_toggle(q: &sim_api::DeviceValueInfo) -> bool {
+    q.min == 0.0 && q.max == 1.0
+}
+
+/// The value a checkbox sends for its state: 1 when on, 0 when off.
+pub fn toggle_value(on: bool) -> f64 {
+    if on { 1.0 } else { 0.0 }
+}
+
+/// The state a checkbox shows for a 0/1 quantity's value (anything from 0.5 up is on).
+pub fn toggle_state(value: f64) -> bool {
+    value >= 0.5
+}
+
+/// One attached device as the Pmod devices panel draws it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeviceRow {
+    /// Pmod port index: 0..=4 are JA..JE, 5 is CAM.
+    pub port: u8,
+    /// Device kind (`tmp2`, `btn`).
+    pub kind: String,
+    /// One line of the device's state.
+    pub state: String,
+    /// Whether the device has a picture (the OLED, the 8LD).
+    pub has_picture: bool,
+    /// The quantities the host may set, each with its widget.
+    pub quantities: Vec<(sim_api::DeviceValueInfo, QuantityWidget)>,
+}
+
 /// Everything the UI shows and every action it can take.
 pub struct Model {
     /// Control-plane handle.
@@ -556,6 +595,38 @@ impl Model {
             }
         }
         self.note(r);
+    }
+
+    /// Every attached device, as the Pmod devices panel draws it: a device without a picture (a
+    /// sensor) keeps its row, with its state line and the quantities the host may set.
+    pub fn device_rows(&self) -> Vec<DeviceRow> {
+        self.status
+            .devices
+            .iter()
+            .map(|d| DeviceRow {
+                port: d.port,
+                kind: d.kind.clone(),
+                state: d.description.clone(),
+                has_picture: self.device_images.iter().any(|(p, ..)| *p == d.port),
+                quantities: self
+                    .device_values
+                    .iter()
+                    .find(|(p, _)| *p == d.port)
+                    .map(|(_, vs)| {
+                        vs.iter()
+                            .map(|q| {
+                                let w = if is_toggle(q) {
+                                    QuantityWidget::Toggle
+                                } else {
+                                    QuantityWidget::Slider
+                                };
+                                (q.clone(), w)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            })
+            .collect()
     }
 
     /// Sets whether the engine that is running now has a second core, for the
@@ -859,6 +930,30 @@ impl Model {
     }
 }
 
+/// The engine of an example project, built the way the window builds it (QEMU and XSim, the
+/// Pmod devices of its `project.toml`). `None` with a `SKIPPED:` line when Xilinx QEMU, Vivado
+/// XSim or the DPI library (`cargo xtask dpi`) is missing.
+#[cfg(test)]
+pub(crate) fn xsim_model(example: &str) -> Option<Model> {
+    let found = |name: &str| {
+        sim_api::detect_backends()
+            .iter()
+            .any(|b| b.name == name && b.found == Some(true))
+    };
+    if !(found("qemu") && found("xsim") && sim_api::find_dpi_lib().is_some()) {
+        eprintln!("SKIPPED: {example} needs Xilinx QEMU, Vivado XSim and `cargo xtask dpi`");
+        return None;
+    }
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples")
+        .join(example)
+        .join("project.toml");
+    let project = sim_api::Project::load(&file).unwrap();
+    let base = file.parent().unwrap();
+    let engine = project.build_engine(base).unwrap();
+    Some(Model::new(SimClient::spawn_engine(engine)).unwrap())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -888,6 +983,144 @@ mod tests {
         assert!(m.device_values.is_empty());
         m.refresh();
         assert!(m.device_values.is_empty() && m.device_images.is_empty());
+    }
+
+    #[test]
+    fn a_0_1_quantity_is_a_checkbox_and_the_others_are_sliders() {
+        let q = |min: f64, max: f64| sim_api::DeviceValueInfo {
+            name: "x".into(),
+            value: 0.0,
+            unit: "u".into(),
+            min,
+            max,
+        };
+        assert!(is_toggle(&q(0.0, 1.0)), "btn0..3 and sw0..3 are levels");
+        assert!(!is_toggle(&q(0.0, 255.0)), "the light level is a slider");
+        assert!(!is_toggle(&q(-55.0, 150.0)), "a temperature is a slider");
+        assert!(!is_toggle(&q(-1.0, 1.0)), "a range that is not 0..1");
+        // A checkbox sends 1 or 0 and shows the same state back.
+        assert_eq!(toggle_value(true), 1.0);
+        assert_eq!(toggle_value(false), 0.0);
+        assert!(toggle_state(toggle_value(true)));
+        assert!(!toggle_state(toggle_value(false)));
+        assert!(toggle_state(1.0) && !toggle_state(0.0));
+        assert!(!toggle_state(0.4) && toggle_state(0.5));
+    }
+
+    #[test]
+    fn a_device_without_a_picture_keeps_its_row_and_its_slider() {
+        // No engine needed: the demo model with a device the panel is given, with no picture.
+        let mut m = model();
+        m.status.devices = vec![sim_api::DeviceStatus {
+            port: 0,
+            kind: "sensor".into(),
+            description: "a sensor with no picture".into(),
+        }];
+        m.device_values = vec![(
+            0,
+            vec![sim_api::DeviceValueInfo {
+                name: "temperature".into(),
+                value: 23.5,
+                unit: "degC".into(),
+                min: -55.0,
+                max: 125.0,
+            }],
+        )];
+        assert!(m.device_images.is_empty());
+        let rows = m.device_rows();
+        assert_eq!(rows.len(), 1, "listed without a picture");
+        assert!(!rows[0].has_picture);
+        assert_eq!(rows[0].state, "a sensor with no picture");
+        assert_eq!(rows[0].quantities[0].1, QuantityWidget::Slider);
+    }
+
+    #[test]
+    fn the_sensor_on_the_real_engine_lists_its_picture_and_its_slider() {
+        let Some(mut m) = xsim_model("tmp2-demo") else {
+            return;
+        };
+        m.refresh();
+        let rows = m.device_rows();
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!((row.port, row.kind.as_str()), (0, "tmp2"));
+        assert!(row.has_picture, "the ADT7420 draws its readout");
+        assert!(!row.state.is_empty());
+        let [(q, widget)] = row.quantities.as_slice() else {
+            panic!("one quantity: {:?}", row.quantities)
+        };
+        assert_eq!((q.name.as_str(), q.unit.as_str()), ("temperature", "degC"));
+        assert_eq!(*widget, QuantityWidget::Slider);
+        assert!((q.value - 23.5).abs() < 1e-9, "project.toml sets 23.5");
+    }
+
+    #[test]
+    fn a_button_device_gets_checkboxes_and_the_host_setting_reaches_the_firmware() {
+        let Some(mut m) = xsim_model("pmod-simple-demo") else {
+            return;
+        };
+        m.refresh();
+        let rows = m.device_rows();
+        let btn = rows
+            .iter()
+            .find(|r| r.kind == "btn")
+            .expect("the BTN on JB");
+        assert!(btn.quantities.iter().any(|(q, _)| q.name == "btn0"));
+        assert!(
+            btn.quantities
+                .iter()
+                .all(|(_, w)| *w == QuantityWidget::Toggle)
+        );
+        let led = rows
+            .iter()
+            .find(|r| r.kind == "8ld")
+            .expect("the 8LD on JA");
+        assert!(led.has_picture, "the 8LD draws its LEDs");
+
+        // A checkbox move calls `set_device_value` with 1 or 0; the engine takes it and the
+        // value is shown at once, without waiting for the next poll.
+        m.set_device_value(1, "btn0", toggle_value(true));
+        assert!(m.last_error.is_none(), "{:?}", m.last_error);
+        let shown = m.device_rows().into_iter().find(|r| r.port == 1).unwrap();
+        let (q, _) = shown
+            .quantities
+            .iter()
+            .find(|(q, _)| q.name == "btn0")
+            .unwrap();
+        assert_eq!(q.value, 1.0);
+        m.refresh();
+        let after = m.device_rows().into_iter().find(|r| r.port == 1).unwrap();
+        let (q, _) = after
+            .quantities
+            .iter()
+            .find(|(q, _)| q.name == "btn0")
+            .unwrap();
+        assert!(toggle_state(q.value), "the engine kept the press");
+    }
+
+    #[test]
+    fn the_host_sets_a_temperature_and_the_firmware_reads_it_in_the_console() {
+        let Some(mut m) = xsim_model("tmp2-demo") else {
+            return;
+        };
+        m.run_for(6 * sim_api::Ps::PER_MS);
+        m.refresh();
+        assert!(
+            m.console[1].contains("T13 raw=0x0BC0 mC=23500\r\n"),
+            "{}",
+            m.console[1]
+        );
+        // What the slider sends for 80 degC.
+        m.set_device_value(0, "temperature", 80.0);
+        assert!(m.last_error.is_none(), "{:?}", m.last_error);
+        m.run_for(6 * sim_api::Ps::PER_MS);
+        m.refresh();
+        assert!(
+            m.console[1].contains("T16 raw=0x2800 mC=80000\r\n"),
+            "the value set at run time reaches the firmware: {}",
+            m.console[1]
+        );
+        assert_eq!(m.device_rows()[0].quantities[0].0.value, 80.0);
     }
 
     #[test]

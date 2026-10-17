@@ -27,6 +27,7 @@ zynqsim-gui [--project FILE] [--play]
 
 Options for automated checks:
   --toggle N,N     toggle these switches at start-up
+  --device-set JA.temperature=30  set a Pmod device quantity before the run; repeatable
   --run-ms N       advance the simulation by N ms before the window opens
   --exit-after-ms N  close the window after N ms
   --screenshot FILE  save a PNG of the window, then exit
@@ -34,6 +35,7 @@ Options for automated checks:
   --mem ADDR       open the memory viewer at ADDR as a 64x64 image
   --mem-hex        with --mem: show the hex dump instead of the image
   --sections LIST  open or close side-panel sections, e.g. source=0,memory=1
+  --side-scroll PX scroll the side panel's sections down by PX points (for a picture)
   --view3d         start on the 3D board view
   --wave NAME      open the Waveforms tab with this signal shown; repeatable
   --waves-tab      open the Waveforms tab with the default signals
@@ -42,6 +44,26 @@ Options for automated checks:
   --debugger       restart the project under the debugger at start-up; with
                    --screenshot, the picture is taken once the guest has stopped
 ";
+
+/// `PORT.NAME=VALUE` with PORT one of JA..JE, as `--device-set JA.temperature=30`.
+fn parse_device_set(spec: &str) -> Result<(u8, String, f64), String> {
+    let bad = |why: &str| format!("--device-set `{spec}`: {why}");
+    let (target, value) = spec
+        .split_once('=')
+        .ok_or_else(|| bad("expected PORT.NAME=VALUE, e.g. JA.temperature=30"))?;
+    let (port, name) = target
+        .split_once('.')
+        .ok_or_else(|| bad("expected PORT.NAME, e.g. JA.temperature"))?;
+    let port = ["JA", "JB", "JC", "JD", "JE"]
+        .iter()
+        .position(|p| p.eq_ignore_ascii_case(port.trim()))
+        .ok_or_else(|| bad("the port is JA..JE"))?;
+    let value: f64 = value
+        .trim()
+        .parse()
+        .map_err(|_| bad(&format!("`{value}` is not a number")))?;
+    Ok((port as u8, name.trim().to_string(), value))
+}
 
 fn die(msg: &str) -> ! {
     eprintln!("zynqsim-gui: {msg}");
@@ -52,6 +74,7 @@ fn main() -> eframe::Result {
     let mut project: Option<PathBuf> = None;
     let mut play = false;
     let mut toggles: Vec<usize> = Vec::new();
+    let mut device_sets: Vec<(u8, String, f64)> = Vec::new();
     let mut run_ms = 0u64;
     let mut uart_lines: Vec<String> = Vec::new();
     let mut opts = Opts::default();
@@ -87,6 +110,10 @@ fn main() -> eframe::Result {
                     );
                 }
             }
+            "--device-set" => {
+                let spec = value("--device-set");
+                device_sets.push(parse_device_set(&spec).unwrap_or_else(|e| die(&e)));
+            }
             "--run-ms" => {
                 run_ms = value("--run-ms")
                     .parse()
@@ -117,6 +144,11 @@ fn main() -> eframe::Result {
             }
             "--mem-hex" => opts.mem_hex = true,
             "--sections" => sections = Some(value("--sections").replace(',', "\n")),
+            "--side-scroll" => {
+                opts.side_scroll = value("--side-scroll")
+                    .parse()
+                    .unwrap_or_else(|_| die("--side-scroll expects a number"))
+            }
             "-h" | "--help" => {
                 print!("{USAGE}");
                 return Ok(());
@@ -152,6 +184,9 @@ fn main() -> eframe::Result {
     model.set_cpu1_declared(cpu1);
     for i in toggles {
         model.toggle_switch(i);
+    }
+    for (port, name, value) in device_sets {
+        model.set_device_value(port, &name, value);
     }
     if run_ms > 0 {
         model.run_for(run_ms * Ps::PER_MS);
@@ -208,4 +243,25 @@ fn open_project(file: &Path) -> (SimClient, bool) {
     let cpu1 = p.cpu1.is_some();
     let engine = p.build_engine(base).unwrap_or_else(|e| die(&e.message));
     (SimClient::spawn_engine(engine), cpu1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_device_set;
+
+    #[test]
+    fn device_set_takes_a_pmod_port_name_and_a_number() {
+        assert_eq!(
+            parse_device_set("JA.temperature=-12.25"),
+            Ok((0, "temperature".to_string(), -12.25))
+        );
+        assert_eq!(
+            parse_device_set("je.light = 20"),
+            Ok((4, "light".to_string(), 20.0))
+        );
+        assert!(parse_device_set("JF.temperature=1").is_err());
+        assert!(parse_device_set("JA.temperature").is_err());
+        assert!(parse_device_set("temperature=1").is_err());
+        assert!(parse_device_set("JA.temperature=warm").is_err());
+    }
 }

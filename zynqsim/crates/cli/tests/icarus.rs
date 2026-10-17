@@ -41,6 +41,30 @@ fn backend_found(name: &str) -> bool {
         .any(|b| b["name"] == name && b["found"] == true)
 }
 
+/// Whether Icarus Verilog can run. `inspect` reports it found only with the VPI module, so when
+/// the compiler is found and the module is not built yet, the module is built first (as the demo
+/// does) and the check repeats.
+fn icarus_ready() -> bool {
+    if backend_found("icarus") {
+        return true;
+    }
+    if std::env::var("ZYNQSIM_FAST").as_deref() == Ok("1") {
+        return false;
+    }
+    let o = zynqsim(&["--json", "inspect"]);
+    let v: Value = serde_json::from_str(&stdout(&o)).unwrap();
+    let compiler_found = v["backends"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|b| b["name"] == "icarus" && b["path"].is_string());
+    if !compiler_found {
+        return false;
+    }
+    ensure_vpi();
+    backend_found("icarus")
+}
+
 fn workspace() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -126,14 +150,13 @@ fn math_firmware_passes_through_icarus_and_is_compared_with_xsim() {
         eprintln!("SKIPPED: Xilinx QEMU not found (PATH, Xilinx install dirs or ZYNQSIM_QEMU)");
         return;
     }
-    if !backend_found("icarus") {
+    if !icarus_ready() {
         eprintln!(
             "SKIPPED: Icarus Verilog not found (ZYNQSIM_ICARUS, PATH, or unpack the oss-cad-suite \
              archive to <temp>/zs-tools/verilator/oss-cad-suite)"
         );
         return;
     }
-    ensure_vpi();
     ensure_dpi_lib();
     let project = icarus_project();
 

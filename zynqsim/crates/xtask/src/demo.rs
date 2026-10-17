@@ -95,7 +95,9 @@ impl Need {
             Need::Qemu => "Xilinx QEMU not found (Vitis install, or ZYNQSIM_QEMU)",
             Need::Xsim => "Vivado XSim not found (Vivado install, or ZYNQSIM_VIVADO)",
             Need::Verilator => "Verilator not found",
-            Need::Icarus => "Icarus Verilog not found (iverilog and vvp)",
+            Need::Icarus => {
+                "Icarus Verilog not found (iverilog and vvp; ZYNQSIM_ICARUS), or its zynqsim.vpi did not build"
+            }
         }
     }
 }
@@ -911,6 +913,24 @@ pub fn select(steps: Vec<Step>, opts: &Opts) -> Result<Vec<Step>, String> {
         .collect())
 }
 
+/// Runs `zynqsim --json inspect` and parses its output; `None` when it does not print JSON.
+fn run_inspect(root: &Path, zynqsim: &Path) -> Option<Value> {
+    let o = Command::new(zynqsim)
+        .args(["--json", "inspect"])
+        .current_dir(root)
+        .output()
+        .ok()?;
+    serde_json::from_slice(&o.stdout).ok()
+}
+
+/// True when `inspect` finds the Icarus compiler but not the backend: the VPI module is missing.
+pub fn icarus_needs_vpi(inspect: &Value) -> bool {
+    inspect["backends"].as_array().is_some_and(|a| {
+        a.iter()
+            .any(|b| b["name"] == "icarus" && b["path"].is_string() && b["found"] != true)
+    })
+}
+
 /// Parses `zynqsim inspect --json` backends into (name, found) pairs.
 pub fn backend_found(inspect: &Value) -> Vec<(String, bool)> {
     inspect["backends"]
@@ -1478,16 +1498,19 @@ pub fn run(root: &Path, opts: &Opts, build_firmware: &dyn Fn() -> bool) -> bool 
     if !build_firmware() {
         return false;
     }
-    let inspect = Command::new(exe("zynqsim"))
-        .args(["--json", "inspect"])
-        .current_dir(root)
-        .output();
-    let found = match inspect {
-        Ok(o) => serde_json::from_slice::<Value>(&o.stdout)
-            .map(|v| backend_found(&v))
-            .unwrap_or_default(),
-        Err(_) => Vec::new(),
-    };
+    let exe_path = exe("zynqsim");
+    let mut inspect = run_inspect(root, &exe_path);
+    // Icarus counts as found only with its VPI module, which `inspect` does not build: when
+    // the compiler is installed but the module is not, build it here (as the DPI library is
+    // built above) so the step runs instead of being skipped.
+    if inspect.as_ref().is_some_and(icarus_needs_vpi) {
+        eprintln!("\n==> Icarus Verilog found, zynqsim.vpi missing: cargo xtask vpi");
+        if !crate::dist::run_vpi(root) {
+            eprintln!("xtask demo: the VPI module did not build; math-icarus will be SKIPPED");
+        }
+        inspect = run_inspect(root, &exe_path);
+    }
+    let found = inspect.as_ref().map(backend_found).unwrap_or_default();
     let ctx = Ctx {
         root: root.to_path_buf(),
         out: out.clone(),

@@ -50,6 +50,9 @@ pub struct Opts {
     pub trace_text: String,
     /// Open the project window.
     pub project_window: bool,
+    /// Scroll the side panel's sections down by this many points, so a screenshot can show a
+    /// section that is lower down (0 keeps the top).
+    pub side_scroll: f32,
     /// Where relative paths of the project that was opened resolve, and the
     /// project file itself, for the project window.
     pub project: Option<std::path::PathBuf>,
@@ -376,11 +379,14 @@ impl App {
         let avail = ui.available_height();
         const GRIP: f32 = 8.0;
         let trace_h = (avail * self.trace_share).clamp(120.0, (avail - 120.0).max(120.0));
-        egui::ScrollArea::vertical()
+        let mut sections = egui::ScrollArea::vertical()
             .id_salt("side_sections")
             .max_height((avail - trace_h - GRIP).max(0.0))
-            .auto_shrink([false, false])
-            .show(ui, |ui| self.side_sections(ui));
+            .auto_shrink([false, false]);
+        if self.opts.side_scroll > 0.0 {
+            sections = sections.vertical_scroll_offset(self.opts.side_scroll);
+        }
+        sections.show(ui, |ui| self.side_sections(ui));
         // Drag grip between the sections and the trace strip.
         let (rect, grip) =
             ui.allocate_exact_size(egui::vec2(ui.available_width(), GRIP), egui::Sense::drag());
@@ -522,18 +528,14 @@ impl App {
             }
         });
 
-        if !self.model.device_images.is_empty() {
-            let ports = ["JA", "JB", "JC", "JD", "JE", "CAM"];
+        // Every attached device, with or without a picture (a sensor has none).
+        if !self.model.status.devices.is_empty() {
             let summary = self
                 .model
-                .device_images
+                .status
+                .devices
                 .iter()
-                .map(|(port, kind, ..)| {
-                    format!(
-                        "{kind} on {}",
-                        ports.get(usize::from(*port)).copied().unwrap_or("?")
-                    )
-                })
+                .map(|d| format!("{} on {}", d.kind, media::pmod_port_name(d.port)))
                 .collect::<Vec<_>>()
                 .join(", ");
             section(
@@ -2062,6 +2064,90 @@ pub(super) mod tests {
             v.text.is_some(),
             "the firmware source was found: {:?}",
             v.note
+        );
+    }
+
+    /// The demo engine with one Pmod sensor on JA that has no picture: its picture query fails,
+    /// its settable quantity is answered (what the Pmod devices panel must still show).
+    struct SensorNoPicture {
+        sim: sim_api::Simulator,
+    }
+
+    impl Engine for SensorNoPicture {
+        fn def(&self) -> &sim_api::board::BoardDef {
+            self.sim.def()
+        }
+        fn board(&self) -> &sim_api::board::BoardState {
+            self.sim.board()
+        }
+        fn trace(&self) -> &sim_api::trace::TraceLog {
+            self.sim.trace()
+        }
+        fn status(&self, playing: bool) -> sim_api::Status {
+            let mut s = self.sim.status(playing);
+            s.devices = vec![sim_api::DeviceStatus {
+                port: 0,
+                kind: "sensor".into(),
+                description: "a sensor with no picture".into(),
+            }];
+            s
+        }
+        fn command(
+            &mut self,
+            cmd: sim_api::Command,
+        ) -> Result<sim_api::Response, sim_api::ApiError> {
+            self.sim.command(cmd)
+        }
+        fn query(
+            &mut self,
+            q: &sim_api::Query,
+            playing: bool,
+        ) -> Result<sim_api::Response, sim_api::ApiError> {
+            match q {
+                sim_api::Query::Status => {
+                    Ok(sim_api::Response::Status(Box::new(self.status(playing))))
+                }
+                sim_api::Query::DeviceImage { .. } => {
+                    Err(sim_api::ApiError::unsupported("the sensor has no display"))
+                }
+                sim_api::Query::DeviceState { port: 0 } => Ok(sim_api::Response::DeviceState {
+                    port: 0,
+                    kind: "sensor".into(),
+                    description: "a sensor with no picture".into(),
+                    values: vec![sim_api::DeviceValueInfo {
+                        name: "temperature".into(),
+                        value: 23.5,
+                        unit: "degC".into(),
+                        min: -55.0,
+                        max: 125.0,
+                    }],
+                    registers: Vec::new(),
+                }),
+                _ => self.sim.query(q, playing),
+            }
+        }
+        fn run_for(&mut self, d: Ps) -> Result<(), sim_api::ApiError> {
+            Engine::run_for(&mut self.sim, d)
+        }
+    }
+
+    #[test]
+    fn the_pmod_panel_draws_a_device_that_has_no_picture() {
+        // Every device model draws a picture today, so this is the case the panel must still
+        // handle: before the fix, a device without one lost its whole entry (name, state,
+        // slider), because the panel only iterated the pictures.
+        let sim = sim_api::Simulator::new(SimConfig::default()).unwrap();
+        let model = Model::new(SimClient::spawn_engine(Box::new(SensorNoPicture { sim }))).unwrap();
+        let mut h = Harness::with_model(model);
+        h.frame(vec![]);
+        assert!(h.app.model.device_images.is_empty(), "no picture");
+        let rows = h.app.model.device_rows();
+        assert_eq!(rows.len(), 1, "the device is listed");
+        assert_eq!(rows[0].quantities.len(), 1, "with its quantity");
+        assert_eq!(
+            rows[0].quantities[0].1,
+            crate::model::QuantityWidget::Slider,
+            "drawn as a slider"
         );
     }
 }

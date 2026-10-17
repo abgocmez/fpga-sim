@@ -8,6 +8,7 @@
 //! The VPI module is `zynqsim.vpi`: `ZYNQSIM_VPI` (a file), then `target/vpi/release` of the
 //! tree the executable or the working directory is in (`cargo xtask vpi`).
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 /// What was found.
@@ -41,29 +42,33 @@ fn from_explicit(p: &Path) -> Option<PathBuf> {
     None
 }
 
-/// The first directory on `PATH` that holds `name.exe`.
-fn on_path(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
+/// The first directory in the search path `path` that holds `name.exe`.
+fn on_path(path: Option<&OsStr>, name: &str) -> Option<PathBuf> {
+    std::env::split_paths(path?)
         .map(|d| d.join(format!("{name}.exe")))
         .find(|p| p.is_file())
 }
 
-/// The default folder of the unpacked oss-cad-suite archive, if it exists.
-fn default_suite() -> Option<PathBuf> {
-    let mut p = std::env::temp_dir();
-    for part in DEFAULT_TOOLS_DIR {
-        p.push(part);
-    }
-    p.is_dir().then_some(p)
+/// Finds Icarus Verilog with the process environment: see [`find_in`].
+pub fn find() -> Option<IcarusTools> {
+    find_in(
+        std::env::var_os("ZYNQSIM_ICARUS").as_deref(),
+        std::env::var_os("PATH").as_deref(),
+        &std::env::temp_dir(),
+    )
 }
 
-/// Finds Icarus Verilog. `None` when `iverilog.exe` (and `vvp.exe` beside it) is not found.
-pub fn find() -> Option<IcarusTools> {
-    let iverilog = std::env::var_os("ZYNQSIM_ICARUS")
-        .and_then(|v| from_explicit(Path::new(&v)))
-        .or_else(|| on_path("iverilog"))
-        .or_else(|| in_dir(&default_suite()?.join("bin"), "iverilog.exe"))?;
+/// The lookup of [`find`] with its inputs given, so the order can be tested with fake folders:
+/// `ZYNQSIM_ICARUS` (a file or a folder), then `PATH`, then `<temp>/zs-tools/verilator/oss-cad-suite/bin`.
+/// `None` when `iverilog.exe` (and `vvp.exe` beside it) is not found.
+pub fn find_in(explicit: Option<&OsStr>, path: Option<&OsStr>, temp: &Path) -> Option<IcarusTools> {
+    let suite = DEFAULT_TOOLS_DIR
+        .iter()
+        .fold(temp.to_path_buf(), |p, part| p.join(part));
+    let iverilog = explicit
+        .and_then(|v| from_explicit(Path::new(v)))
+        .or_else(|| on_path(path, "iverilog"))
+        .or_else(|| in_dir(&suite.join("bin"), "iverilog.exe"))?;
     let bin = iverilog.parent()?.to_path_buf();
     let vvp = in_dir(&bin, "vvp.exe")?;
     let mut tool_dirs = vec![bin.clone()];
@@ -120,5 +125,50 @@ mod tests {
             Some(dir.join("bin").join("iverilog.exe"))
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Writes `iverilog.exe` and `vvp.exe` into `dir/bin` (a fake install) and returns `dir`.
+    fn fake_install(dir: &Path) -> PathBuf {
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("iverilog.exe"), b"MZ").unwrap();
+        std::fs::write(bin.join("vvp.exe"), b"MZ").unwrap();
+        bin
+    }
+
+    #[test]
+    fn the_lookup_order_is_explicit_then_path_then_the_default_archive() {
+        let root = std::env::temp_dir().join(format!("zs-icarus-order-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let temp = root.join("temp");
+        let suite = fake_install(&temp.join("zs-tools/verilator/oss-cad-suite"));
+        let on_path = fake_install(&root.join("path-install"));
+        let explicit = fake_install(&root.join("explicit"));
+        let path = std::env::join_paths([root.join("empty"), on_path.clone()]).unwrap();
+        let explicit_dir = root.join("explicit").into_os_string();
+
+        // Nothing given, nothing installed in the default archive: not found.
+        assert_eq!(find_in(None, None, &root.join("nowhere")), None);
+        // The default archive is the last resort.
+        assert_eq!(
+            find_in(None, None, &temp).map(|t| t.iverilog),
+            Some(suite.join("iverilog.exe"))
+        );
+        // PATH comes before the default archive.
+        assert_eq!(
+            find_in(None, Some(&path), &temp).map(|t| t.iverilog),
+            Some(on_path.join("iverilog.exe"))
+        );
+        // ZYNQSIM_ICARUS (a folder holding bin\iverilog.exe) comes before PATH.
+        let found = find_in(Some(&explicit_dir), Some(&path), &temp).unwrap();
+        assert_eq!(found.iverilog, explicit.join("iverilog.exe"));
+        assert_eq!(found.vvp, explicit.join("vvp.exe"));
+        // A compiler without vvp beside it is not a usable install, and the search does not go on
+        // to the next place (the explicit choice wins).
+        let bare = root.join("bare");
+        std::fs::create_dir_all(&bare).unwrap();
+        std::fs::write(bare.join("iverilog.exe"), b"MZ").unwrap();
+        assert_eq!(find_in(Some(bare.as_os_str()), None, &temp), None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
