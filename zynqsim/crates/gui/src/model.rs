@@ -564,10 +564,18 @@ impl Model {
         self.cpu1_declared = declared;
     }
 
-    /// Reads the registers when (and only when) the guest is stopped. The
+    /// Whether the registers can be read now: while the guest is stopped under
+    /// the debugger, or at any time on the native engine when it is not running
+    /// (ADR-033). QEMU answers only at a stop (ADR-007).
+    pub fn registers_readable(&self) -> bool {
+        let stopped = self.status.debug.as_ref().is_some_and(|d| d.stopped);
+        stopped || (self.status.ps_backend == "native" && !self.status.playing)
+    }
+
+    /// Reads the registers when [`Model::registers_readable`] says so. The
     /// registers of the stop before are kept, to mark what changed.
     fn refresh_cpu(&mut self) {
-        let stopped = self.status.debug.as_ref().is_some_and(|d| d.stopped);
+        let stopped = self.registers_readable();
         if !stopped {
             for core in 0..2usize {
                 if let Some(r) = self.cpu_regs[core].take() {

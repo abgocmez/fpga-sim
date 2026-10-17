@@ -1,6 +1,7 @@
 //! The egui front end: board view, control bar, console and info panels.
 
 mod cpu;
+mod debugger;
 mod dialogs;
 mod media;
 mod memory;
@@ -19,6 +20,7 @@ use eframe::egui::{
     TextureOptions, pos2, vec2,
 };
 use sections::{SectionState, section};
+use shell::Action;
 use sim_api::Ps;
 use sim_api::board::{BoardState, Camera, Hit, hit_test, render};
 use sim_api::trace::{TraceEvent, TraceRecord};
@@ -57,6 +59,9 @@ pub struct Opts {
     pub prefs_path: Option<std::path::PathBuf>,
     /// Open the keyboard shortcuts window.
     pub show_shortcuts: bool,
+    /// Restart the project under the debugger at start-up, and save the
+    /// screenshot only once it has stopped (`--debugger`).
+    pub restart_debugger: bool,
 }
 
 /// How the memory viewer shows its data.
@@ -128,6 +133,14 @@ pub struct App {
     shell: shell::Shell,
     /// Which side-panel sections are open (remembered between runs).
     sections: SectionState,
+    /// Set while the frame draws the debugger offer, and where its restart
+    /// button was drawn (the tests look at both).
+    #[cfg_attr(not(test), allow(dead_code))]
+    offer_drawn: bool,
+    #[cfg_attr(not(test), allow(dead_code))]
+    offer_button: Option<Rect>,
+    /// The `--debugger` restart has been asked for.
+    restart_requested: bool,
 }
 
 impl App {
@@ -217,6 +230,9 @@ impl App {
             trace_share: 0.35,
             shell,
             sections: SectionState::default(),
+            offer_drawn: false,
+            offer_button: None,
+            restart_requested: false,
         }
     }
 
@@ -294,7 +310,15 @@ impl App {
                 if ui.button("Pause").clicked() {
                     self.model.pause();
                 }
-            } else if ui.button("Play").clicked() {
+            } else if ui
+                .button(self.run_label())
+                .on_hover_text(if self.halted() {
+                    "Resume the guest; it runs on to the next breakpoint"
+                } else {
+                    "Run the simulation in real time"
+                })
+                .clicked()
+            {
                 self.model.play();
             }
             if ui
@@ -418,19 +442,24 @@ impl App {
         ui.label(RichText::new(&s.trace_hash).monospace().small());
         ui.separator();
 
+        // Opened by itself while the registers are missing for want of the
+        // debugger, so the offer to restart is in view.
+        self.offer_drawn = false;
+        self.offer_button = None;
         let stopped = self.model.cpu_regs[0].is_some();
         let cpu_summary = cpu::summary(
             self.model.cpu_regs[0].as_ref(),
             self.model.status.debug.is_some(),
         );
+        let mut picked: Option<Action> = None;
         section(
             ui,
             &mut sections,
             "cpu",
             "CPU registers",
             &cpu_summary,
-            stopped,
-            |ui| self.cpu_registers(ui),
+            stopped || self.restart_offered(),
+            |ui| picked = self.cpu_registers(ui),
         );
 
         // The source line of the stopped pc, when the ELF has line info.
@@ -443,6 +472,12 @@ impl App {
         });
         let has_source = source.is_some();
         let source_summary = source.unwrap_or_else(|| "no line information".to_string());
+        // The pc of the stopped core 0, for the panel's "no line" text.
+        let stopped_pc = self.model.cpu_regs[0].as_ref().map(|r| {
+            r.pc_symbol
+                .clone()
+                .unwrap_or_else(|| format!("pc {:#010x}", r.r[15]))
+        });
         section(
             ui,
             &mut sections,
@@ -453,11 +488,18 @@ impl App {
                 "Source"
             },
             &source_summary,
-            has_source,
+            has_source || self.restart_offered(),
             |ui| {
-                crate::source_view::show(ui, &mut self.model.source);
+                if !has_source && self.restart_offered() && picked.is_none() {
+                    picked = self.debugger_button(ui);
+                }
+                crate::source_view::show(ui, &mut self.model.source, stopped_pc.as_deref());
             },
         );
+        if let Some(a) = picked {
+            let ctx = ui.ctx().clone();
+            self.run_action(&ctx, a);
+        }
 
         egui::CollapsingHeader::new("PL (bus accesses)").show(ui, |ui| {
             let bus: Vec<&TraceRecord> = self
@@ -989,9 +1031,16 @@ impl App {
 
     fn lifecycle(&mut self, ctx: &egui::Context) {
         self.frames += 1;
+        if self.opts.restart_debugger && !self.restart_requested && self.frames >= 2 {
+            self.restart_requested = true;
+            self.restart_under_debugger(true);
+        }
         if let Some(path) = self.opts.screenshot.clone() {
-            // Give the first frames time to render before capturing.
-            if self.frames >= 30 && !self.screenshot_requested {
+            // Give the first frames time to render before capturing; with
+            // `--debugger`, wait for the restarted guest to stop at its breakpoint.
+            let debugger_ready = !self.opts.restart_debugger
+                || (self.restart_requested && self.model.load.is_none() && self.halted());
+            if self.frames >= 30 && debugger_ready && !self.screenshot_requested {
                 self.screenshot_requested = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
             }
@@ -1183,7 +1232,12 @@ pub(super) mod tests {
 
     impl Harness {
         pub(super) fn new() -> Harness {
-            let model = Model::new(SimClient::spawn(SimConfig::default()).unwrap()).unwrap();
+            Harness::with_model(
+                Model::new(SimClient::spawn(SimConfig::default()).unwrap()).unwrap(),
+            )
+        }
+
+        pub(super) fn with_model(model: Model) -> Harness {
             let mut h = Harness {
                 ctx: egui::Context::default(),
                 app: App::new(model, Opts::default()),
@@ -1711,5 +1765,299 @@ pub(super) mod tests {
             },
         };
         assert!(describe(&r).contains("\\x0d"));
+    }
+
+    // ---- the debugger offer and the restart (ADR-007, ADR-013, ADR-033) ----
+
+    use sim_api::Engine;
+
+    /// The demo engine reported as a QEMU run: `debug` is what the status says
+    /// about the debugger. No registers are answered, as QEMU does without one.
+    struct QemuLike {
+        sim: sim_api::Simulator,
+        debug: Option<sim_api::DebugStatus>,
+    }
+
+    impl Engine for QemuLike {
+        fn def(&self) -> &sim_api::board::BoardDef {
+            self.sim.def()
+        }
+        fn board(&self) -> &sim_api::board::BoardState {
+            self.sim.board()
+        }
+        fn trace(&self) -> &sim_api::trace::TraceLog {
+            self.sim.trace()
+        }
+        fn status(&self, playing: bool) -> sim_api::Status {
+            let mut s = self.sim.status(playing);
+            s.ps_backend = "qemu".to_string();
+            s.debug = self.debug.clone();
+            s
+        }
+        fn command(
+            &mut self,
+            cmd: sim_api::Command,
+        ) -> Result<sim_api::Response, sim_api::ApiError> {
+            self.sim.command(cmd)
+        }
+        fn query(
+            &mut self,
+            q: &sim_api::Query,
+            playing: bool,
+        ) -> Result<sim_api::Response, sim_api::ApiError> {
+            if let sim_api::Query::Status = q {
+                return Ok(sim_api::Response::Status(Box::new(self.status(playing))));
+            }
+            self.sim.query(q, playing)
+        }
+        fn run_for(&mut self, d: Ps) -> Result<(), sim_api::ApiError> {
+            Engine::run_for(&mut self.sim, d)
+        }
+    }
+
+    fn qemu_like(debug: Option<sim_api::DebugStatus>) -> Model {
+        let sim = sim_api::Simulator::new(SimConfig::default()).unwrap();
+        Model::new(SimClient::spawn_engine(Box::new(QemuLike { sim, debug }))).unwrap()
+    }
+
+    /// A draft of one of the examples (not built).
+    fn example(name: &str) -> ProjectDraft {
+        let file = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples")
+            .join(name)
+            .join("project.toml");
+        ProjectDraft::load(&file).unwrap()
+    }
+
+    fn elf_of(name: &str) -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/elf")
+            .join(name)
+    }
+
+    /// The address range of an ELF's `.text` section.
+    fn text_range(elf: &std::path::Path) -> (u64, u64) {
+        use object::{Object, ObjectSection};
+        let bytes = std::fs::read(elf).unwrap();
+        let file = object::File::parse(&*bytes).unwrap();
+        let text = file.section_by_name(".text").expect("a .text section");
+        (text.address(), text.address() + text.size())
+    }
+
+    fn qemu_present() -> bool {
+        std::env::var_os("ZYNQSIM_QEMU").is_some()
+            || sim_api::locate_binary("qemu-system-aarch64").is_some()
+    }
+
+    /// Frames until the background build has finished, successfully or not.
+    fn wait_for_build(h: &mut Harness, seconds: u64) {
+        let start = Instant::now();
+        while h.app.model.loading().is_some() {
+            h.frame(vec![]);
+            assert!(start.elapsed().as_secs() < seconds, "build did not finish");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        h.frame(vec![]);
+    }
+
+    /// Frames until the guest is stopped at a breakpoint.
+    fn wait_for_stop(h: &mut Harness, seconds: u64) {
+        let start = Instant::now();
+        while !h.app.halted() {
+            h.frame(vec![]);
+            assert!(
+                start.elapsed().as_secs() < seconds,
+                "the guest did not stop"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        h.frame(vec![]);
+    }
+
+    #[test]
+    fn the_debugger_offer_is_drawn_for_a_qemu_run_without_debug() {
+        let mut h = Harness::with_model(qemu_like(None));
+        h.app.draft = example("rust-hello");
+        h.frame(vec![]);
+        assert!(h.app.restart_offered());
+        assert!(h.app.offer_drawn, "drawn where the registers would be");
+        assert!(h.app.offer_button.is_some(), "with its restart button");
+        assert!(
+            h.app.native_possible(),
+            "rust-hello is PS only, so the native button is offered too"
+        );
+        assert!(h.app.model.cpu_regs[0].is_none(), "nothing is asked for");
+
+        // A project with PL cannot move to the native engine: no native button.
+        h.app.draft = example("board-demo");
+        assert!(!h.app.native_possible());
+        assert_eq!(h.app.run_label(), "Play");
+
+        // With the debugger attached there is nothing to offer, and the run
+        // button says Continue while the guest is stopped.
+        let stopped = sim_api::DebugStatus {
+            stopped: true,
+            ..Default::default()
+        };
+        let mut h = Harness::with_model(qemu_like(Some(stopped)));
+        h.frame(vec![]);
+        assert!(!h.app.restart_offered());
+        assert!(!h.app.offer_drawn);
+        assert!(h.app.under_debugger());
+        assert_eq!(h.app.run_label(), "Continue");
+    }
+
+    #[test]
+    fn the_restart_is_the_draft_with_the_debugger_and_a_start_breakpoint() {
+        let mut h = Harness::with_model(qemu_like(None));
+        h.app.draft = example("rust-hello");
+        let on = h.app.debugger_project(true).unwrap();
+        let d = on.debug.expect("a debug section");
+        assert!(d.enabled);
+        assert_eq!(
+            d.breakpoints,
+            vec!["main".to_string()],
+            "rust_hello has main"
+        );
+        assert_eq!(
+            on.cpu0,
+            h.app.draft.to_project().unwrap().cpu0,
+            "same firmware"
+        );
+        assert_eq!(
+            on.backends,
+            h.app.draft.to_project().unwrap().backends,
+            "same backends"
+        );
+        let off = h.app.debugger_project(false).unwrap();
+        assert!(
+            off.debug.is_none_or(|d| !d.enabled),
+            "rust-hello: no debugger"
+        );
+        // The draft, and so the project file, is unchanged.
+        assert!(h.app.draft.base.debug.is_none());
+        assert!(h.app.draft.to_project().unwrap().debug.is_none());
+        // A draft with a problem is refused with the problem, not built.
+        h.app.draft.cpu0.clear();
+        assert!(h.app.debugger_project(true).is_err());
+        // Nothing to stop at (the file is not an ELF): refused, not run to nowhere.
+        h.app.draft = example("rust-hello");
+        h.app.draft.cpu0 = "../../README.md".to_string();
+        let err = h.app.debugger_project(true).unwrap_err();
+        assert!(err.contains("breakpoint") || err.contains("cpu0"), "{err}");
+    }
+
+    #[test]
+    fn the_restart_button_starts_the_debugger_build_of_the_current_project() {
+        let mut h = Harness::with_model(qemu_like(None));
+        h.app.draft = example("rust-hello");
+        h.frame(vec![]);
+        let at = h.app.offer_button.expect("the restart button is drawn");
+        h.click(at.center());
+        assert!(
+            h.app.model.loading().is_some(),
+            "the build of the debugger project is in the background"
+        );
+        // Whatever the machine has: the build ends with a swapped engine or an error.
+        wait_for_build(&mut h, 240);
+        assert!(h.app.model.generation > 0 || h.app.model.load_error.is_some());
+    }
+
+    #[test]
+    fn the_native_engine_answers_registers_while_paused() {
+        let mut h = Harness::new();
+        h.app.draft = example("rust-hello");
+        assert!(h.app.native_possible());
+        h.app.use_native_engine();
+        wait_for_engine(&mut h, 0);
+        assert_eq!(h.app.model.status.ps_backend, "native");
+        h.app.model.run_for(Ps::PER_MS);
+        h.frame(vec![]);
+        assert!(!h.app.model.status.playing, "paused: registers are read");
+        let r = h.app.model.cpu_regs[0]
+            .clone()
+            .expect("the native engine answers at any time");
+        let (lo, hi) = text_range(&elf_of("rust_hello.elf"));
+        assert!(
+            (lo..hi).contains(&u64::from(r.r[15])),
+            "pc {:#x} is in .text {lo:#x}..{hi:#x}",
+            r.r[15]
+        );
+        // Not a debugger stop: no restart offer, and no Continue label.
+        assert!(!h.app.restart_offered());
+        assert_eq!(h.app.run_label(), "Play");
+    }
+
+    #[test]
+    fn the_qemu_restart_runs_rust_hello_to_main_and_shows_registers() {
+        if !qemu_present() {
+            eprintln!("SKIPPED: needs the Xilinx QEMU (qemu-system-aarch64)");
+            return;
+        }
+        let mut h = Harness::new();
+        h.app.draft = example("rust-hello");
+        // The project as the window builds it: no debugger.
+        h.app.build_draft("rust-hello");
+        wait_for_engine(&mut h, 0);
+        assert_eq!(h.app.model.status.ps_backend, "qemu");
+        assert!(h.app.model.status.debug.is_none());
+        assert!(h.app.model.cpu_regs[0].is_none());
+        assert!(h.app.restart_offered());
+
+        // One click's worth of work: rebuild with the debugger, run to the first stop.
+        let g = h.app.model.generation;
+        h.app.restart_under_debugger(true);
+        wait_for_engine(&mut h, g);
+        wait_for_stop(&mut h, 120);
+        assert!(h.app.under_debugger());
+        assert!(
+            !h.app.restart_offered(),
+            "the offer goes once the debugger is on"
+        );
+
+        let regs = h.app.model.cpu_regs[0]
+            .clone()
+            .expect("registers at the first stop");
+        let elf = elf_of("rust_hello.elf");
+        let (lo, hi) = text_range(&elf);
+        assert!(
+            (lo..hi).contains(&u64::from(regs.r[15])),
+            "pc {:#x} is in .text {lo:#x}..{hi:#x}",
+            regs.r[15]
+        );
+        assert_eq!(regs.pc_symbol.as_deref(), Some("main"), "stopped at main");
+        assert!(
+            h.app.model.source.view.is_none(),
+            "rust_hello has no line information: the panel says so"
+        );
+        assert!(h.app.model.status.debug.as_ref().unwrap().stops >= 1);
+    }
+
+    #[test]
+    fn the_qemu_restart_shows_the_source_line_of_rust_debug() {
+        if !qemu_present() {
+            eprintln!("SKIPPED: needs the Xilinx QEMU (qemu-system-aarch64)");
+            return;
+        }
+        let mut h = Harness::new();
+        h.app.draft = example("rust-debug");
+        // The project's own [debug] breakpoint (main.rs:19) is kept by the restart.
+        h.app.restart_under_debugger(true);
+        wait_for_engine(&mut h, 0);
+        wait_for_stop(&mut h, 120);
+        let v = h
+            .app
+            .model
+            .source
+            .view
+            .clone()
+            .expect("the stop has a source line");
+        assert!(v.file.ends_with("main.rs"), "{}", v.file);
+        assert_eq!(v.line, 19, "stopped at the breakpoint on line 19");
+        assert!(
+            v.text.is_some(),
+            "the firmware source was found: {:?}",
+            v.note
+        );
     }
 }

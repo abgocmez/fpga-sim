@@ -130,6 +130,16 @@ impl Symbols {
     }
 }
 
+/// The entry point (`e_entry`) of a 32-bit little-endian ELF file, or `None`
+/// when the file is not one.
+pub fn entry_point(path: &Path) -> Option<u32> {
+    let d = std::fs::read(path).ok()?;
+    if d.len() < 52 || &d[..4] != b"\x7fELF" || d[4] != 1 || d[5] != 1 {
+        return None;
+    }
+    u32_at(&d, 24).filter(|e| *e != 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

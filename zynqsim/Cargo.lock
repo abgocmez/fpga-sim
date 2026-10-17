@@ -5100,6 +5100,7 @@ version = "0.1.0"
 dependencies = [
  "cpal",
  "eframe",
+ "object",
  "rfd",
  "serde",
  "serde_json",

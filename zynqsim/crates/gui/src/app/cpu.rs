@@ -2,6 +2,7 @@
 //! changed since the guest last ran.
 
 use super::App;
+use super::shell::Action;
 use eframe::egui::{self, Color32, RichText};
 use sim_api::CpuRegs;
 
@@ -44,42 +45,50 @@ pub fn summary(regs: Option<&CpuRegs>, debugger: bool) -> String {
 }
 
 impl App {
-    /// Registers of core 0, and of core 1 when the project declares one.
-    pub(super) fn cpu_registers(&self, ui: &mut egui::Ui) {
-        let m = &self.model;
-        let cores = if m.cpu1_declared { 2 } else { 1 };
+    /// Registers of core 0, and of core 1 when the project declares one. When
+    /// core 0 has none because the QEMU run lacks the debugger, the debugger
+    /// offer is drawn instead of the reason; returns the button pressed.
+    pub(super) fn cpu_registers(&mut self, ui: &mut egui::Ui) -> Option<Action> {
+        let cores = if self.model.cpu1_declared { 2 } else { 1 };
+        let mut picked = None;
         for core in 0..cores {
-            if m.cpu1_declared {
+            if self.model.cpu1_declared {
                 ui.label(RichText::new(format!("CPU {core}")).strong());
             }
-            match &m.cpu_regs[core] {
-                Some(r) => {
-                    flags_row(ui, r.cpsr, &r.mode);
-                    if r.r.iter().all(|v| *v == 0) {
-                        ui.label(
-                            RichText::new("all registers are zero: nothing has run on this core")
-                                .color(GRAY)
-                                .small(),
-                        );
-                    }
-                    if let Some(s) = &r.pc_symbol {
-                        ui.label(RichText::new(format!("pc in {s}")).strong());
-                    }
-                    register_grid(ui, r, &m.cpu_changed[core]);
+            if let Some(r) = self.model.cpu_regs[core].as_ref() {
+                flags_row(ui, r.cpsr, &r.mode);
+                if r.r.iter().all(|v| *v == 0) {
                     ui.label(
-                        RichText::new(format!("cpsr {:08x}", r.cpsr))
-                            .monospace()
+                        RichText::new("all registers are zero: nothing has run on this core")
+                            .color(GRAY)
                             .small(),
                     );
                 }
-                None => {
-                    ui.label(RichText::new(&self.cpu_reason[core]).color(GRAY).small());
+                if let Some(s) = &r.pc_symbol {
+                    ui.label(RichText::new(format!("pc in {s}")).strong());
                 }
+                register_grid(ui, r, &self.model.cpu_changed[core]);
+                ui.label(
+                    RichText::new(format!("cpsr {:08x}", r.cpsr))
+                        .monospace()
+                        .small(),
+                );
+            } else if core == 0 && self.restart_offered() {
+                picked = self.debugger_offer(ui);
+            } else if core == 0 && self.model.status.ps_backend == "native" {
+                ui.label(
+                    RichText::new("running: the registers are read when the simulation is paused")
+                        .color(GRAY)
+                        .small(),
+                );
+            } else {
+                ui.label(RichText::new(&self.cpu_reason[core]).color(GRAY).small());
             }
             if core + 1 < cores {
                 ui.add_space(6.0);
             }
         }
+        picked
     }
 }
 
