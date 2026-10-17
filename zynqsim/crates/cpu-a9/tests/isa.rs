@@ -434,13 +434,19 @@ fn cp15_identification_control_and_maintenance_registers() {
 }
 
 #[test]
-fn enabling_the_mmu_stops_the_core_rather_than_running_untranslated() {
+fn enabling_the_mmu_with_no_tables_takes_a_prefetch_abort() {
+    // SCTLR.M is set with TTBR0 = 0, so the first-level walk reads address 0, which this
+    // bus does not map: a synchronous external abort on a first-level walk (IFSR 0x0C).
+    // The MMU itself is tested in `tests/mmu.rs`.
     let mut m = machine(PROG_MMU);
     m.run(2);
-    match m.step() {
-        StepResult::Unimplemented { pc, .. } => assert_eq!(pc, CODE + 8),
-        other => panic!("expected Unimplemented, got {other:?}"),
-    }
+    assert_eq!(m.event(), Some(Event::PrefetchAbort { addr: CODE + 8 }));
+    assert_eq!(
+        m.cpu.cp15(0, 5, 0, 1),
+        Some(0x0C),
+        "IFSR: walk, first level"
+    );
+    assert_eq!(m.cpu.cp15(0, 6, 0, 2), Some(CODE + 8), "IFAR");
 }
 
 #[test]
