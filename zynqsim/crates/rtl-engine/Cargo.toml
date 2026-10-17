@@ -1,0 +1,18 @@
+[package]
+name = "rtl-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rtl-frontend = { path = "../rtl-frontend" }
+pl-native = { path = "../pl-native" }
+
+[dev-dependencies]
+# Only the differential test against Vivado XSim (tests/xsim_diff.rs) uses these.
+backend-rtl-xsim = { path = "../backend-rtl-xsim" }
+pl-api = { path = "../pl-api" }
