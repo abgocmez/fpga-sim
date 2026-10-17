@@ -281,6 +281,29 @@ mod tests {
     }
 
     #[test]
+    fn my_math_ip_on_the_rtl_engine_answers_on_the_ps_bus() {
+        let src = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/rtl/math/my_math_ip.v");
+        let spec = crate::RtlNativeSpec {
+            top: "my_math_ip".into(),
+            sources: vec![src],
+            defines: Vec::new(),
+            gp: 0,
+            base: 0x43C0_0000,
+            irqs: Vec::new(),
+        };
+        let target = crate::pl_attach::rtl_native_target(&spec).expect("elaborates");
+        let handle = new_handle(target);
+        let mut bus = SystemBus::new(0x2000_0000).unwrap();
+        attach(&mut bus, &handle).unwrap();
+        bus.write(0x43C0_0000, 4, 21).unwrap();
+        assert_eq!(bus.read(0x43C0_0004, 4).unwrap(), 42, "reg1 = reg0 * 2");
+        assert_eq!(bus.read(0x43C0_0000, 4).unwrap(), 21);
+        let ev = lock(&handle).events_since_last_call();
+        assert_eq!(ev.len(), 3);
+    }
+
+    #[test]
     fn the_pl_clock_follows_the_cpu_cycles_the_bus_ticks() {
         let handle = new_handle(Box::new(NativePl::new()));
         let mut bus = SystemBus::new(0x2000_0000).unwrap();

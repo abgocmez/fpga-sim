@@ -1,0 +1,65 @@
+# The GPIO, timer and UART Lite firmware of examples/gpio-timer-uart on the native PS
+# (ADR-035): no Xilinx QEMU, no XSim. The vendor-ip models (AXI GPIO, AXI Timer, AXI UART Lite)
+# are the same native PL as the QEMU example, on the GP0 window of the native PS.
+#
+#   zynqsim run --project examples/native-gpio-timer-uart/project.toml --for 6ms
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "native"
+pl = "native"
+
+[sim]
+quantum_ns = 1000
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_gpio_timer_uart.elf"
+
+[native]
+axi_gpio_0 = "axi_gpio"
+axi_gpio_1 = "axi_gpio"
+axi_timer_0 = "axi_timer"
+axi_uartlite_0 = "axi_uartlite"
+
+[native_params.axi_gpio_0]
+C_GPIO_WIDTH = 4
+C_ALL_OUTPUTS = 1
+ADDRESS_SIZE = "0x10000"
+
+[native_params.axi_gpio_1]
+C_IS_DUAL = 1
+C_GPIO_WIDTH = 4
+C_ALL_INPUTS = 1
+C_GPIO2_WIDTH = 4
+C_ALL_INPUTS_2 = 1
+C_INTERRUPT_PRESENT = 1
+ADDRESS_SIZE = "0x10000"
+
+[native_params.axi_timer_0]
+C_COUNT_WIDTH = 32
+CLK_FREQ_HZ = 100000000
+ADDRESS_SIZE = "0x10000"
+
+[native_params.axi_uartlite_0]
+C_BAUDRATE = 115200
+C_DATA_BITS = 8
+C_USE_PARITY = 0
+ADDRESS_SIZE = "0x10000"
+
+[connect]
+"axi_gpio_0.S_AXI" = "M_AXI_GP0@0x41200000"
+"axi_gpio_0.GPIO" = "board.leds"
+"axi_gpio_1.S_AXI" = "M_AXI_GP0@0x41210000"
+"axi_gpio_1.GPIO" = "board.sw"
+"axi_gpio_1.GPIO2" = "board.btn"
+"axi_gpio_1.ip2intc_irpt" = "IRQ_F2P[1]"
+"axi_timer_0.S_AXI" = "M_AXI_GP0@0x42800000"
+"axi_timer_0.interrupt" = "IRQ_F2P[0]"
+"axi_uartlite_0.S_AXI" = "M_AXI_GP0@0x40600000"
+"axi_uartlite_0.interrupt" = "IRQ_F2P[2]"
