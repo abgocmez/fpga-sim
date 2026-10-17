@@ -2,7 +2,7 @@
 # (ADR-035): no Xilinx QEMU, no XSim. The vendor-ip models (AXI GPIO, AXI Timer, AXI UART Lite)
 # are the same native PL as the QEMU example, on the GP0 window of the native PS.
 #
-#   zynqsim run --project examples/native-gpio-timer-uart/project.toml --for 6ms
+#   zynqsim run --project examples/native-gpio-timer-uart/project.toml --for 60ms
 schema_version = 1
 
 [board]

@@ -57,7 +57,7 @@ fn errors_of(text: &str) -> Vec<String> {
 fn native_project(backends: &str, extra: &str) -> String {
     format!(
         "schema_version = 1\n[board]\nname = \"zybo-z7-20\"\n[backends]\n{backends}\n\
-         [boot]\nmode = \"elf\"\n[cpu0]\nelf = \"fw.elf\"\n{extra}"
+         [boot]\nmode = \"elf\"\n[cpu0]\nelf = \"../../fixtures/elf/rust_hello.elf\"\n{extra}"
     )
 }
 
@@ -174,7 +174,7 @@ fn the_validation_accepts_native_pl_and_refuses_remote_port_pl_with_the_reason()
     assert!(demo.is_empty(), "no PL is the PS-only case: {demo:?}");
     let rtl = errors_of(&native_project(
         "ps = \"native\"\npl = \"rtl-native\"",
-        "[rtl]\nfiles = [\"fixtures/rtl/math/my_math_ip.v\"]\ntop = \"my_math_ip\"\n\
+        "[rtl]\nfiles = [\"../../fixtures/rtl/math/my_math_ip.v\"]\ntop = \"my_math_ip\"\n\
          [connect]\n\"my_math_ip.S_AXI\" = \"M_AXI_GP0@0x43C00000\"\n",
     ));
     assert!(rtl.is_empty(), "rtl-native on the native PS: {rtl:?}");

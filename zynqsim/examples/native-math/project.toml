@@ -3,6 +3,9 @@
 # native RTL engine (backends.pl = "rtl-native", ADR-034) and served on M_AXI_GP0.
 #
 #   zynqsim run --project examples/native-math/project.toml --for 2ms
+#
+# NOT YET RUNNING (ADR-035): the Xilinx boot code (boot.S) reads 0xF800D010, which the native
+# PS does not map (a data abort, then the abort vector loops). Nothing is faked: the run stalls.
 #   expect the same UART text as examples/math-qemu ("ALL PASS" for its 7 vector tests)
 schema_version = 1
 

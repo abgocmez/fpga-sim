@@ -79,7 +79,12 @@ Cortex-A9 interpreter (core 0 only, no PL, not cycle-accurate; ADR-033):
 
 ```
 zynqsim run --project examples/native-hello/project.toml --for 10ms    # same text as rust-hello
+zynqsim run --project examples/native-gpio-timer-uart/project.toml --for 60ms  # GPIO, timer, UART Lite on the native PL
 ```
+
+The native PS also takes a PL with no external tool: `backends.pl = "native"` (the vendor-ip and
+native models) or `"rtl-native"` (an RTL file simulated by the native RTL engine, ADR-034/035).
+The math example's firmware does not run yet (ADR-035, `docs/STATUS.md`).
 
 ```
 cargo xtask dpi                                    # once: the XSim DPI library
