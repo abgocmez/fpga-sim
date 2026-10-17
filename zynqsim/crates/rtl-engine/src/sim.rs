@@ -7,11 +7,17 @@
 //! next one. A step with too many process activations or too many non-blocking
 //! rounds is reported as a combinational loop.
 //!
-//! Values are 2-state: every signal is a `u128` masked to its width. x and z in source
-//! read as 0 (see `docs/RTL_SUBSET.md`).
+//! Values are 4-state (0, 1, X, Z), at most 128 bits wide, see [`crate::value`].
+//! Storage follows the declaration (`docs/RTL_SUBSET.md`): a net (`wire`) is Z until
+//! driven and takes the resolution of its continuous drivers; a `reg` or `logic` is X
+//! until assigned; a `bit` or `int` is 0 and never holds X or Z.
 
 use crate::design::Design;
-use crate::ir::{Arg, Edge, Ex, Func, K, LVal, Op, ProcKind, SigId, Sys, Trigger};
+use crate::ir::{Arg, Edge, Ex, Func, K, LVal, Op, ProcKind, SigId, SigKind, Sys, Trigger};
+use crate::value::{
+    Bit4, Value4, and, arith, ashr, case_eq, case_match, extend, land, lnot, logical_eq, lor, mask,
+    merge, not, or, radix_bits, reduce_and, reduce_or, reduce_xor, resolve, shl, shr, xor,
+};
 use rtl_frontend::ast::{BinOp, UnOp};
 use rtl_frontend::{Diagnostic, Pos};
 use std::cmp::Reverse;
@@ -51,7 +57,7 @@ pub struct Change {
     /// Signal.
     pub sig: SigId,
     /// New value.
-    pub value: u128,
+    pub value: Value4,
 }
 
 /// A process registered on a signal.
@@ -70,7 +76,18 @@ struct Nba {
     sig: SigId,
     lo: u32,
     w: u32,
-    value: u128,
+    value: Value4,
+}
+
+/// One continuous driver of a net: what one `assign` (or port connection) drives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Driver {
+    /// The net.
+    sig: SigId,
+    /// The value it drives, in the net's bit positions (zero outside `cover`).
+    val: Value4,
+    /// The bits it drives.
+    cover: u128,
 }
 
 /// How a run of bytecode ended.
@@ -88,7 +105,7 @@ enum Exit {
 /// The simulator of one elaborated design.
 pub struct Simulator {
     design: Arc<Design>,
-    store: Vec<u128>,
+    store: Vec<Value4>,
     now: u64,
     seq: u64,
     pc: Vec<u32>,
@@ -105,15 +122,18 @@ pub struct Simulator {
     pending: String,
     recording: bool,
     changes: Vec<Change>,
-}
-
-/// Mask of the low `w` bits.
-pub(crate) fn mask(w: u32) -> u128 {
-    if w >= 128 {
-        u128::MAX
-    } else {
-        (1u128 << w) - 1
-    }
+    /// Values when recording started, by signal (the VCD `$dumpvars`).
+    rec_init: Vec<Value4>,
+    rec_time: u64,
+    /// Drivers of the nets: one per continuous assignment that drives a bit of the net,
+    /// and one external driver per net (written by [`Simulator::set4`]).
+    drivers: Vec<Driver>,
+    /// Per signal, the drivers that resolve it (empty for variables).
+    net_drivers: Vec<Vec<u32>>,
+    /// Per process, the (net, driver) pairs it drives.
+    proc_drivers: Vec<Vec<(SigId, u32)>>,
+    /// Per signal, its external driver (`u32::MAX` for a variable).
+    ext_driver: Vec<u32>,
 }
 
 /// Sign-extends the low `w` bits of `v`.
@@ -133,6 +153,28 @@ fn to_i64(v: u128) -> i64 {
     i64::try_from(v).unwrap_or(i64::MIN)
 }
 
+/// The value of one bit state as a 1-bit value.
+fn bit_value(b: Bit4) -> Value4 {
+    match b {
+        Bit4::Zero => Value4::known(0),
+        Bit4::One => Value4::known(1),
+        Bit4::X => Value4::all_x(1),
+        Bit4::Z => Value4::all_z(1),
+    }
+}
+
+/// Edge tests on one bit: a rise is 0 to 1, 0 to x or z, x or z to 1; a fall is the
+/// dual (IEEE 1364, 9.7.3).
+fn rises(old: Bit4, new: Bit4) -> bool {
+    (old == Bit4::Zero && new != Bit4::Zero)
+        || (matches!(old, Bit4::X | Bit4::Z) && new == Bit4::One)
+}
+
+fn falls(old: Bit4, new: Bit4) -> bool {
+    (old == Bit4::One && new != Bit4::One)
+        || (matches!(old, Bit4::X | Bit4::Z) && new == Bit4::Zero)
+}
+
 impl Simulator {
     /// Creates a simulator. A design with diagnostics is refused, and the diagnostics
     /// are returned.
@@ -142,7 +184,58 @@ impl Simulator {
         }
         let n = design.procs.len();
         let nsig = design.signals.len();
-        let store = vec![0u128; design.store_len];
+        let mut store = vec![Value4::default(); design.store_len];
+        for s in &design.signals {
+            let init = match s.kind {
+                SigKind::Net => Value4::all_z(s.width),
+                SigKind::Variable => Value4::all_x(s.width),
+                SigKind::TwoState => Value4::known(0),
+            };
+            for k in 0..s.depth.max(1) as usize {
+                store[s.base + k] = init;
+            }
+        }
+        // Drivers: an external driver for every net, then one per (continuous
+        // assignment, net) pair, in process order.
+        let mut drivers = Vec::new();
+        let mut net_drivers: Vec<Vec<u32>> = vec![Vec::new(); nsig];
+        let mut ext_driver = vec![u32::MAX; nsig];
+        let is_net = |s: &crate::ir::Signal| s.kind == SigKind::Net && s.depth == 0;
+        for (i, s) in design.signals.iter().enumerate() {
+            if is_net(s) {
+                let d = drivers.len() as u32;
+                drivers.push(Driver {
+                    sig: i as SigId,
+                    val: Value4::default(),
+                    cover: 0,
+                });
+                net_drivers[i].push(d);
+                ext_driver[i] = d;
+            }
+        }
+        let mut proc_drivers: Vec<Vec<(SigId, u32)>> = vec![Vec::new(); n];
+        for (p, proc) in design.procs.iter().enumerate() {
+            if proc.kind != ProcKind::Assign {
+                continue;
+            }
+            for op in &proc.code {
+                let Op::Assign { lhs, .. } = op else { continue };
+                for part in &lhs.parts {
+                    let s = &design.signals[part.sig as usize];
+                    if !is_net(s) || proc_drivers[p].iter().any(|(q, _)| *q == part.sig) {
+                        continue;
+                    }
+                    let d = drivers.len() as u32;
+                    drivers.push(Driver {
+                        sig: part.sig,
+                        val: Value4::default(),
+                        cover: 0,
+                    });
+                    net_drivers[part.sig as usize].push(d);
+                    proc_drivers[p].push((part.sig, d));
+                }
+            }
+        }
         let mut sim = Simulator {
             store,
             now: 0,
@@ -161,6 +254,12 @@ impl Simulator {
             pending: String::new(),
             recording: false,
             changes: Vec::new(),
+            rec_init: Vec::new(),
+            rec_time: 0,
+            drivers,
+            net_drivers,
+            proc_drivers,
+            ext_driver,
             design: Arc::new(design),
         };
         // Continuous assigns and always_comb start at time 0 with their inputs already
@@ -223,18 +322,30 @@ impl Simulator {
             .map(|s| self.design.signals[s as usize].width)
     }
 
-    /// Value of a scalar or vector signal (`None` for an unknown name or a memory).
+    /// Value of a scalar or vector signal as 2 states: X and Z read as 0 (`None` for an
+    /// unknown name or a memory). See [`Simulator::get4`] for the 4-state value.
     pub fn get(&self, name: &str) -> Option<u128> {
+        self.get4(name).map(|v| v.to_two_state())
+    }
+
+    /// 4-state value of a scalar or vector signal (`None` for an unknown name or a
+    /// memory).
+    pub fn get4(&self, name: &str) -> Option<Value4> {
         let id = self.design.signal(name)?;
         let s = &self.design.signals[id as usize];
         if s.depth > 0 {
             return None;
         }
-        Some(self.store[s.base] & mask(s.width))
+        Some(self.store[s.base].norm(s.width))
     }
 
-    /// Value of word `index` (declared coordinates) of a memory.
+    /// Value of word `index` (declared coordinates) of a memory, 2-state.
     pub fn get_word(&self, name: &str, index: i64) -> Option<u128> {
+        self.get_word4(name, index).map(|v| v.to_two_state())
+    }
+
+    /// 4-state value of word `index` (declared coordinates) of a memory.
+    pub fn get_word4(&self, name: &str, index: i64) -> Option<Value4> {
         let id = self.design.signal(name)?;
         let s = &self.design.signals[id as usize];
         if s.depth == 0 {
@@ -244,25 +355,39 @@ impl Simulator {
         if pos < 0 || pos >= s.depth as i64 {
             return None;
         }
-        Some(self.store[s.base + pos as usize] & mask(s.width))
+        Some(self.store[s.base + pos as usize].norm(s.width))
     }
 
-    /// Sets a visible scalar or vector signal. The change takes effect (and wakes its
-    /// readers) at the next [`Simulator::run_until`].
+    /// Sets a visible scalar or vector signal to a known value. The change takes effect
+    /// (and wakes its readers) at the next [`Simulator::run_until`].
     pub fn set(&mut self, name: &str, value: u128) -> Result<(), String> {
+        self.set4(name, Value4::known(value))
+    }
+
+    /// Sets a visible scalar or vector signal to a 4-state value. A net takes the value
+    /// as an external driver, resolved with its continuous drivers; a variable takes it
+    /// directly (a `bit` or `int` takes X and Z as 0).
+    pub fn set4(&mut self, name: &str, value: Value4) -> Result<(), String> {
         let id = self
             .design
             .signal(name)
             .ok_or_else(|| format!("no signal named `{name}`"))?;
-        let (base, width, depth) = {
+        let (base, width, depth, kind) = {
             let s = &self.design.signals[id as usize];
-            (s.base, s.width, s.depth)
+            (s.base, s.width, s.depth, s.kind)
         };
         if depth > 0 {
             return Err(format!("`{name}` is a memory; set one word with set_word"));
         }
+        if kind == SigKind::Net {
+            let d = self.ext_driver[id as usize] as usize;
+            self.drivers[d].val = value.norm(width);
+            self.drivers[d].cover = mask(width);
+            self.update_net(id);
+            return Ok(());
+        }
         let old = self.store[base];
-        let new = value & mask(width);
+        let new = self.coerce(id, value.norm(width));
         if old != new {
             self.store[base] = new;
             self.notify(id, old, new);
@@ -271,8 +396,13 @@ impl Simulator {
         Ok(())
     }
 
-    /// Sets one word of a memory (declared coordinates).
+    /// Sets one word of a memory (declared coordinates), 2-state.
     pub fn set_word(&mut self, name: &str, index: i64, value: u128) -> Result<(), String> {
+        self.set_word4(name, index, Value4::known(value))
+    }
+
+    /// Sets one word of a memory (declared coordinates) to a 4-state value.
+    pub fn set_word4(&mut self, name: &str, index: i64, value: Value4) -> Result<(), String> {
         let id = self
             .design
             .signal(name)
@@ -287,7 +417,7 @@ impl Simulator {
         }
         let idx = base + pos as usize;
         let old = self.store[idx];
-        let new = value & mask(width);
+        let new = self.coerce(id, value.norm(width));
         if old != new {
             self.store[idx] = new;
             self.notify(id, old, new);
@@ -304,8 +434,13 @@ impl Simulator {
         self.run_until(self.now)
     }
 
-    /// Records every change of a visible signal (see [`Simulator::changes`]).
+    /// Records every change of a visible signal (see [`Simulator::changes`]). Turning
+    /// recording on fixes the values the waveform starts from.
     pub fn set_recording(&mut self, on: bool) {
+        if on && !self.recording {
+            self.rec_init = self.store.clone();
+            self.rec_time = self.now;
+        }
         self.recording = on;
     }
 
@@ -314,8 +449,9 @@ impl Simulator {
         &self.changes
     }
 
-    /// A VCD waveform of the recorded changes. Values are 2-state; every signal starts
-    /// at zero at time 0.
+    /// A VCD waveform of the recorded changes. Values are 4-state: a bit is written as
+    /// `0`, `1`, `x` or `z`. The `$dumpvars` block holds the values when recording
+    /// started.
     pub fn vcd(&self) -> String {
         let mut out = String::new();
         out.push_str("$timescale 1ps $end\n$scope module top $end\n");
@@ -335,10 +471,18 @@ impl Simulator {
             ids.insert(i as SigId, id);
             vars.push(i as SigId);
         }
-        out.push_str("$upscope $end\n$enddefinitions $end\n#0\n$dumpvars\n");
+        out.push_str(&format!(
+            "$upscope $end\n$enddefinitions $end\n#{}\n$dumpvars\n",
+            self.rec_time
+        ));
         for sig in &vars {
             let s = &self.design.signals[*sig as usize];
-            out.push_str(&vcd_value(0, s.width, &ids[sig]));
+            let v = self
+                .rec_init
+                .get(*sig as usize)
+                .copied()
+                .unwrap_or_default();
+            out.push_str(&vcd_value(v, s.width, &ids[sig]));
         }
         out.push_str("$end\n");
         let mut last_t = u64::MAX;
@@ -361,7 +505,7 @@ impl Simulator {
         }
     }
 
-    fn record(&mut self, sig: SigId, value: u128) {
+    fn record(&mut self, sig: SigId, value: Value4) {
         if self.recording && self.design.signals[sig as usize].depth == 0 {
             self.changes.push(Change {
                 time_ps: self.now,
@@ -493,19 +637,21 @@ impl Simulator {
             match op {
                 Op::Assign { lhs, rhs, nb } => {
                     let v = self.eval(rhs)?;
-                    self.assign(lhs, v, *nb)?;
+                    // Continuous assignments drive nets through their drivers.
+                    let drive = proc.filter(|p| self.design.procs[*p].kind == ProcKind::Assign);
+                    self.assign(lhs, v, *nb, drive)?;
                     pc += 1;
                 }
                 Op::Jump(t) => pc = *t as usize,
                 Op::JumpIf { cond, to } => {
-                    pc = if self.eval(cond)? != 0 {
+                    pc = if self.eval(cond)?.truth() == Some(true) {
                         *to as usize
                     } else {
                         pc + 1
                     };
                 }
                 Op::JumpIfNot { cond, to } => {
-                    pc = if self.eval(cond)? == 0 {
+                    pc = if self.eval(cond)?.truth() != Some(true) {
                         *to as usize
                     } else {
                         pc + 1
@@ -515,7 +661,8 @@ impl Simulator {
                     let Some(_) = proc else {
                         return Err(self.err(format!("a delay inside the function of `{scope}`")));
                     };
-                    let n = self.eval(amount)?;
+                    // An unknown delay is taken as 0.
+                    let n = self.eval(amount)?.bits;
                     let at = self.now.saturating_add((n as u64).saturating_mul(*unit_ps));
                     self.seq += 1;
                     let p = proc.unwrap_or(0) as u32;
@@ -557,7 +704,7 @@ impl Simulator {
     }
 
     /// Wakes the processes whose trigger fires on a change of `sig`.
-    fn notify(&mut self, sig: SigId, old: u128, new: u128) {
+    fn notify(&mut self, sig: SigId, old: Value4, new: Value4) {
         let list = std::mem::take(&mut self.waiters[sig as usize]);
         let mut keep = Vec::with_capacity(list.len());
         let mut fired = Vec::new();
@@ -567,14 +714,14 @@ impl Simulator {
                 continue; // stale registration
             }
             let b = w.bit.unwrap_or(0);
-            let (ob, nb) = ((old >> b) & 1, (new >> b) & 1);
+            let (ob, nb) = (old.bit(b), new.bit(b));
             let fire = match w.edge {
                 Edge::Any => match w.bit {
                     None => old != new,
                     Some(_) => ob != nb,
                 },
-                Edge::Pos => ob == 0 && nb == 1,
-                Edge::Neg => ob == 1 && nb == 0,
+                Edge::Pos => rises(ob, nb),
+                Edge::Neg => falls(ob, nb),
             };
             if fire {
                 fired.push(p);
@@ -593,11 +740,20 @@ impl Simulator {
         }
     }
 
+    /// The value a variable of this signal holds after a write: a `bit` or `int` has
+    /// no X or Z.
+    fn coerce(&self, sig: SigId, v: Value4) -> Value4 {
+        if self.design.signals[sig as usize].kind == SigKind::TwoState {
+            Value4::known(v.bits)
+        } else {
+            v
+        }
+    }
+
     /// Stores `value` into `w` bits of word `idx` of `sig` at bit `lo`.
-    fn write_bits(&mut self, sig: SigId, idx: usize, lo: u32, w: u32, value: u128) {
+    fn write_bits(&mut self, sig: SigId, idx: usize, lo: u32, w: u32, value: Value4) {
         let old = self.store[idx];
-        let m = mask(w) << lo;
-        let new = (old & !m) | ((value & mask(w)) << lo);
+        let new = self.coerce(sig, old.insert(lo, w, value));
         if new != old {
             self.store[idx] = new;
             self.notify(sig, old, new);
@@ -607,15 +763,51 @@ impl Simulator {
         }
     }
 
-    fn assign(&mut self, lhs: &LVal, v: u128, nb: bool) -> Result<(), SimError> {
+    /// Recomputes a net from its drivers and propagates a change.
+    fn update_net(&mut self, sig: SigId) {
+        let s = &self.design.signals[sig as usize];
+        let (base, width) = (s.base, s.width);
+        let new = resolve(
+            self.net_drivers[sig as usize]
+                .iter()
+                .map(|&d| (self.drivers[d as usize].val, self.drivers[d as usize].cover)),
+            width,
+        );
+        let old = self.store[base];
+        if new != old {
+            self.store[base] = new;
+            self.notify(sig, old, new);
+            self.record(sig, new);
+        }
+    }
+
+    fn assign(
+        &mut self,
+        lhs: &LVal,
+        v: Value4,
+        nb: bool,
+        drive: Option<usize>,
+    ) -> Result<(), SimError> {
         let mut offset = lhs.w;
+        // Drivers of a continuous assignment: every one of this process starts with no
+        // bits, and the bits it writes now are added.
+        let mut touched: Vec<(u32, Value4, u128)> = match drive {
+            Some(p) => self.proc_drivers[p]
+                .iter()
+                .map(|&(_, d)| (d, Value4::default(), 0))
+                .collect(),
+            None => Vec::new(),
+        };
         for part in &lhs.parts {
             offset -= part.w;
-            let pv = (v >> offset) & mask(part.w);
+            let pv = v.part(offset, part.w);
             let word = match &part.word {
                 Some(ex) => {
-                    let i = to_i64(self.eval(ex)?);
-                    let pos = i - part.word_off;
+                    let i = self.eval(ex)?;
+                    if !i.is_known() {
+                        continue;
+                    }
+                    let pos = to_i64(i.bits) - part.word_off;
                     let depth = self.design.signals[part.sig as usize].depth as i64;
                     if pos < 0 || pos >= depth {
                         continue;
@@ -627,7 +819,11 @@ impl Simulator {
             let lo = match &part.sel {
                 None => 0,
                 Some((start, off, flip, up)) => {
-                    let s = to_i64(self.eval(start)?);
+                    let st = self.eval(start)?;
+                    if !st.is_known() {
+                        continue;
+                    }
+                    let s = to_i64(st.bits);
                     let w = part.w as i64;
                     let a = if *up { s } else { s - (w - 1) };
                     let p = if *flip { off - (a + w - 1) } else { a - off };
@@ -638,6 +834,33 @@ impl Simulator {
                     p as u32
                 }
             };
+            if let Some(p) = drive {
+                let is_net = {
+                    let s = &self.design.signals[part.sig as usize];
+                    s.kind == SigKind::Net && s.depth == 0
+                };
+                if is_net {
+                    let d = self.proc_drivers[p]
+                        .iter()
+                        .find(|(s, _)| *s == part.sig)
+                        .map(|(_, d)| *d);
+                    if let Some(d) = d {
+                        let placed = pv.shifted(lo, part.w);
+                        let cover = mask(part.w) << lo;
+                        let e = touched
+                            .iter_mut()
+                            .find(|(id, _, _)| *id == d)
+                            .expect("a driver of this process");
+                        e.1 = Value4 {
+                            bits: e.1.bits | placed.bits,
+                            unknown: e.1.unknown | placed.unknown,
+                            z: e.1.z | placed.z,
+                        };
+                        e.2 |= cover;
+                        continue;
+                    }
+                }
+            }
             let idx = self.design.signals[part.sig as usize].base + word;
             if nb {
                 self.nba.push(Nba {
@@ -651,26 +874,42 @@ impl Simulator {
                 self.write_bits(part.sig, idx, lo, part.w, pv);
             }
         }
+        if drive.is_some() && !touched.is_empty() {
+            let mut nets: Vec<SigId> = Vec::new();
+            for (d, val, cover) in touched {
+                let dr = &mut self.drivers[d as usize];
+                dr.val = val;
+                dr.cover = cover;
+                if !nets.contains(&dr.sig) {
+                    nets.push(dr.sig);
+                }
+            }
+            for n in nets {
+                self.update_net(n);
+            }
+        }
         Ok(())
     }
 
     /// Evaluates an expression to its `w`-bit value.
-    fn eval(&mut self, e: &Ex) -> Result<u128, SimError> {
+    fn eval(&mut self, e: &Ex) -> Result<Value4, SimError> {
         let w = e.w;
+        let m = mask(w);
         Ok(match &e.k {
-            K::Const(v) => v & mask(w),
+            K::Const(v) => Value4::known(v & m),
+            K::Lit(v) => v.norm(w),
             K::Sig(id) => {
                 let s = &self.design.signals[*id as usize];
-                self.store[s.base] & mask(w)
+                self.store[s.base].norm(w)
             }
             K::Word { sig, idx, off } => {
-                let i = to_i64(self.eval(idx)?);
+                let i = self.eval(idx)?;
                 let s = &self.design.signals[*sig as usize];
-                let pos = i - off;
-                if pos < 0 || pos >= s.depth as i64 {
-                    0
+                let pos = to_i64(i.bits) - off;
+                if !i.is_known() || pos < 0 || pos >= s.depth as i64 {
+                    Value4::all_x(w)
                 } else {
-                    self.store[s.base + pos as usize] & mask(w)
+                    self.store[s.base + pos as usize].norm(w)
                 }
             }
             K::Slice {
@@ -681,40 +920,35 @@ impl Simulator {
                 up,
             } => {
                 let bv = self.eval(base)?;
-                let s = to_i64(self.eval(start)?);
+                let st = self.eval(start)?;
+                if !st.is_known() {
+                    return Ok(Value4::all_x(w));
+                }
+                let s = to_i64(st.bits);
                 let wi = w as i64;
                 let a = if *up { s } else { s - (wi - 1) };
                 let p = if *flip { off - (a + wi - 1) } else { a - off };
                 let bw = base.w as i64;
                 if p >= 0 && p + wi <= bw {
-                    (bv >> p) & mask(w)
+                    bv.part(p as u32, w)
                 } else {
-                    let mut r = 0u128;
+                    // Bits outside the vector read as X.
+                    let mut r = Value4::default();
                     for k in 0..wi {
                         let q = p + k;
-                        if q >= 0 && q < bw && (bv >> q) & 1 == 1 {
-                            r |= 1u128 << k;
-                        }
+                        let b = if q >= 0 && q < bw {
+                            bv.bit(q as u32)
+                        } else {
+                            Bit4::X
+                        };
+                        r = r.insert(k as u32, 1, bit_value(b));
                     }
                     r
                 }
             }
             K::Un(op, a) => {
                 let x = self.eval(a)?;
-                let aw = a.w;
-                let m = mask(aw);
-                match op {
-                    UnOp::Plus => x,
-                    UnOp::Minus => 0u128.wrapping_sub(x) & mask(w),
-                    UnOp::BitNot => !x & mask(w),
-                    UnOp::LNot => (x == 0) as u128,
-                    UnOp::RedAnd => (x == m) as u128,
-                    UnOp::RedNand => (x != m) as u128,
-                    UnOp::RedOr => (x != 0) as u128,
-                    UnOp::RedNor => (x == 0) as u128,
-                    UnOp::RedXor => (x.count_ones() & 1) as u128,
-                    UnOp::RedXnor => (1 ^ (x.count_ones() & 1)) as u128,
-                }
+                unary(*op, x, a.w, w)
             }
             K::Bin { op, a, b, os } => {
                 let x = self.eval(a)?;
@@ -722,43 +956,44 @@ impl Simulator {
                 bin(*op, x, y, a.w, b.w, w, *os)
             }
             K::Tern(c, t, f) => {
-                if self.eval(c)? != 0 {
-                    self.eval(t)?
-                } else {
-                    self.eval(f)?
+                let cv = self.eval(c)?;
+                match cv.truth() {
+                    Some(true) => self.eval(t)?,
+                    Some(false) => self.eval(f)?,
+                    None => {
+                        let tv = self.eval(t)?;
+                        let fv = self.eval(f)?;
+                        merge(tv, fv, m)
+                    }
                 }
             }
             K::Concat(parts) => {
-                let mut acc = 0u128;
+                let mut acc = Value4::default();
                 for p in parts {
                     let v = self.eval(p)?;
-                    acc = if p.w >= 128 { v } else { (acc << p.w) | v };
+                    acc = acc.push(v, p.w);
                 }
-                acc & mask(w)
+                acc.norm(w)
             }
             K::Ext(a) => {
                 let v = self.eval(a)?;
-                if e.s && a.w > 0 && (v >> (a.w - 1)) & 1 == 1 {
-                    (v | (mask(w) & !mask(a.w))) & mask(w)
-                } else {
-                    v & mask(w)
-                }
+                extend(v, a.w, w, e.s)
             }
-            K::Trunc(a) => self.eval(a)? & mask(w),
+            K::Trunc(a) => self.eval(a)?.norm(w),
             K::Call { fid, args } => self.call(*fid as usize, args)?,
             K::Time(unit) => {
                 let u = (*unit).max(1);
-                (self.now / u) as u128 & mask(w)
+                Value4::known((self.now / u) as u128 & m)
             }
-            K::MaskEq { a, b, mask: m } => {
+            K::CaseEq { a, b, mode } => {
                 let x = self.eval(a)?;
                 let y = self.eval(b)?;
-                ((x ^ y) & m == 0) as u128
+                Value4::known(case_match(x, y, mask(a.w), *mode) as u128)
             }
         })
     }
 
-    fn call(&mut self, fid: usize, args: &[Ex]) -> Result<u128, SimError> {
+    fn call(&mut self, fid: usize, args: &[Ex]) -> Result<Value4, SimError> {
         let design = self.design.clone();
         let f: &Func = &design.funcs[fid];
         let mut vals = Vec::with_capacity(args.len());
@@ -770,7 +1005,7 @@ impl Simulator {
             let base = s.base;
             let w = s.width;
             let old = self.store[base];
-            let new = v & mask(w);
+            let new = v.norm(w);
             self.store[base] = new;
             if old != new {
                 self.notify(*formal, old, new);
@@ -780,7 +1015,7 @@ impl Simulator {
             Exit::Halt | Exit::Wait(_) | Exit::Delay(_) | Exit::Finish(_) => {}
         }
         let r = &design.signals[f.ret as usize];
-        Ok(self.store[r.base] & mask(r.width))
+        Ok(self.store[r.base].norm(r.width))
     }
 
     /// Runs a system task. Returns `true` for `$finish`.
@@ -874,11 +1109,11 @@ impl Simulator {
                 (_, None) => String::new(),
                 (_, Some(Err(s))) => s,
                 ('t' | 'T', Some(Ok(_))) => (self.now).to_string(),
-                ('c' | 'C', Some(Ok((v, _, _)))) => ((v as u8) as char).to_string(),
+                ('c' | 'C', Some(Ok((v, _, _)))) => ((v.bits as u8) as char).to_string(),
                 ('s' | 'S', Some(Ok((v, w, _)))) => {
                     let mut s = String::new();
                     for k in (0..w.div_ceil(8)).rev() {
-                        let b = ((v >> (k * 8)) & 0xFF) as u8;
+                        let b = ((v.bits >> (k * 8)) & 0xFF) as u8;
                         if b != 0 {
                             s.push(b as char);
                         }
@@ -886,17 +1121,10 @@ impl Simulator {
                     s
                 }
                 ('h' | 'H' | 'x' | 'X', Some(Ok((v, w, _)))) => {
-                    let digits = w.div_ceil(4) as usize;
-                    pad(&format!("{:0>digits$x}", v & mask(w)), width, zero, '0')
+                    pad_digits(radix_text(v, w, 4), width, zero)
                 }
-                ('b' | 'B', Some(Ok((v, w, _)))) => {
-                    let s = format!("{:0>w$b}", v & mask(w), w = w as usize);
-                    pad(&s, width, zero, '0')
-                }
-                ('o' | 'O', Some(Ok((v, w, _)))) => {
-                    let digits = w.div_ceil(3) as usize;
-                    pad(&format!("{:0>digits$o}", v & mask(w)), width, zero, '0')
-                }
+                ('b' | 'B', Some(Ok((v, w, _)))) => pad_digits(radix_text(v, w, 1), width, zero),
+                ('o' | 'O', Some(Ok((v, w, _)))) => pad_digits(radix_text(v, w, 3), width, zero),
                 (_, Some(Ok((v, w, sg)))) => {
                     let s = decimal(v, w, sg);
                     let field = if zero {
@@ -929,17 +1157,17 @@ impl Simulator {
                     .map_err(|_| self.err(format!("$readmem: bad address `{tok}`")))?;
                 continue;
             }
-            let radix = if hex { 16 } else { 2 };
-            let mut v: u128 = 0;
-            for ch in tok.chars().filter(|c| *c != '_') {
-                let d = ch.to_digit(radix).unwrap_or(0) as u128;
-                v = v.wrapping_mul(radix as u128).wrapping_add(d);
-            }
+            let digits: String = tok.chars().filter(|c| *c != '_').collect();
+            let v = radix_bits(
+                &digits.to_ascii_lowercase(),
+                if hex { 4 } else { 1 },
+                s.width,
+            );
             let pos = addr - s.mem_lo;
             if pos >= 0 && pos < s.depth as i64 {
                 let idx = s.base + pos as usize;
                 let old = self.store[idx];
-                let new = v & mask(s.width);
+                let new = self.coerce(sig, v);
                 if old != new {
                     self.store[idx] = new;
                     self.notify(sig, old, new);
@@ -951,7 +1179,7 @@ impl Simulator {
     }
 }
 
-const SNAP_MAGIC: &[u8; 8] = b"RTLENG01";
+const SNAP_MAGIC: &[u8; 8] = b"RTLENG02";
 
 struct Reader<'a> {
     data: &'a [u8],
@@ -983,6 +1211,13 @@ impl Reader<'_> {
             self.take(16)?.try_into().map_err(|_| "bad u128")?,
         ))
     }
+    fn value(&mut self) -> Result<Value4, String> {
+        Ok(Value4 {
+            bits: self.u128()?,
+            unknown: self.u128()?,
+            z: self.u128()?,
+        })
+    }
     fn string(&mut self) -> Result<String, String> {
         let n = self.u64()? as usize;
         String::from_utf8(self.take(n)?.to_vec())
@@ -998,6 +1233,11 @@ fn put_u64(out: &mut Vec<u8>, v: u64) {
 }
 fn put_u128(out: &mut Vec<u8>, v: u128) {
     out.extend_from_slice(&v.to_le_bytes());
+}
+fn put_value(out: &mut Vec<u8>, v: Value4) {
+    put_u128(out, v.bits);
+    put_u128(out, v.unknown);
+    put_u128(out, v.z);
 }
 fn put_str(out: &mut Vec<u8>, s: &str) {
     put_u64(out, s.len() as u64);
@@ -1022,9 +1262,9 @@ fn edge_from(c: u8) -> Result<Edge, String> {
 }
 
 impl Simulator {
-    /// Serialises the whole simulation state: values, process positions and waits,
-    /// queues, timed events, the log. [`Simulator::restore`] reads it back into a
-    /// simulator of the same design.
+    /// Serialises the whole simulation state: values (4-state), drivers, process
+    /// positions and waits, queues, timed events, the log. [`Simulator::restore`] reads
+    /// it back into a simulator of the same design.
     pub fn snapshot(&self) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(SNAP_MAGIC);
@@ -1036,7 +1276,12 @@ impl Simulator {
         out.push(self.finished as u8);
         put_u64(&mut out, self.store.len() as u64);
         for v in &self.store {
-            put_u128(&mut out, *v);
+            put_value(&mut out, *v);
+        }
+        put_u64(&mut out, self.drivers.len() as u64);
+        for d in &self.drivers {
+            put_value(&mut out, d.val);
+            put_u128(&mut out, d.cover);
         }
         for p in 0..self.pc.len() {
             put_u32(&mut out, self.pc[p]);
@@ -1055,7 +1300,7 @@ impl Simulator {
             put_u32(&mut out, u.sig);
             put_u32(&mut out, u.lo);
             put_u32(&mut out, u.w);
-            put_u128(&mut out, u.value);
+            put_value(&mut out, u.value);
         }
         put_u64(&mut out, self.waiters.len() as u64);
         for list in &self.waiters {
@@ -1107,7 +1352,15 @@ impl Simulator {
             return Err("snapshot store has the wrong size".into());
         }
         for i in 0..n {
-            self.store[i] = r.u128()?;
+            self.store[i] = r.value()?;
+        }
+        let nd = r.u64()? as usize;
+        if nd != self.drivers.len() {
+            return Err("snapshot has the wrong number of drivers".into());
+        }
+        for i in 0..nd {
+            self.drivers[i].val = r.value()?;
+            self.drivers[i].cover = r.u128()?;
         }
         for p in 0..nprocs {
             self.pc[p] = r.u32()?;
@@ -1128,7 +1381,7 @@ impl Simulator {
             let sig = r.u32()?;
             let lo = r.u32()?;
             let w = r.u32()?;
-            let value = r.u128()?;
+            let value = r.value()?;
             self.nba.push(Nba {
                 idx,
                 sig,
@@ -1182,7 +1435,8 @@ impl Simulator {
         Ok(())
     }
 
-    /// FNV-1a hash of the snapshot: equal states give equal hashes.
+    /// FNV-1a hash of the snapshot: equal states give equal hashes. The hash covers the
+    /// unknown and Z masks as well as the values.
     pub fn state_hash(&self) -> u64 {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         for b in self.snapshot() {
@@ -1193,94 +1447,80 @@ impl Simulator {
     }
 }
 
-/// Binary operator on `w`-bit results with `aw`/`bw`-bit operands.
-fn bin(op: BinOp, x: u128, y: u128, aw: u32, bw: u32, w: u32, os: bool) -> u128 {
+/// Unary operator on a value of width `aw`, giving `w` bits.
+fn unary(op: UnOp, x: Value4, aw: u32, w: u32) -> Value4 {
     let m = mask(w);
     match op {
-        BinOp::Add => x.wrapping_add(y) & m,
-        BinOp::Sub => x.wrapping_sub(y) & m,
-        BinOp::Mul => x.wrapping_mul(y) & m,
+        UnOp::Plus => x.norm(w),
+        UnOp::Minus => arith(Value4::default(), x, m, |_, b| 0u128.wrapping_sub(b)),
+        UnOp::BitNot => not(x, m),
+        UnOp::LNot => lnot(x),
+        UnOp::RedAnd => reduce_and(x, aw),
+        UnOp::RedNand => not(reduce_and(x, aw), 1),
+        UnOp::RedOr => reduce_or(x, aw),
+        UnOp::RedNor => not(reduce_or(x, aw), 1),
+        UnOp::RedXor => reduce_xor(x, aw),
+        UnOp::RedXnor => not(reduce_xor(x, aw), 1),
+    }
+}
+
+/// Binary operator on operands of widths `aw` and `bw`, giving `w` bits.
+fn bin(op: BinOp, x: Value4, y: Value4, aw: u32, bw: u32, w: u32, os: bool) -> Value4 {
+    let m = mask(w);
+    match op {
+        BinOp::Add => arith(x, y, m, |a, b| a.wrapping_add(b)),
+        BinOp::Sub => arith(x, y, m, |a, b| a.wrapping_sub(b)),
+        BinOp::Mul => arith(x, y, m, |a, b| a.wrapping_mul(b)),
         BinOp::Div | BinOp::Mod => {
-            if y == 0 {
-                return 0; // 2-state: division by zero reads as 0
+            // An unknown operand, or a zero divisor, gives X (IEEE 1364, 5.1.4).
+            if (x.unknown | y.unknown) != 0 || y.bits == 0 {
+                return Value4::all_x(w);
             }
             if os {
-                let (a, b) = (sext(x, w), sext(y, w));
-                if b == 0 {
-                    return 0;
-                }
+                let (a, b) = (sext(x.bits, w), sext(y.bits, w));
                 let r = if op == BinOp::Div {
                     a.wrapping_div(b)
                 } else {
                     a.wrapping_rem(b)
                 };
-                (r as u128) & m
+                Value4::known((r as u128) & m)
             } else if op == BinOp::Div {
-                (x / y) & m
+                Value4::known((x.bits / y.bits) & m)
             } else {
-                (x % y) & m
+                Value4::known((x.bits % y.bits) & m)
             }
         }
-        BinOp::Pow => {
-            if os && sext(y, bw) < 0 {
-                let a = sext(x, w);
-                return match a {
-                    1 => 1,
-                    -1 => {
-                        if y & 1 == 1 {
-                            m
-                        } else {
-                            1
-                        }
-                    }
-                    _ => 0,
-                };
-            }
-            let mut base = x & m;
-            let mut e = y;
-            let mut r: u128 = 1;
-            while e > 0 {
-                if e & 1 == 1 {
-                    r = r.wrapping_mul(base);
+        BinOp::Pow => arith(x, y, m, |a, b| pow_bits(a, b, w, bw, os, m)),
+        BinOp::And => and(x, y, m),
+        BinOp::Or => or(x, y, m),
+        BinOp::Xor => xor(x, y, m),
+        BinOp::Xnor => not(xor(x, y, m), m),
+        BinOp::Shl | BinOp::AShl => match y.truth_known() {
+            None => Value4::all_x(w),
+            Some(n) => shl(x, n, m),
+        },
+        BinOp::Shr => match y.truth_known() {
+            None => Value4::all_x(w),
+            Some(n) => shr(x, n, w),
+        },
+        BinOp::AShr => match y.truth_known() {
+            None => Value4::all_x(w),
+            Some(n) => {
+                if os {
+                    ashr(x, n, w)
+                } else {
+                    shr(x, n, w)
                 }
-                base = base.wrapping_mul(base);
-                e >>= 1;
             }
-            r & m
-        }
-        BinOp::And => x & y & m,
-        BinOp::Or => (x | y) & m,
-        BinOp::Xor => (x ^ y) & m,
-        BinOp::Xnor => !(x ^ y) & m,
-        BinOp::Shl | BinOp::AShl => {
-            if y >= 128 {
-                0
-            } else {
-                (x << y) & m
-            }
-        }
-        BinOp::Shr => {
-            if y >= 128 {
-                0
-            } else {
-                (x >> y) & m
-            }
-        }
-        BinOp::AShr => {
-            if os {
-                let sh = y.min(127) as u32;
-                ((sext(x, w) >> sh) as u128) & m
-            } else if y >= 128 {
-                0
-            } else {
-                (x >> y) & m
-            }
-        }
+        },
         BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+            if (x.unknown | y.unknown) != 0 {
+                return Value4::all_x(1);
+            }
             let ord = if os {
-                sext(x, aw).cmp(&sext(y, aw))
+                sext(x.bits, aw).cmp(&sext(y.bits, aw))
             } else {
-                x.cmp(&y)
+                x.bits.cmp(&y.bits)
             };
             let r = match op {
                 BinOp::Lt => ord.is_lt(),
@@ -1288,27 +1528,136 @@ fn bin(op: BinOp, x: u128, y: u128, aw: u32, bw: u32, w: u32, os: bool) -> u128 
                 BinOp::Gt => ord.is_gt(),
                 _ => ord.is_ge(),
             };
-            let _ = bw;
-            r as u128
+            Value4::known(r as u128)
         }
-        BinOp::Eq | BinOp::CaseEq => (x == y) as u128,
-        BinOp::Ne | BinOp::CaseNe => (x != y) as u128,
-        BinOp::LAnd => (x != 0 && y != 0) as u128,
-        BinOp::LOr => (x != 0 || y != 0) as u128,
+        BinOp::Eq => logical_eq(x, y, mask(aw)),
+        BinOp::Ne => {
+            let r = logical_eq(x, y, mask(aw));
+            if r.unknown != 0 {
+                r
+            } else {
+                Value4::known(1 - r.bits)
+            }
+        }
+        BinOp::CaseEq => Value4::known(case_eq(x, y, mask(aw)) as u128),
+        BinOp::CaseNe => Value4::known(!case_eq(x, y, mask(aw)) as u128),
+        BinOp::LAnd => land(x, y),
+        BinOp::LOr => lor(x, y),
     }
 }
 
-fn decimal(v: u128, w: u32, signed: bool) -> String {
+/// Power on known bits (the caller has checked for unknown operands).
+fn pow_bits(x: u128, y: u128, w: u32, bw: u32, os: bool, m: u128) -> u128 {
+    if os && sext(y, bw) < 0 {
+        let a = sext(x, w);
+        return match a {
+            1 => 1,
+            -1 => {
+                if y & 1 == 1 {
+                    m
+                } else {
+                    1
+                }
+            }
+            _ => 0,
+        };
+    }
+    let mut base = x & m;
+    let mut e = y;
+    let mut r: u128 = 1;
+    while e > 0 {
+        if e & 1 == 1 {
+            r = r.wrapping_mul(base);
+        }
+        base = base.wrapping_mul(base);
+        e >>= 1;
+    }
+    r & m
+}
+
+impl Value4 {
+    /// The value as a shift amount: `None` when any bit is unknown.
+    fn truth_known(self) -> Option<u32> {
+        if self.unknown != 0 {
+            None
+        } else {
+            Some(self.bits.min(128) as u32)
+        }
+    }
+}
+
+fn decimal(v: Value4, w: u32, signed: bool) -> String {
+    let v = v.norm(w);
+    if v.unknown != 0 {
+        // Any X makes the whole decimal x; all-Z makes it z.
+        return if v.unknown & !v.z != 0 {
+            "x".to_string()
+        } else {
+            "z".to_string()
+        };
+    }
     if signed {
-        sext(v, w).to_string()
+        sext(v.bits, w).to_string()
     } else {
-        (v & mask(w)).to_string()
+        v.bits.to_string()
+    }
+}
+
+/// Digits of radix `2^k` (`k` = 1, 3 or 4 for `%b`, `%o`, `%h`), most significant first.
+/// A digit group that is all known prints as its digit; an all-X group prints `x`, an
+/// all-Z group `z`; a partly unknown group prints `X` when it has an X and `Z` otherwise.
+fn radix_text(v: Value4, w: u32, k: u32) -> String {
+    let groups = w.div_ceil(k);
+    let mut s = String::new();
+    for g in (0..groups).rev() {
+        let lo = g * k;
+        let n = k.min(w - lo);
+        let gm = mask(n) << lo;
+        let unk = gm & v.unknown;
+        let x_bits = gm & v.unknown & !v.z;
+        let ch = if unk == 0 {
+            let d = (v.bits >> lo) & mask(n);
+            char::from_digit(d as u32, 1 << k).unwrap_or('?')
+        } else if gm & !v.unknown == 0 {
+            // All unknown.
+            if x_bits == 0 {
+                'z'
+            } else if x_bits == gm {
+                'x'
+            } else {
+                'X'
+            }
+        } else if x_bits != 0 {
+            'X'
+        } else {
+            'Z'
+        };
+        s.push(ch);
+    }
+    s
+}
+
+/// Pads a radix digit string to `width` with zeros, or with the leading `x` or `z`
+/// when the value starts with one.
+fn pad_digits(s: String, width: Option<usize>, _zero: bool) -> String {
+    match width {
+        Some(n) if s.chars().count() < n => {
+            let fill = s
+                .chars()
+                .next()
+                .filter(|c| matches!(c, 'x' | 'X' | 'z' | 'Z'))
+                .unwrap_or('0');
+            let mut out: String = std::iter::repeat_n(fill, n - s.chars().count()).collect();
+            out.push_str(&s);
+            out
+        }
+        _ => s,
     }
 }
 
 /// Decimal digits needed for the largest `w`-bit value (plus a sign if signed).
 fn max_decimal_digits(w: u32, signed: bool) -> usize {
-    let max = if w >= 128 { u128::MAX } else { mask(w) };
+    let max = mask(w);
     let mut digits = max.to_string().len();
     if signed {
         digits += 1;
@@ -1370,14 +1719,10 @@ fn vcd_id(n: usize) -> String {
     s
 }
 
-fn vcd_value(v: u128, w: u32, id: &str) -> String {
+fn vcd_value(v: Value4, w: u32, id: &str) -> String {
     if w == 1 {
-        format!("{}{}\n", v & 1, id)
+        format!("{}{}\n", v.bit(0).ch(), id)
     } else {
-        let bits: String = (0..w)
-            .rev()
-            .map(|k| if (v >> k) & 1 == 1 { '1' } else { '0' })
-            .collect();
-        format!("b{bits} {id}\n")
+        format!("b{} {id}\n", v.to_bin_string(w))
     }
 }

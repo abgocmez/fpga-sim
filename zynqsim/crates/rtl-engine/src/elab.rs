@@ -2,7 +2,7 @@
 //! the processes of each module instance. Expressions and statements are lowered by
 //! [`crate::lower`].
 
-use crate::ir::{Edge, Func, Op, Proc, ProcKind, SigId, Signal, Trigger};
+use crate::ir::{Edge, Func, Op, Proc, ProcKind, SigId, SigKind, Signal, Trigger};
 use rtl_frontend::ast::{
     Always, AlwaysKind, Conn, ContAssign, DataKind, Decl, Dir, Expr, ExprKind, GenKind, Generate,
     Instance, Item, Module, ModuleItem, Range, Routine, RoutineKind, TypedefKind,
@@ -222,6 +222,7 @@ impl<'p> Elab<'p> {
                 lsb,
                 false,
             );
+            self.signals[id as usize].kind = sig_kind(p.kind.as_ref());
             scope.syms.insert(
                 p.name.clone(),
                 Sym {
@@ -249,6 +250,7 @@ impl<'p> Elab<'p> {
                 && port_names.contains(&d.name)
             {
                 if let Some(sym) = scope.syms.get(&d.name).copied() {
+                    self.signals[sym.id as usize].kind = sig_kind(Some(&d.kind));
                     if d.range.is_some() {
                         let (w, s, msb, lsb) =
                             self.shape(d.range.as_ref(), Some(&d.kind), d.signed, &scope);
@@ -448,6 +450,7 @@ impl<'p> Elab<'p> {
             flip: msb < lsb,
             off: lsb,
             hidden,
+            kind: SigKind::Variable,
         });
         (self.signals.len() - 1) as SigId
     }
@@ -531,6 +534,7 @@ impl<'p> Elab<'p> {
         };
         let full = format!("{}{}", scope.prefix, d.name);
         let id = self.alloc(&full, width, signed, depth, mem_lo, msb, lsb, false);
+        self.signals[id as usize].kind = sig_kind(Some(&d.kind));
         scope.syms.insert(
             d.name.clone(),
             Sym {
@@ -1079,6 +1083,16 @@ impl Signal {
 }
 
 /// The hierarchical name of a scope: its prefix, or the module name at the top.
+/// Storage class of a declaration: no type or `wire` is a net, `bit` and `int` are
+/// 2-state variables, anything else is a 4-state variable.
+pub(crate) fn sig_kind(kind: Option<&DataKind>) -> SigKind {
+    match kind {
+        None | Some(DataKind::Wire) => SigKind::Net,
+        Some(DataKind::Bit | DataKind::Int) => SigKind::TwoState,
+        _ => SigKind::Variable,
+    }
+}
+
 pub(crate) fn scope_label(scope: &Scope) -> String {
     let p = scope.prefix.trim_end_matches('.');
     if p.is_empty() {

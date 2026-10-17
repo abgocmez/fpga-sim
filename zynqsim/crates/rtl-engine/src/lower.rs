@@ -8,6 +8,7 @@
 
 use crate::elab::{Elab, Scope, Sym};
 use crate::ir::{Arg, Edge, Ex, K, LPart, LVal, Op, SigId, Sys, Trigger};
+use crate::value::{CaseMode, Value4, radix_bits};
 use rtl_frontend::Pos;
 use rtl_frontend::ast::{
     BinOp, CaseKind, DataKind, Expr, ExprKind, Routine, RoutineKind, Stmt, StmtKind, UnOp,
@@ -106,48 +107,27 @@ fn number_value(n: &Number) -> u128 {
     v
 }
 
-/// Value and care mask of a casez/casex label (wildcard digits are don't-care bits).
-pub(crate) fn wildcard_label(n: &Number, cw: u32) -> (u128, u128) {
+/// The value of a number literal at its own width `lw`, with its X and Z digits.
+///
+/// Binary, octal and hexadecimal digits expand to their bits (`x` is unknown, `z` and
+/// `?` are Z). A literal shorter than its size is extended with its leftmost digit's
+/// state when that is X or Z, and with zeros otherwise. A decimal literal is known
+/// unless it is a single `x` or `z` digit, which makes every bit unknown.
+fn number_bits(n: &Number, lw: u32) -> Value4 {
     let bpd: u32 = match n.base {
         'b' => 1,
         'o' => 3,
         'h' => 4,
         _ => 0,
     };
-    if bpd == 0 || is_fill(n) {
-        let v = if is_fill(n) && n.digits == "1" {
-            u128::MAX
-        } else {
-            number_value(n)
+    if bpd == 0 {
+        return match n.digits.chars().find(|c| matches!(c, 'x' | 'z' | '?')) {
+            Some('x') => Value4::all_x(lw),
+            Some(_) => Value4::all_z(lw),
+            None => Value4::known(number_value(n)).norm(lw),
         };
-        let care = if is_fill(n) && matches!(n.digits.as_str(), "x" | "z") {
-            0
-        } else {
-            u128::MAX
-        };
-        return (v & care & mask_w(cw), care & mask_w(cw));
     }
-    let (mut v, mut care) = (0u128, 0u128);
-    for c in n.digits.bytes() {
-        let wild = matches!(c, b'x' | b'z' | b'?');
-        let d = (c as char).to_digit(1 << bpd).unwrap_or(0) as u128;
-        let all = (1u128 << bpd) - 1;
-        v = (v << bpd) | if wild { 0 } else { d };
-        care = (care << bpd) | if wild { 0 } else { all };
-    }
-    let lw = match n.size {
-        Some(s) => s,
-        None => n.digits.len() as u32 * bpd,
-    };
-    let lw = lw.clamp(1, 128);
-    v &= mask_w(lw);
-    care &= mask_w(lw);
-    if cw > lw {
-        // Zero-extended label bits are real zeros, so they must match.
-        let ext = mask_w(cw) & !mask_w(lw);
-        care |= ext;
-    }
-    (v & care & mask_w(cw), care & mask_w(cw))
+    radix_bits(&n.digits, bpd, lw)
 }
 
 fn mask_w(w: u32) -> u128 {
@@ -155,6 +135,15 @@ fn mask_w(w: u32) -> u128 {
         u128::MAX
     } else {
         (1u128 << w) - 1
+    }
+}
+
+/// The node for a literal: a constant when it has no X or Z bits.
+fn literal_kind(v: Value4) -> K {
+    if v.unknown == 0 {
+        K::Const(v.bits)
+    } else {
+        K::Lit(v)
     }
 }
 
@@ -424,18 +413,21 @@ impl<'p> Elab<'p> {
         match &e.kind {
             ExprKind::Number(n) => {
                 if is_fill(n) {
-                    let v = if n.digits == "1" { mask_w(w) } else { 0 };
-                    return Some(Ex {
-                        w,
-                        s,
-                        k: K::Const(v),
-                    });
+                    // `'0`, `'1`, `'x`, `'z` fill the whole context width.
+                    let k = match n.digits.as_str() {
+                        "1" => K::Const(mask_w(w)),
+                        "x" => K::Lit(Value4::all_x(w)),
+                        "z" | "?" => K::Lit(Value4::all_z(w)),
+                        _ => K::Const(0),
+                    };
+                    return Some(Ex { w, s, k });
                 }
                 let (lw, ls) = number_shape(n);
+                let v = number_bits(n, lw);
                 let raw = Ex {
                     w: lw,
                     s: ls,
-                    k: K::Const(number_value(n) & mask_w(lw)),
+                    k: literal_kind(v),
                 };
                 Some(resize(raw, w, s))
             }
@@ -1562,34 +1554,21 @@ impl<'p> Elab<'p> {
                 default_item = Some(i);
                 continue;
             }
+            let mode = match kind {
+                CaseKind::Case => CaseMode::Exact,
+                CaseKind::Casez => CaseMode::Z,
+                CaseKind::Casex => CaseMode::Xz,
+            };
             for l in &it.labels {
-                let m = match (&l.kind, kind) {
-                    (ExprKind::Number(n), CaseKind::Casez | CaseKind::Casex) => {
-                        let (v, care) = wildcard_label(n, cw);
-                        Some(Ex {
-                            w: 1,
-                            s: false,
-                            k: K::MaskEq {
-                                a: Box::new(sel.clone()),
-                                b: Box::new(Ex {
-                                    w: cw,
-                                    s: false,
-                                    k: K::Const(v),
-                                }),
-                                mask: care,
-                            },
-                        })
-                    }
-                    _ => self.lower(l, cw, cs, sc).map(|lab| Ex {
-                        w: 1,
-                        s: false,
-                        k: K::MaskEq {
-                            a: Box::new(sel.clone()),
-                            b: Box::new(lab),
-                            mask: mask_w(cw),
-                        },
-                    }),
-                };
+                let m = self.lower(l, cw, cs, sc).map(|lab| Ex {
+                    w: 1,
+                    s: false,
+                    k: K::CaseEq {
+                        a: Box::new(sel.clone()),
+                        b: Box::new(lab),
+                        mode,
+                    },
+                });
                 let Some(m) = m else { return };
                 dispatch.push((b.code.len(), i));
                 b.code.push(Op::JumpIf { cond: m, to: 0 });

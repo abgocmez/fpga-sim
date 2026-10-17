@@ -7,9 +7,10 @@ use common::build;
 
 #[test]
 fn continuous_assign_follows_its_input_at_time_zero_and_after_a_change() {
+    // `a` starts at 0 here: an uninitialised reg is X (see the 4-state tests).
     let mut s = build(
         "t",
-        "module t; reg [7:0] a; wire [7:0] y = a + 8'd1; endmodule",
+        "module t; reg [7:0] a = 0; wire [7:0] y = a + 8'd1; endmodule",
     );
     s.run_until(0).unwrap();
     assert_eq!(s.get("y"), Some(1));
@@ -111,11 +112,21 @@ fn delays_advance_time_in_the_module_time_unit() {
 
 #[test]
 fn a_combinational_loop_is_reported_not_hung() {
-    // Time zero runs when the simulator is created, so the loop is reported there.
-    let err = common::try_build("t", "module t; wire a; assign a = ~a; endmodule")
-        .err()
-        .expect("oscillation must be reported");
-    assert!(err[0].contains("combinational loop"), "{err:?}");
+    // A ring of three inverters oscillates once its input changes. (A single net that
+    // feeds itself through `~` settles at X, which is a fixed point, and a process does
+    // not see the change it made itself: see the 4-state tests.)
+    let src = "module t; reg a, b, c;
+        always @(a) b = ~a;
+        always @(b) c = ~b;
+        always @(c) a = ~c;
+        initial #1 a = 0;
+      endmodule";
+    let mut s = common::build("t", src);
+    // `#1` is one time unit (1 ns by default): the loop starts at 1000 ps.
+    let err = s
+        .run_until(1_000)
+        .expect_err("oscillation must be reported");
+    assert!(err.message.contains("combinational loop"), "{err:?}");
 }
 
 #[test]
