@@ -2,6 +2,7 @@
 //! `mem_sys::ZYNQ_MAP`, with DDR and the on-chip RAM provided by the bus itself.
 
 use crate::can::Can;
+use crate::ddrc::DdrC;
 use crate::devcfg::DevCfg;
 use crate::gpio::Gpio;
 use crate::i2c::I2c;
@@ -78,7 +79,7 @@ pub fn zynq_system(cfg: &PsConfig) -> Result<(SystemBus, PsHandles), MapError> {
     attach(&mut bus, "SLCR", Box::new(Slcr::new()))?;
     attach(&mut bus, "TTC0", Box::new(Ttc::new(0)))?;
     attach(&mut bus, "TTC1", Box::new(Ttc::new(1)))?;
-    attach(&mut bus, "DDRC", Box::new(Stub::new("DDRC")))?;
+    attach(&mut bus, "DDRC", Box::new(DdrC::new()))?;
     let (dc, devcfg) = shared(DevCfg::new());
     attach(&mut bus, "DEVCFG", Box::new(dc))?;
     attach(&mut bus, "EFUSE", Box::new(Stub::new("EFUSE")))?;

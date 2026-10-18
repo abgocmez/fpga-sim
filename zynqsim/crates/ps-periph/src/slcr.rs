@@ -22,8 +22,6 @@ const LOCK: u64 = 0x004;
 const UNLOCK: u64 = 0x008;
 const LOCKSTA: u64 = 0x00C;
 const PSS_RST_CTRL: u64 = 0x200;
-const MIO_FIRST: u64 = 0x700;
-const MIO_LAST: u64 = 0x7D4;
 
 /// One named SLCR register.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,6 +91,13 @@ pub const REGS: &[SlcrReg] = &[
     },
     SlcrReg {
         offset: 0x140,
+        name: "GEM0_CLK_CTRL",
+        reset: 0x0000_0F03,
+        write_mask: 0xFFFF_FFFF,
+        protected: true,
+    },
+    SlcrReg {
+        offset: 0x154,
         name: "UART_CLK_CTRL",
         reset: 0x0000_0F03,
         write_mask: 0xFFFF_FFFF,
@@ -132,6 +137,13 @@ pub const REGS: &[SlcrReg] = &[
         reset: 0x0000_0000,
         write_mask: 0x0000_001F,
         protected: true,
+    },
+    SlcrReg {
+        offset: 0xB74,
+        name: "DDRIOB_DCI_STATUS",
+        reset: 0x0000_2000,
+        write_mask: 0,
+        protected: false,
     },
 ];
 
@@ -215,7 +227,7 @@ impl Device for Slcr {
                             self.soft_reset_requested = v & 1 != 0;
                         }
                     }
-                } else if (MIO_FIRST..=MIO_LAST).contains(&a) && !self.locked {
+                } else if !self.locked {
                     self.values.insert(a, w);
                 }
             }

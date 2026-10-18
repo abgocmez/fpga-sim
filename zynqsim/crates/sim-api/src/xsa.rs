@@ -1112,10 +1112,12 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
             Some(b) => BootSection {
                 mode: "boot_bin".to_string(),
                 file: Some(b.image_name.clone()),
+                ps7_init: Some(true),
             },
             None => BootSection {
                 mode: "elf".to_string(),
                 file: None,
+                ps7_init: Some(true),
             },
         }),
         cpu0: boot_init.is_none().then(|| CpuSection { elf: esc(&elf) }),

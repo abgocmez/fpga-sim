@@ -13,6 +13,7 @@ mod catalog;
 mod filelist;
 mod hwh;
 mod model;
+pub mod ps7_init;
 
 pub use catalog::{IpClass, classify};
 pub use filelist::{FileListEntry, parse_filelist};
@@ -21,6 +22,7 @@ pub use model::{
     AddrRange, BusInterface, ClockLink, Design, FclkInfo, IntcLink, IpInstance, IrqLink, MioPin,
     Port, PortConnection, Ps7, PsPeripheral, ResetLink, SourceFile, SourceKind,
 };
+pub use ps7_init::{ClockTree, Ps7InitOp, derive_clock_tree, parse_ps7_init_tcl};
 
 use std::io::Read;
 use std::path::Path;
@@ -46,6 +48,10 @@ pub struct Archive {
     pub sources: Vec<SourceFile>,
     /// `ps7_init.*` files present (names only).
     pub ps7_init: Vec<String>,
+    /// Parsed operations from `ps7_init.tcl` if present in the archive.
+    pub ps7_init_ops: Vec<Ps7InitOp>,
+    /// Derived clock tree if `ps7_init.tcl` was present and parsed.
+    pub clock_tree: Option<ClockTree>,
     /// A bitstream (`.bit`) is part of the archive.
     pub has_bitstream: bool,
 }
@@ -126,7 +132,7 @@ pub fn read_bytes(bytes: &[u8], label: &str) -> Result<Handoff, XsaError> {
             archive.has_bitstream = true;
         }
         let kind = SourceKind::from_name(&lower);
-        let wanted = lower.ends_with(".hwh") || kind.is_some();
+        let wanted = lower.ends_with(".hwh") || kind.is_some() || base == "ps7_init.tcl";
         if !wanted {
             continue;
         }
@@ -142,6 +148,11 @@ pub fn read_bytes(bytes: &[u8], label: &str) -> Result<Handoff, XsaError> {
         if lower.ends_with(".hwh") {
             if hwh.is_none() {
                 hwh = Some((name, text));
+            }
+        } else if base == "ps7_init.tcl" {
+            if let Ok(ops) = parse_ps7_init_tcl(&text) {
+                archive.clock_tree = Some(derive_clock_tree(&ops));
+                archive.ps7_init_ops = ops;
             }
         } else if let Some(kind) = kind {
             archive.sources.push(SourceFile {

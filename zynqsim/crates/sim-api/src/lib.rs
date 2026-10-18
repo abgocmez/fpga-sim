@@ -22,6 +22,7 @@ mod netlog;
 mod pl_attach;
 mod project;
 pub mod protocol;
+pub mod ps7_init;
 mod qemu_engine;
 mod recording;
 mod server;

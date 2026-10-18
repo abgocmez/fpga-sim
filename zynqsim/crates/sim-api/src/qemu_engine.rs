@@ -195,6 +195,8 @@ pub struct QemuSpec {
     pub ps_extra_blocks: bool,
     /// CPU clock in Hz for the A9 timers (`[ps] cpu_clock`), see ADR-029.
     pub cpu_clock_hz: Option<u32>,
+    /// ps7_init operations to replay before CPU start.
+    pub ps7_init_ops: Vec<xsa_import::Ps7InitOp>,
 }
 
 fn make_device(port: u8, kind: &str) -> Result<Box<dyn BoardDevice>, ApiError> {
@@ -673,6 +675,9 @@ impl QemuEngine {
         cfg.cpu_clock_hz = spec.cpu_clock_hz;
         let storage = Self::attach_storage(spec, &mut cfg)?;
         let mut machine = QemuMachine::spawn(&cfg).map_err(map_err)?;
+        if !spec.ps7_init_ops.is_empty() {
+            crate::ps7_init::replay_qemu(&mut machine, &spec.ps7_init_ops)?;
+        }
         let mut pl = TracedPl {
             inner: pl,
             events: Vec::new(),

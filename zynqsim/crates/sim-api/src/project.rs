@@ -143,6 +143,10 @@ pub struct BootSection {
     /// partitions are loaded and started; the FSBL is not run (ADR-018).
     #[serde(default)]
     pub file: Option<String>,
+    /// Whether to replay `ps7_init` sequence before CPU start.
+    /// Defaults to true when an XSA or `ps7_init.tcl` is available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ps7_init: Option<bool>,
 }
 
 /// `[cpu0]` / `[cpu1]` sections.
@@ -933,6 +937,8 @@ impl Project {
                 errors.join("\n  ")
             )));
         }
+        let ps7_init = crate::ps7_init::load_project_ps7_init(self, base)?;
+        let (ps7_init_ops, clock_tree) = ps7_init.unwrap_or_default();
         match self.backends.ps.as_str() {
             "demo" => Ok(Box::new(crate::Simulator::with_def(
                 self.board_def(base)?,
@@ -1036,7 +1042,20 @@ impl Project {
                     },
                     storage: self.storage_spec(base)?,
                     ps_extra_blocks: self.ps.as_ref().is_some_and(|p| p.extra_blocks),
-                    cpu_clock_hz: cpu_clock_of(self.ps.as_ref())?,
+                    cpu_clock_hz: match self.ps.as_ref().and_then(|p| {
+                        if p.cpu_clock == DEFAULT_CPU_CLOCK {
+                            None
+                        } else {
+                            Some(&p.cpu_clock)
+                        }
+                    }) {
+                        Some(custom) => parse_cpu_clock(custom).map(Some)?,
+                        None => clock_tree
+                            .as_ref()
+                            .map(|ct| ct.cpu_hz as u32)
+                            .or_else(|| cpu_clock_of(self.ps.as_ref()).ok().flatten()),
+                    },
+                    ps7_init_ops: ps7_init_ops.clone(),
                 };
                 let mut engine = crate::QemuEngine::new(&spec)?;
                 if let Some(m) = &self.media {
@@ -1076,6 +1095,7 @@ impl Project {
                         .collect(),
                     natives: self.native_instances()?,
                     rtl_native: self.rtl_native_spec(base)?,
+                    ps7_init_ops,
                 };
                 Ok(Box::new(crate::NativePsEngine::new(&spec)?))
             }

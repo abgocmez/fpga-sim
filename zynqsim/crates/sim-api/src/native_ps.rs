@@ -129,6 +129,8 @@ pub struct NativeSpec {
     pub natives: Vec<NativeInstance>,
     /// An RTL design on the native RTL engine (`backends.pl = "rtl-native"`), on a GP port.
     pub rtl_native: Option<RtlNativeSpec>,
+    /// ps7_init operations to replay before CPU start.
+    pub ps7_init_ops: Vec<xsa_import::Ps7InitOp>,
 }
 
 /// The loadable part of an ELF: the entry point and the segments (addresses and bytes, with
@@ -271,6 +273,9 @@ impl NativePsEngine {
                 bus.load(u64::from(BOOT_ROM_PARK) + 4 * i as u64, &word.to_le_bytes())
                     .map_err(|_| ApiError::internal("the boot ROM parking loop does not fit"))?;
             }
+        }
+        if !spec.ps7_init_ops.is_empty() {
+            crate::ps7_init::replay_native(&mut bus, &spec.ps7_init_ops)?;
         }
         // Power-up bring-up of both UARTs: 115200 8N1 (BAUDGEN 124, BDIV 6 from the 100 MHz
         // reference), both directions enabled. On hardware the FSBL does this; the Xilinx QEMU
@@ -1375,6 +1380,7 @@ mod tests {
             source_dirs: Vec::new(),
             natives: Vec::new(),
             rtl_native: None,
+            ps7_init_ops: Vec::new(),
         }
     }
 

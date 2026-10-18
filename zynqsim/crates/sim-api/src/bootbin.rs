@@ -213,6 +213,7 @@ pub fn plan_project(bin: &Path) -> Result<BootInit, ApiError> {
         boot: Some(BootSection {
             mode: "boot_bin".to_string(),
             file: Some(image_name.clone()),
+            ps7_init: None,
         }),
         cpu0: None::<CpuSection>,
         cpu1: None,

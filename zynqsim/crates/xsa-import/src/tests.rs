@@ -14,6 +14,11 @@ fn the_vivado_2022_1_fixture_is_read() {
     assert_eq!(d.device.as_deref(), Some("7z020"));
     assert_eq!(d.hwh_file.as_deref(), Some("design_1.hwh"));
     assert!(h.archive.ps7_init.iter().any(|n| n == "ps7_init.tcl"));
+    assert_eq!(h.archive.ps7_init_ops.len(), 213);
+    let ct = h.archive.clock_tree.as_ref().expect("clock tree");
+    assert_eq!(ct.ps_clk_hz, 33_333_333);
+    assert_eq!(ct.cpu_hz, 666_666_660);
+    assert_eq!(ct.uart_hz, 99_999_999);
     assert!(!h.archive.has_bitstream);
 
     // PS7 configuration.

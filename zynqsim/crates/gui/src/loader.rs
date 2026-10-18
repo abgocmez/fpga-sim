@@ -184,6 +184,7 @@ impl ProjectDraft {
                 p.boot = Some(sim_api::BootSection {
                     mode: "elf".to_string(),
                     file: None,
+                    ps7_init: None,
                 });
             }
         } else {

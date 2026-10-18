@@ -21,6 +21,7 @@
 
 pub mod can;
 pub mod clock;
+pub mod ddrc;
 pub mod devcfg;
 pub mod gic;
 pub mod gpio;
@@ -34,6 +35,7 @@ pub mod ttc;
 pub mod uart;
 
 pub use can::Can;
+pub use ddrc::DdrC;
 pub use devcfg::DevCfg;
 pub use gic::{Gic, NCPU, NUM_IRQS};
 pub use gpio::Gpio;
