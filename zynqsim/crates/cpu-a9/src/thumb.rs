@@ -667,6 +667,9 @@ impl Cpu {
     // ----- 32-bit encodings ---------------------------------------------------------------
 
     fn exec32(&mut self, bus: &mut dyn Bus, insn: u32) -> Flow {
+        if crate::vfp::is_fp_space(insn) {
+            return self.vfp_insn(bus, insn);
+        }
         let hw1 = insn >> 16;
         let hw2 = insn & 0xFFFF;
         match (hw1 >> 11) & 3 {
@@ -1148,17 +1151,44 @@ impl Cpu {
         let rm = hw2 & 0xF;
         let rn = hw1 & 0xF;
         if hw1 & 0x80 != 0 {
-            let v = self.r[rm as usize];
-            let out = match ((hw1 >> 4) & 0xF, (hw2 >> 4) & 0xF) {
-                (0x9, 0x8) => v.swap_bytes(),
-                (0x9, 0x9) => rev16(v),
-                (0x9, 0xA) => v.reverse_bits(),
-                (0x9, 0xB) => ((v as u16).swap_bytes() as i16) as i32 as u32,
-                (0xB, 0x8) => v.leading_zeros(),
-                _ => return Flow::Unimpl,
-            };
-            self.r[rd as usize] = out;
-            return Flow::Done;
+            let top1 = (hw1 >> 4) & 0xF;
+            let top2 = (hw2 >> 4) & 0xF;
+            if top2 >= 8 {
+                if top1 == 0xA && top2 == 0x8 {
+                    return self.sel(rd, rn, rm);
+                }
+                let v = self.r[rm as usize];
+                let out = match (top1, top2) {
+                    (0x9, 0x8) => v.swap_bytes(),
+                    (0x9, 0x9) => rev16(v),
+                    (0x9, 0xA) => v.reverse_bits(),
+                    (0x9, 0xB) => ((v as u16).swap_bytes() as i16) as i32 as u32,
+                    (0xB, 0x8) => v.leading_zeros(),
+                    _ => return Flow::Unimpl,
+                };
+                self.r[rd as usize] = out;
+                return Flow::Done;
+            }
+            if (top2 & 3) != 3 {
+                let sub_lanes = match top1 {
+                    0x8 => 4, // 8-bit add (SADD8, QADD8, SHADD8, UADD8, UQADD8, UHADD8)
+                    0x9 => 0, // 16-bit add (SADD16, QADD16, SHADD16, UADD16, UQADD16, UHADD16)
+                    0xA => 1, // 16-bit asx (SASX, QASX, SHASX, UASX, UQASX, UHASX)
+                    0xC => 7, // 8-bit sub (SSUB8, QSUB8, SHSUB8, USUB8, UQSUB8, UHSUB8)
+                    0xD => 3, // 16-bit sub (SSUB16, QSUB16, SHSUB16, USUB16, UQSUB16, UHSUB16)
+                    0xE => 2, // 16-bit sax (SSAX, QSAX, SHSAX, USAX, UQSAX, UHSAX)
+                    _ => return Flow::Unimpl,
+                };
+                let signed = (top2 & 4) == 0;
+                let mode = match top2 & 3 {
+                    0 => crate::media::Lanes::Plain,
+                    1 => crate::media::Lanes::Sat,
+                    2 => crate::media::Lanes::Half,
+                    _ => return Flow::Unimpl,
+                };
+                return self.parallel_core(mode, signed, sub_lanes, rn, rd, rm);
+            }
+            return Flow::Unimpl;
         }
         if hw2 & 0x80 == 0 {
             // LSL, LSR, ASR and ROR by a register; the low byte of Rm is the amount.
@@ -1179,12 +1209,23 @@ impl Cpu {
         let ext = match op {
             0 => (x as u16 as i16) as i32 as u32,
             1 => x & 0xFFFF,
+            2 => {
+                let l = (x as u8 as i8 as i32 as u32) & 0xFFFF;
+                let h = ((x >> 16) as u8 as i8 as i32 as u32) & 0xFFFF;
+                (h << 16) | l
+            }
+            3 => x & 0x00FF_00FF,
             4 => (x as u8 as i8) as i32 as u32,
             5 => x & 0xFF,
-            _ => return Flow::Unimpl, // SXTB16 and UXTB16 (2, 3) are not modelled
+            _ => return Flow::Unimpl,
         };
         let v = if rn == 15 {
             ext
+        } else if op == 2 || op == 3 {
+            let n = self.r[rn as usize];
+            let l = ((n & 0xFFFF).wrapping_add(ext & 0xFFFF)) & 0xFFFF;
+            let h = ((n >> 16).wrapping_add(ext >> 16)) & 0xFFFF;
+            (h << 16) | l
         } else {
             self.r[rn as usize].wrapping_add(ext)
         };

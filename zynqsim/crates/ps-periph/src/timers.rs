@@ -142,7 +142,10 @@ impl Countdown {
             0x00 | 0x04 | 0x08 => {
                 let (a, w) = lane_merge(offset, size, value, self.word(a))?;
                 match a {
-                    0x00 => self.load = w,
+                    0x00 => {
+                        self.load = w;
+                        self.counter = w;
+                    }
                     0x04 => {
                         self.counter = w;
                     }

@@ -57,3 +57,4 @@ contract with the camera is:
   deterministic across runs (`pcam-demo` in `determinism.rs`).
 * Designs that instantiate a real MIPI D-PHY / CSI-2 RX core at the bit level cannot be driven by
   this model without replacing the CSI-2 RX front end with the parallel pixel bridge.
+

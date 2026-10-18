@@ -71,7 +71,12 @@ impl Cpu {
         let dbit = field(insn, 22, 22);
         let imm8 = field(insn, 7, 0);
         let base = if rn == 15 {
-            self.cur.wrapping_add(8) & !3
+            let offset = if self.cpsr & crate::state::T_BIT != 0 {
+                4
+            } else {
+                8
+            };
+            self.cur.wrapping_add(offset) & !3
         } else {
             self.r[rn as usize]
         };

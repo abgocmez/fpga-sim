@@ -51,7 +51,7 @@ regenerates with `zynqsim init --xsa`.
 |---|---|---|
 | a. PS only | rust-hello, native-hello, native-thumb, dual-core-native, dual-core-qemu, conf-scutimer, conf-ttc, bsp-hello, timer-rate, conf-iicps, conf-spips, conf-xadcps, conf-gpiops, conf-dmaps | UART1 text, `RESULT: ALL PASS` where the firmware prints it. Conformance checks that QEMU does not model are N/A, not PASS. bsp-hello is Xilinx's own Hello World, built unmodified |
 | b. PL through QEMU and XSim | math-qemu (native PL model), dma-regression, irq-demo, board-demo, oled-demo, rgb-demo, tmp2-demo, als-demo, acl-demo, pmod-simple-demo, pcam-demo | UART results; board-demo LED duty values after scripted switch and shell input; the OLED picture (PNG); RGB duty values in `--json`; the temperature, light and acceleration you set come back in the firmware's readings |
-| c. Other RTL backends | math-verilator, math-icarus, native-gpio-timer-uart, rtl-check | same trace hash for the math design through XSim, Verilator and Icarus (printed side by side); `rtl-check` on `fixtures/rtl/math/my_math_ip.v` finds no diagnostics |
+| c. Other RTL backends | math-verilator, math-icarus, native-gpio-timer-uart, native-math, rtl-check | same trace hash for the math design through XSim, Verilator and Icarus (printed side by side); native-math passes all 7 vectors natively without external tools; `rtl-check` on `fixtures/rtl/math/my_math_ip.v` finds no diagnostics |
 | d. Media | hdmi-demo (frame PNG), audio-demo (WAV) | UART results; PNG and RIFF/WAVE headers |
 | e. Network and storage | net-demo (pcap), sd-demo, qspi-demo | 4/4 ping replies; pcap header; `HELLO.TXT` read back from the FAT card; QSPI erase and program read-back |
 | f. Vendor IP | gpio-timer-uart, dma-loopback, dma-sg, iic-bram-demo, intc-demo, timer-modes | UART results of the AXI GPIO, timer, UART Lite, DMA (simple and scatter-gather), IIC and BRAM, interrupt controller, capture mode with a scripted button press |
@@ -258,8 +258,6 @@ protocol. Type `uart` to show only those lines; **copy visible** puts the shown 
 From docs/STATUS.md and the example headers. Each item is either not run by the tour, or shown as
 SKIPPED or N/A.
 
-- **native-math** (`examples/native-math`): the Xilinx boot code reads the unmapped address 0xF800D010
-  before `main`; a data abort, then the abort vector loops silently. Not faked (ADR-035).
 - **bsp-peripherals** (Xilinx's peripheral test application): on this QEMU machine the CAN and
   device-configuration self tests FAIL (those peripherals are not in the model), and the SCU watchdog
   interrupt test never returns. Not in the tour; see docs/conformance/bsp-apps.md.

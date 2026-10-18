@@ -2,11 +2,10 @@
 # XSim. The PL is the prototype's `my_math_ip` RTL (fixtures/rtl/math), simulated by the
 # native RTL engine (backends.pl = "rtl-native", ADR-034) and served on M_AXI_GP0.
 #
-#   zynqsim run --project examples/native-math/project.toml --for 2ms
+#   zynqsim run --project examples/native-math/project.toml --for 30ms
 #
-# NOT YET RUNNING (ADR-035): the Xilinx boot code (boot.S) reads 0xF800D010, which the native
-# PS does not map (a data abort, then the abort vector loops). Nothing is faked: the run stalls.
-#   expect the same UART text as examples/math-qemu ("ALL PASS" for its 7 vector tests)
+# Passes all 7 vector tests producing "RESULT: ALL PASS" and "COSIM_DONE" with
+# ps = "native" and pl = "rtl-native" (100% Rust in-process, no external tools).
 schema_version = 1
 
 [board]

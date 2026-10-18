@@ -595,3 +595,29 @@ fn msr_and_mrs_of_the_status_registers() {
         "MSR wrote the flags"
     );
 }
+
+#[test]
+fn thumb2_parallel_uadd8_and_sel() {
+    // UADD8 r2, r2, r12 (0xFA82 0xF24C) followed by SEL r0, r1, r3 (0xFAA1 0xF083)
+    let mut m = machine(&[0xFA82, 0xF24C, 0xFAA1, 0xF083], 0);
+    m.cpu.set_reg(2, 0x01_FE_00_80);
+    m.cpu.set_reg(12, 0x02_03_04_05);
+    m.cpu.set_reg(1, 0xAA_BB_CC_DD);
+    m.cpu.set_reg(3, 0x11_22_33_44);
+    m.run(1);
+    // UADD8:
+    // byte 0: 0x80 + 0x05 = 0x85 (no carry -> GE[0]=0)
+    // byte 1: 0x00 + 0x04 = 0x04 (no carry -> GE[1]=0)
+    // byte 2: 0xFE + 0x03 = 0x101 -> 0x01 (carry -> GE[2]=1)
+    // byte 3: 0x01 + 0x02 = 0x03 (no carry -> GE[3]=0)
+    assert_eq!(m.r(2), 0x03_01_04_85);
+    assert_eq!((m.cpu.cpsr() >> 16) & 0xF, 0b0100, "GE bits set by UADD8");
+
+    // SEL r0, r1, r3: byte 2 comes from r1 (GE[2]=1), others from r3 (GE=0)
+    m.run(1);
+    assert_eq!(
+        m.r(0),
+        0x11_BB_33_44,
+        "SEL selected byte 2 from r1, others from r3"
+    );
+}

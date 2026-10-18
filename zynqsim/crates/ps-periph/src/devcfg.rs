@@ -71,6 +71,7 @@ struct Xadc {
     mctl: u32,
     drp: Vec<u16>,
     rdfifo: VecDeque<u16>,
+    last_read: Option<u16>,
 }
 
 impl Xadc {
@@ -86,6 +87,7 @@ impl Xadc {
             mctl: 0,
             drp,
             rdfifo: VecDeque::new(),
+            last_read: None,
         }
     }
 
@@ -95,16 +97,29 @@ impl Xadc {
         let addr = ((word >> 16) & 0x3FF) as usize;
         let data = (word & 0xFFFF) as u16;
         match cmd {
+            0 => {
+                if let Some(v) = self.last_read.take() {
+                    if self.rdfifo.len() < RDFIFO_DEPTH {
+                        self.rdfifo.push_back(v);
+                    }
+                }
+            }
             1 => {
                 let v = self.drp.get(addr).copied().unwrap_or(0);
+                self.last_read = Some(v);
                 if self.rdfifo.len() < RDFIFO_DEPTH {
                     self.rdfifo.push_back(v);
                 }
             }
-            2 if (DRP_RW_BASE..DRP_SIZE).contains(&addr) => {
-                self.drp[addr] = data;
+            2 => {
+                self.last_read = None;
+                if (DRP_RW_BASE..DRP_SIZE).contains(&addr) {
+                    self.drp[addr] = data;
+                }
             }
-            _ => {}
+            _ => {
+                self.last_read = None;
+            }
         }
     }
 

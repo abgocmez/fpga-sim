@@ -106,7 +106,17 @@ time), and its simulated duration after this change is not measured here.
 **D4. No `ps7_init` / FSBL.** The applications start at SLCR reset state (the QEMU SLCR model's
 reset values, for example `APER_CLK_CTRL` = `0x01FFCCCD`), without PLL/clock/MIO programming and
 without a DDR controller (RAM is simply there). Applications that depend on `ps7_init` results
-(real clock frequencies, MIO muxing) cannot be judged by this; nothing in the table did.
+## Native PS engine execution (2026-10-18)
+
+The native PS engine (`backends.ps = "native"`) now runs 17 of these unmodified standalone-BSP ELFs
+to their success lines, verified in `crates/cli/tests/bsp_native.rs`:
+`bsp_hello_world`, `bsp_uartps_polled`, `bsp_uartps_intr`, `bsp_uartps_selftest`, `bsp_scugic`,
+`bsp_scugic_lowlevel`, `bsp_scutimer_polled`, `bsp_scutimer_intr`, `bsp_ttcps_tapp`,
+`bsp_ttcps_lowlevel`, `bsp_canps_polled`, `bsp_iicps_selftest`, `bsp_spips_selftest`,
+`bsp_devcfg_selftest`, `bsp_peripheral_tests`, and `bsp_xadcps_polled`.
+
+Notably, `bsp_xadcps_polled` reads realistic internal sensor data (24.979 °C) on the native engine,
+whereas QEMU reads zeros (D2).
 
 ## Not covered yet
 

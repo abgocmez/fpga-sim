@@ -156,6 +156,14 @@ pub const ZYNQ_MAP: &[MapEntry] = &[
         note: "UG585 ch.6 (device config; XADC registers at 0xF8007100 are not modelled here). Reads zero",
     },
     MapEntry {
+        name: "EFUSE",
+        base: 0xF800_D000,
+        size: 0x1000,
+        kind: Kind::Stub,
+        model: "ps-periph::stub EFUSE",
+        note: "UG585 ch.15 (eFuse controller, EFUSE_STATUS 0x10). Reads zero",
+    },
+    MapEntry {
         name: "OCM",
         base: 0xFFFC_0000,
         size: 0x0004_0000,

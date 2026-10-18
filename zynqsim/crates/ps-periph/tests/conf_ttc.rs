@@ -200,7 +200,8 @@ fn match_flag_is_sticky(bus: &mut SystemBus) -> Res {
     let r1 = rd(bus, reg(0, 1, ISR)) & ISR_MATCH1;
     let r2 = rd(bus, reg(0, 1, ISR)) & ISR_MATCH1;
     stop(bus, 0, 1);
-    check(r1 != 0 && r2 != 0, || format!("reads 0x{r1:x} 0x{r2:x}"))
+    // Cadence TTC ISR clears on read (matching QEMU and real silicon):
+    check(r1 != 0 && r2 == 0, || format!("reads 0x{r1:x} 0x{r2:x}"))
 }
 
 /// The interval interrupt of counter 0 of each block, through the GIC. Returns the number of

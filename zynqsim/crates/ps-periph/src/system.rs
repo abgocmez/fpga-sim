@@ -81,6 +81,7 @@ pub fn zynq_system(cfg: &PsConfig) -> Result<(SystemBus, PsHandles), MapError> {
     attach(&mut bus, "DDRC", Box::new(Stub::new("DDRC")))?;
     let (dc, devcfg) = shared(DevCfg::new());
     attach(&mut bus, "DEVCFG", Box::new(dc))?;
+    attach(&mut bus, "EFUSE", Box::new(Stub::new("EFUSE")))?;
     let (gp, gpio) = shared(Gpio::new());
     attach(&mut bus, "GPIO", Box::new(gp))?;
     let (s0, spi0) = shared(Spi::new(0));

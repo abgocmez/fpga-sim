@@ -230,18 +230,14 @@ fn conf_ttc_matches_qemu_except_the_pinned_differences() {
     let native_text = run_until_marker(n.as_mut(), "RESULT:", Ps::from_ms(400));
 
     // Pinned (docs/conformance/native-ps.md):
-    // * check 12: QEMU clears the match flag on read and reports N/A; the native model clears
-    //   it only on a write of 1 (UG585) and passes.
     // * check 9: the firmware starts the decrement counter from the value check 8 left in it
     //   (it does not reset the counter), so the result depends on the instruction timing of
     //   the run. The native timing (one instruction per 1.5 ns) leaves 1009 ticks, and the
     //   two reads 14 us apart wrap the counter (209, then 64145). QEMU's timing passes. The
     //   UART back-pressure is not the cause: a 100 Mbaud UART gives the same numbers.
-    assert_checks_match_except(
-        &qemu_text,
-        &native_text,
-        &[(9, "PASS", "FAIL"), (12, "N/A", "PASS")],
-    );
+    // * check 12: both QEMU and the native model clear the ISR on read (matching silicon and
+    //   unmodified Xilinx BSP drivers), so both report N/A.
+    assert_checks_match_except(&qemu_text, &native_text, &[(9, "PASS", "FAIL")]);
     assert_eq!(non_check_lines(&native_text), non_check_lines(&qemu_text));
     assert_eq!(result_line(&qemu_text), "RESULT: ALL PASS");
     assert_eq!(

@@ -189,6 +189,11 @@ impl Device for Ttc {
     fn read(&mut self, offset: u64, size: u8) -> BusResult<u64> {
         let a = offset & !3;
         match decode(a) {
+            Some((Reg::Isr, n)) => {
+                let val = self.counters[n].isr;
+                self.counters[n].isr = 0;
+                lane_read(offset, size, val)
+            }
             Some((reg, n)) => lane_read(offset, size, self.word(reg, n)),
             None if a < 0x70 => lane_read(offset, size, 0),
             None => Err(BusFault::Unmapped(offset)),
@@ -327,19 +332,17 @@ mod tests {
     }
 
     #[test]
-    fn match_flag_is_sticky_until_written_one() {
+    fn match_flag_clears_on_read() {
         let mut t = Ttc::new(0);
         t.write(0x30 + 12, 4, 5).unwrap(); // counter 1, match 1
         t.write(0x0C + 4, 4, u64::from(CNT_MATCH_EN)).unwrap();
         t.tick(6 * 6 * 10);
         assert_ne!(t.read(0x54 + 4, 4).unwrap() & 4, 0);
-        assert_ne!(
+        assert_eq!(
             t.read(0x54 + 4, 4).unwrap() & 4,
             0,
-            "reading does not clear"
+            "reading clears the register"
         );
-        t.write(0x54 + 4, 4, 4).unwrap();
-        assert_eq!(t.read(0x54 + 4, 4).unwrap() & 4, 0);
     }
 
     #[test]

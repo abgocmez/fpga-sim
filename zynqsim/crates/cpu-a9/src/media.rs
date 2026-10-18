@@ -103,6 +103,12 @@ impl Cpu {
             self.write_gpr(rd, v);
             return Flow::Done;
         }
+        if insn & 0x0FF0_0FF0 == 0x0680_0FB0 {
+            let rn = (insn >> 16) & 0xF;
+            let rd = (insn >> 12) & 0xF;
+            let rm = insn & 0xF;
+            return self.sel(rd, rn, rm);
+        }
         if insn & 0x0F80_0000 == 0x0600_0000 {
             return self.parallel(insn);
         }
@@ -236,10 +242,26 @@ impl Cpu {
             _ => return Flow::Unimpl,
         };
         let signed = op1 < 4;
-        let a = self.reg_or_pc((insn >> 16) & 0xF, 0);
-        let b = self.reg_or_pc(insn & 0xF, 0);
+        let rn = (insn >> 16) & 0xF;
+        let rd = (insn >> 12) & 0xF;
+        let rm = insn & 0xF;
+        self.parallel_core(mode, signed, op2, rn, rd, rm)
+    }
+
+    /// The shared core for parallel addition and subtraction (used by both A32 and Thumb-2).
+    pub(crate) fn parallel_core(
+        &mut self,
+        mode: Lanes,
+        signed: bool,
+        sub_lanes: u32,
+        rn: u32,
+        rd: u32,
+        rm: u32,
+    ) -> Flow {
+        let a = self.reg_or_pc(rn, 0);
+        let b = self.reg_or_pc(rm, 0);
         // Per-lane (source a index, source b index, subtract?) for the lanes of this op.
-        let (width, lanes): (u32, [(usize, usize, bool); 4]) = match op2 {
+        let (width, lanes): (u32, [(usize, usize, bool); 4]) = match sub_lanes {
             0 => (
                 16,
                 [(0, 0, false), (1, 1, false), (0, 0, false), (0, 0, false)],
@@ -305,14 +327,32 @@ impl Cpu {
         if matches!(mode, Lanes::Plain) {
             self.cpsr = (self.cpsr & !GE_MASK) | (ge << 16);
         }
-        self.write_gpr((insn >> 12) & 0xF, result);
+        self.write_gpr(rd, result);
+        Flow::Done
+    }
+
+    /// SEL (Select Bytes): selects bytes from Rn or Rm based on CPSR.GE[3:0].
+    pub(crate) fn sel(&mut self, rd: u32, rn: u32, rm: u32) -> Flow {
+        let a = self.reg_or_pc(rn, 0);
+        let b = self.reg_or_pc(rm, 0);
+        let ge = (self.cpsr >> 16) & 0xF;
+        let mut result = 0u32;
+        for i in 0..4 {
+            let byte = if (ge >> i) & 1 != 0 {
+                (a >> (8 * i)) & 0xFF
+            } else {
+                (b >> (8 * i)) & 0xFF
+            };
+            result |= byte << (8 * i);
+        }
+        self.write_gpr(rd, result);
         Flow::Done
     }
 }
 
 /// The three result modes of the parallel family.
 #[derive(Clone, Copy)]
-enum Lanes {
+pub(crate) enum Lanes {
     /// Modular, sets GE.
     Plain,
     /// Saturating.

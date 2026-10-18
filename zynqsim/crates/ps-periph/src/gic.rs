@@ -256,6 +256,10 @@ impl Gic {
             0x800..=0x9FF => self.targets_word(cur, ((a - 0x800) / 4) as usize),
             0xC00..=0xC17 => self.cfg_word(cur, ((a - 0xC00) / 4) as usize),
             0xF10..=0xF2F => self.sgi_word(cur, ((a - 0xF10) % 0x10 / 4) as usize),
+            0xFF0 => 0x0D,
+            0xFF4 => 0xF0,
+            0xFF8 => 0x05,
+            0xFFC => 0xB1,
             _ => 0,
         }
     }

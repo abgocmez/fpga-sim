@@ -59,3 +59,4 @@ master's setup/hold window on the next clock edge would already have passed in s
   are not used by `tbgen`.
 * **Register and protocol facts.** The ADT7420 (`tmp2`), ADC081S021 (`als`) and ADXL345 (`acl`)
   models are written from datasheets as remembered and are marked `VERIFY:` in `STATUS.md`.
+

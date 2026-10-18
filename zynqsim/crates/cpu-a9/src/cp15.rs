@@ -21,6 +21,10 @@ const SCTLR_RESET: u32 = 0x00C5_0078;
 const MIDR: u32 = 0x413F_C090;
 /// CTR: 32 KiB, 32-byte-line L1 caches, the Cortex-A9 value.
 const CTR: u32 = 0x8444_C004;
+/// CLIDR: L1 separate I and D cache, LoC/LoUU/LoUIS = 1.
+const CLIDR: u32 = 0x0920_0003;
+/// CCSIDR: 32 KiB, 4-way, 32-byte lines (256 sets).
+const CCSIDR: u32 = 0x700F_E01A;
 
 /// The CP15 state of one core.
 #[derive(Clone, Debug)]
@@ -44,6 +48,14 @@ pub(crate) struct Cp15 {
     pub(crate) csselr: u32,
     pub(crate) contextidr: u32,
     pub(crate) tpidr: [u32; 3],
+    pub(crate) pmcr: u32,
+    pub(crate) pmcnten: u32,
+    pub(crate) pmselr: u32,
+    pub(crate) pmccntr: u32,
+    pub(crate) pmuserenr: u32,
+    pub(crate) pmintenset: u32,
+    pub(crate) pmxevtyper: u32,
+    pub(crate) pmxevcntr: u32,
 }
 
 impl Cp15 {
@@ -67,6 +79,14 @@ impl Cp15 {
             csselr: 0,
             contextidr: 0,
             tpidr: [0; 3],
+            pmcr: 0x41093000,
+            pmcnten: 0,
+            pmselr: 0,
+            pmccntr: 0,
+            pmuserenr: 0,
+            pmintenset: 0,
+            pmxevtyper: 0,
+            pmxevcntr: 0,
         }
     }
 
@@ -77,6 +97,8 @@ impl Cp15 {
             (0, 0, 0, 1) => CTR,
             (0, 0, 0, 2) => 0, // TCMTR: no TCM
             (0, 0, 0, 5) => 0x8000_0000 | self.cpu_id,
+            (1, 0, 0, 0) => CCSIDR,
+            (1, 0, 0, 1) => CLIDR,
             (2, 0, 0, 0) => self.csselr,
             (0, 1, 0, 0) => self.sctlr,
             (0, 1, 0, 1) => self.actlr,
@@ -90,6 +112,15 @@ impl Cp15 {
             (0, 6, 0, 0) => self.dfar,
             (0, 6, 0, 2) => self.ifar,
             (0, 7, 4, 0) => self.par,
+            (0, 9, 12, 0) => self.pmcr,
+            (0, 9, 12, 1) | (0, 9, 12, 2) => self.pmcnten,
+            (0, 9, 12, 5) => self.pmselr,
+            (0, 9, 13, 0) => self.pmccntr,
+            (0, 9, 13, 1) => self.pmxevtyper,
+            (0, 9, 13, 2) => self.pmxevcntr,
+            (0, 9, 14, 0) => self.pmuserenr,
+            (0, 9, 14, 1) | (0, 9, 14, 2) => self.pmintenset,
+            (0, 9, _, _) => 0,
             (0, 12, 0, 0) => self.vbar,
             (0, 13, 0, 1) => self.contextidr,
             (0, 13, 0, 2) => self.tpidr[0],
@@ -119,6 +150,17 @@ impl Cp15 {
             (0, 5, 0, 1) => self.ifsr = v,
             (0, 6, 0, 0) => self.dfar = v,
             (0, 6, 0, 2) => self.ifar = v,
+            (0, 9, 12, 0) => self.pmcr = v,
+            (0, 9, 12, 1) => self.pmcnten |= v,
+            (0, 9, 12, 2) => self.pmcnten &= !v,
+            (0, 9, 12, 5) => self.pmselr = v,
+            (0, 9, 13, 0) => self.pmccntr = v,
+            (0, 9, 13, 1) => self.pmxevtyper = v,
+            (0, 9, 13, 2) => self.pmxevcntr = v,
+            (0, 9, 14, 0) => self.pmuserenr = v,
+            (0, 9, 14, 1) => self.pmintenset |= v,
+            (0, 9, 14, 2) => self.pmintenset &= !v,
+            (0, 9, _, _) => {}
             (0, 12, 0, 0) => self.vbar = v & !0x1F,
             (0, 13, 0, 1) => self.contextidr = v,
             (0, 13, 0, 2) => self.tpidr[0] = v,

@@ -59,6 +59,7 @@ const IX_RFUL: u32 = 1 << 2;
 const IX_TEMPTY: u32 = 1 << 3;
 const IX_TFUL: u32 = 1 << 4;
 const IX_OVER: u32 = 1 << 5;
+const IX_TOUT: u32 = 1 << 8;
 const IX_TOVR: u32 = 1 << 12;
 const IX_MASK: u32 = 0x3FFF;
 
@@ -96,6 +97,8 @@ pub struct Uart {
     /// Transmit budget in (reference cycles x CPU_HZ) units, accumulated per tick.
     budget: u128,
     rx_dropped: u64,
+    /// Receiver timeout budget in (reference cycles x CPU_HZ) units.
+    rx_timeout_budget: u128,
 }
 
 impl Uart {
@@ -122,6 +125,7 @@ impl Uart {
             ref_hz: crate::clock::UART_REF_HZ,
             budget: 0,
             rx_dropped: 0,
+            rx_timeout_budget: 0,
         }
     }
 
@@ -189,6 +193,7 @@ impl Uart {
     }
 
     fn push_rx(&mut self, b: u8) -> bool {
+        self.rx_timeout_budget = 0;
         if self.rx.len() >= FIFO_DEPTH {
             self.isr |= IX_OVER;
             return false;
@@ -204,6 +209,7 @@ impl Uart {
     }
 
     fn pop_rx(&mut self) -> Option<u8> {
+        self.rx_timeout_budget = 0;
         let b = self.rx.pop_front();
         if self.rx.is_empty() {
             self.isr |= IX_REMPTY;
@@ -225,14 +231,25 @@ impl Uart {
         }
     }
 
-    /// Moves transmit bytes to the sink at the baud rate.
+    /// Moves transmit bytes to the sink at the baud rate, and advances the receiver timeout.
     fn drain(&mut self, cpu_cycles: u64) {
-        if self.tx.is_empty() {
-            self.budget = 0;
-            return;
-        }
         let bit_ref_cycles = u128::from(self.baudgen) * (u128::from(self.bauddiv) + 1);
         if bit_ref_cycles == 0 {
+            return;
+        }
+
+        if self.rxtout != 0 && !self.rx.is_empty() {
+            let tout_frame = u128::from(self.rxtout) * 4 * bit_ref_cycles * u128::from(CPU_HZ);
+            self.rx_timeout_budget += u128::from(cpu_cycles) * u128::from(self.ref_hz);
+            if self.rx_timeout_budget >= tout_frame {
+                self.isr |= IX_TOUT;
+            }
+        } else {
+            self.rx_timeout_budget = 0;
+        }
+
+        if self.tx.is_empty() {
+            self.budget = 0;
             return;
         }
         let frame = bit_ref_cycles * FRAME_BITS * u128::from(CPU_HZ);
@@ -240,6 +257,9 @@ impl Uart {
         while self.budget >= frame {
             let Some(b) = self.tx.pop_front() else { break };
             self.sink.push(b);
+            if (self.mr >> 8) & 3 == 2 && !self.rx_dis {
+                self.push_rx(b);
+            }
             self.budget -= frame;
             self.isr |= IX_TEMPTY * u32::from(self.tx.is_empty());
         }
@@ -318,6 +338,9 @@ impl Uart {
                 if w & CR_RXRST != 0 {
                     self.rx.clear();
                 }
+                if w & CR_RSTTO != 0 {
+                    self.rx_timeout_budget = 0;
+                }
                 self.cr_misc = w & (CR_STOPBRK | CR_STARTBRK | CR_RSTTO);
             }
             MR => self.mr = w & 0x3FF,
@@ -325,7 +348,10 @@ impl Uart {
             IDR => self.imr &= !(w & IX_MASK),
             ISR => self.isr &= !(w & IX_MASK),
             BAUDGEN => self.baudgen = w & 0xFFFF,
-            RXTOUT => self.rxtout = w & 0xFF,
+            RXTOUT => {
+                self.rxtout = w & 0xFF;
+                self.rx_timeout_budget = 0;
+            }
             RXWM => self.rxwm = w & 0x3F,
             MODEMCR => self.modemcr = w & 0x3F,
             BAUDDIV => self.bauddiv = w & 0xFF,

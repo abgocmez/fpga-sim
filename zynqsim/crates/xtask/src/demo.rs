@@ -215,10 +215,6 @@ pub const SECTIONS: &[(char, &str)] = &[
 /// Examples that cannot run, with the reason from docs/STATUS.md and the example header.
 pub const KNOWN_NOT_WORKING: &[(&str, &str)] = &[
     (
-        "native-math",
-        "the Xilinx boot code reads unmapped 0xF800D010 before main: a data abort, then the abort vector loops (ADR-035, STATUS.md)",
-    ),
-    (
         "bsp-peripherals (CAN and devcfg self tests, SCU watchdog)",
         "FAILED on this QEMU machine: CAN and device configuration are not in the model; the SCU watchdog interrupt test never returns (docs/conformance/bsp-apps.md). Not in the tour",
     ),
@@ -259,9 +255,10 @@ fn ps(
     }
 }
 
-/// Steps of sections a, g, i and j, and two named steps, are in `--quick`.
+/// Steps of sections a, g, i and j, and named steps, are in `--quick`.
 fn quick_step(s: &Step) -> bool {
-    matches!(s.section, 'a' | 'g' | 'i' | 'j') || matches!(s.name, "math-qemu" | "math-verilator")
+    matches!(s.section, 'a' | 'g' | 'i' | 'j')
+        || matches!(s.name, "math-qemu" | "math-verilator" | "native-math")
 }
 
 pub fn tour() -> Vec<Step> {
@@ -540,6 +537,16 @@ fn tour_steps() -> Vec<Step> {
                 "examples/native-gpio-timer-uart/project.toml",
                 "60ms",
                 &[MATH_CHECK, Check::Uart1("timer ticks=3")],
+                &[],
+            )
+        },
+        Step {
+            section: 'c',
+            ..ps(
+                "native-math",
+                "examples/native-math/project.toml",
+                "30ms",
+                &[MATH_CHECK, Check::Uart1("COSIM_DONE")],
                 &[],
             )
         },
