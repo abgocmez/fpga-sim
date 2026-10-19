@@ -382,3 +382,87 @@ fn an_axi_quad_spi_instance_is_mapped_as_a_native_model() {
     assert_eq!(params["C_FIFO_DEPTH"].to_string(), "16");
     assert_eq!(params["C_NUM_SS_BITS"].to_string(), "1");
 }
+
+/// A block design with the processing system and one AXI4-Stream FIFO. `extra_port` is an
+/// optional `<PORT>` element for the FIFO (its stream wiring).
+fn axi_fifo_hwh(tag: &str, extra_port: &str) -> PathBuf {
+    let dir = temp(tag);
+    let hwh = dir.join("design.hwh");
+    std::fs::write(
+        &hwh,
+        format!(
+            r#"<EDKSYSTEM EDWVERSION="1.2" VIVADOVERSION="2022.1">
+  <SYSTEMINFO ARCH="zynq" DEVICE="7z020" NAME="synth"/>
+  <MODULES>
+    <MODULE INSTANCE="processing_system7_0" MODTYPE="processing_system7" VLNV="xilinx.com:ip:processing_system7:5.5">
+      <PORTS>
+        <PORT CLKFREQUENCY="100000000" DIR="O" NAME="FCLK_CLK0" SIGIS="clk"/>
+      </PORTS>
+      <BUSINTERFACES>
+        <BUSINTERFACE BUSNAME="ps_gp0" DATAWIDTH="32" NAME="M_AXI_GP0" TYPE="MASTER"/>
+      </BUSINTERFACES>
+      <MEMORYMAP>
+        <MEMRANGE ADDRESSBLOCK="Reg" BASEVALUE="0x43C00000" HIGHVALUE="0x43C0FFFF" INSTANCE="axi_fifo_mm_s_0" MASTERBUSINTERFACE="M_AXI_GP0" MEMTYPE="REGISTER" SLAVEBUSINTERFACE="S_AXI"/>
+      </MEMORYMAP>
+    </MODULE>
+    <MODULE INSTANCE="axi_fifo_mm_s_0" MODTYPE="axi_fifo_mm_s" VLNV="xilinx.com:ip:axi_fifo_mm_s:4.2">
+      <PARAMETERS>
+        <PARAMETER NAME="C_TX_FIFO_DEPTH" VALUE="512"/>
+        <PARAMETER NAME="C_RX_FIFO_DEPTH" VALUE="512"/>
+      </PARAMETERS>
+      <PORTS>
+        <PORT CLKFREQUENCY="100000000" DIR="I" NAME="s_axi_aclk" SIGIS="clk"/>
+        <PORT DIR="O" NAME="interrupt"/>
+        {extra_port}
+      </PORTS>
+      <BUSINTERFACES>
+        <BUSINTERFACE BUSNAME="ps_gp0" DATAWIDTH="32" NAME="S_AXI" TYPE="SLAVE"/>
+      </BUSINTERFACES>
+    </MODULE>
+    <MODULE INSTANCE="xlconstant_0" MODTYPE="xlconstant" VLNV="xilinx.com:ip:xlconstant:1.1">
+      <PORTS>
+        <PORT DIR="O" NAME="dout"/>
+      </PORTS>
+    </MODULE>
+  </MODULES>
+</EDKSYSTEM>"#
+        ),
+    )
+    .unwrap();
+    hwh
+}
+
+#[test]
+fn an_axi_fifo_mm_s_instance_is_mapped_as_a_native_model() {
+    let hwh = axi_fifo_hwh("fifo_plan", "");
+    let out = hwh.parent().unwrap().join("proj");
+    let opts = ImportOptions {
+        elf: Some("dummy.elf".to_string()),
+        ..Default::default()
+    };
+    let plan = xsa::plan(&hwh, &out, &opts).unwrap();
+    assert!(plan.unmodelled.is_empty(), "{:?}", plan.unmodelled);
+    assert_eq!(plan.project.native["axi_fifo_mm_s_0"], "axi_fifo_mm_s");
+    assert_eq!(
+        plan.project.native_placement("axi_fifo_mm_s_0"),
+        Some((0, 0x43C0_0000))
+    );
+    let params = &plan.project.native_params["axi_fifo_mm_s_0"];
+    assert_eq!(params["C_TX_FIFO_DEPTH"].to_string(), "512");
+    assert_eq!(params["C_RX_FIFO_DEPTH"].to_string(), "512");
+}
+
+#[test]
+fn an_axi_fifo_whose_stream_is_wired_to_another_block_is_unmodelled() {
+    let wired = r#"<PORT DIR="O" NAME="M_AXIS_TDATA"><CONNECTIONS><CONNECTION INSTANCE="xlconstant_0" PORT="dout"/></CONNECTIONS></PORT>"#;
+    let hwh = axi_fifo_hwh("fifo_wired", wired);
+    let out = hwh.parent().unwrap().join("proj");
+    let opts = ImportOptions {
+        elf: Some("dummy.elf".to_string()),
+        ..Default::default()
+    };
+    let plan = xsa::plan(&hwh, &out, &opts).unwrap();
+    let text = format!("{:?}", plan.unmodelled);
+    assert!(text.contains("xlconstant_0.dout"), "{text}");
+    assert!(!plan.project.native.contains_key("axi_fifo_mm_s_0"));
+}

@@ -34,6 +34,7 @@ pub const NATIVE_MODELS: &[&str] = &[
     "axi_bram_ctrl",
     "axi_intc",
     "axi_quad_spi",
+    "axi_fifo_mm_s",
 ];
 
 /// A native PL model to place on a GP port.
@@ -716,6 +717,11 @@ mod tests {
             ..ok.clone()
         };
         assert!(build_pl(&[spi], None).is_ok());
+        let fifo = NativeInstance {
+            model: "axi_fifo_mm_s".into(),
+            ..ok.clone()
+        };
+        assert!(build_pl(&[fifo], None).is_ok());
         let bad = NativeInstance {
             model: "not_a_model".into(),
             ..ok

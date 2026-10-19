@@ -1,0 +1,33 @@
+# AXI4-Stream FIFO (`axi_fifo_mm_s`, crates/vendor-ip, ADR-041) on the PL:
+# packets are looped back TX -> RX; tests register reset, packet length and destination,
+# interrupts (TC/RC) to IRQ_F2P, and the TX/RX/SRR resets.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "native"
+pl = "native"
+
+[sim]
+quantum_ns = 1000
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_axis_fifo.elf"
+
+[native]
+axi_fifo_mm_s_0 = "axi_fifo_mm_s"
+
+[native_params.axi_fifo_mm_s_0]
+C_TX_FIFO_DEPTH = 512
+C_RX_FIFO_DEPTH = 512
+C_INTERFACE_TYPE = 1
+ADDRESS_SIZE = "0x10000"
+
+[connect]
+"axi_fifo_mm_s_0.S_AXI" = "M_AXI_GP0@0x43C00000"
+"axi_fifo_mm_s_0.interrupt" = "IRQ_F2P[0]"

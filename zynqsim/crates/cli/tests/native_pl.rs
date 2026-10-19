@@ -112,6 +112,30 @@ fn axi_quad_spi_firmware_runs_on_the_native_ps_with_the_vendor_model() {
 }
 
 #[test]
+fn axi_fifo_firmware_runs_on_the_native_ps_with_the_vendor_model() {
+    let mut e = engine("axis-fifo-demo", "native", "native");
+    e.command(Command::Run {
+        duration_ps: 20_000_000_000,
+    })
+    .expect("runs without QEMU or XSim");
+    let uart1 = uart_text(e.as_mut(), 1);
+    for line in [
+        "axi4-stream fifo demo",
+        "initial: isr=0x0 ier=0x0 tdfv=512 rdfo=0 rlr=0",
+        "irq count after packet 1: 1",
+        "packet 1: 4 words looped back",
+        "packet 2: 6 bytes looped back",
+        "tx reset ok",
+        "rx reset ok",
+        "srr reset ok",
+        "RESULT: ALL PASS",
+    ] {
+        assert!(uart1.contains(line), "UART1 lacks `{line}`:\n{uart1}");
+    }
+    assert!(e.status(false).pl_backend == "native");
+}
+
+#[test]
 fn gpio_timer_uart_on_the_native_ps_matches_the_qemu_text() {
     if std::env::var_os("ZYNQSIM_QEMU").is_none()
         && sim_api::locate_binary("qemu-system-aarch64").is_none()

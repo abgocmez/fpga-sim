@@ -6,7 +6,9 @@
 //! * [`dma::AxiDma`]: AXI DMA 7.1 (PG021), direct register and scatter-gather mode;
 //! * [`iic::AxiIic`]: AXI IIC 2.1 (PG090), dynamic-mode master on a Pmod port;
 //! * [`bram::AxiBramCtrl`]: AXI BRAM Controller 4.1 (PG078) with its block memory;
-//! * [`intc::AxiIntc`]: AXI Interrupt Controller 4.1 (PG099).
+//! * [`intc::AxiIntc`]: AXI Interrupt Controller 4.1 (PG099);
+//! * [`spi::AxiQuadSpi`]: AXI Quad SPI 3.2 (PG153), standard SPI master with loopback;
+//! * [`axis_fifo::AxisFifo`]: AXI4-Stream FIFO 4.2 (PG080), memory-mapped, stream loopback.
 //!
 //! Each model is a [`pl_native::RegisterBlock`], so it plugs into [`pl_native::NativePl`] at a
 //! base address and drives one `IRQ_F2P` line through the lock-step `advance`. [`VendorPl`]
@@ -19,6 +21,7 @@
 //! guides as remembered; every register fact that was not checked against hardware or a Xilinx
 //! simulation is marked `VERIFY:` in the module documentation.
 
+pub mod axis_fifo;
 pub mod bram;
 pub mod dma;
 pub mod gpio;
@@ -31,6 +34,7 @@ pub mod uartlite;
 
 pub use params::{Params, flag, number, parse_number, ranged};
 
+pub use axis_fifo::{AxisFifo, AxisFifoConfig, AxisFifoHandle};
 use bram::{AxiBramCtrl, BramConfig, BramHandle};
 use dma::{AxiDma, DmaConfig, DmaHandle};
 use gpio::{AxiGpio, GpioConfig, GpioHandle};
@@ -58,6 +62,7 @@ pub const MODELS: &[&str] = &[
     "axi_bram_ctrl",
     "axi_intc",
     "axi_quad_spi",
+    "axi_fifo_mm_s",
 ];
 
 /// True when `name` (`axi_gpio`) is a model of this library.
@@ -115,6 +120,7 @@ pub fn param_names(model: &str) -> &'static [&'static str] {
             "C_SPI_MODE",
             "C_USE_STARTUP",
         ],
+        "axi_fifo_mm_s" => &["C_TX_FIFO_DEPTH", "C_RX_FIFO_DEPTH", "C_INTERFACE_TYPE"],
         _ => &[],
     }
 }
@@ -315,6 +321,7 @@ pub struct VendorPl {
     brams: Vec<(String, BramHandle)>,
     intcs: Vec<(String, IntcHandle)>,
     spis: Vec<(String, SpiHandle)>,
+    fifos: Vec<(String, AxisFifoHandle)>,
     /// Pin changes of the I2C masters, stamped with their (possibly future) bus times; they
     /// are handed out once PL time has reached them.
     iic_events: Arc<Mutex<Vec<PinEvent>>>,
@@ -359,6 +366,7 @@ impl VendorPl {
             brams: Vec::new(),
             intcs: Vec::new(),
             spis: Vec::new(),
+            fifos: Vec::new(),
             iic_events: Arc::new(Mutex::new(Vec::new())),
             board_out: Vec::new(),
             pin_events: Vec::new(),
@@ -537,6 +545,12 @@ impl VendorPl {
                 self.spis.push((inst.name.clone(), handle));
                 Box::new(s)
             }
+            "axi_fifo_mm_s" => {
+                let cfg = AxisFifoConfig::from_params(&inst.params, size).map_err(ctx)?;
+                let (f, handle) = AxisFifo::new(&inst.name, cfg);
+                self.fifos.push((inst.name.clone(), handle));
+                Box::new(f)
+            }
             other => {
                 return Err(format!(
                     "instance `{}`: `{other}` is not a vendor-ip model; available: {}",
@@ -629,6 +643,14 @@ impl VendorPl {
             .iter()
             .find(|i| i.name == name)
             .map(|i| i.handle.clone())
+    }
+
+    /// The AXI4-Stream FIFO handle of instance `name`.
+    pub fn fifo(&self, name: &str) -> Option<AxisFifoHandle> {
+        self.fifos
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, h)| h.clone())
     }
 
     /// The SPI handle of instance `name`.

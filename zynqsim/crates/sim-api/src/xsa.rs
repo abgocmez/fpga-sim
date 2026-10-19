@@ -757,6 +757,29 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
                             continue;
                         }
                     }
+                    "axi_fifo_mm_s" => {
+                        // The model loops the transmit stream back to the receive stream inside
+                        // the FIFO. A stream port wired to another block is not delivered.
+                        let wired = ip
+                            .ports
+                            .iter()
+                            .filter(|p| p.name.contains("AXIS"))
+                            .flat_map(|p| p.connections.iter())
+                            .find(|c| {
+                                c.instance != ip.instance && design.ip(&c.instance).is_some()
+                            });
+                        if let Some(c) = wired {
+                            unmodelled.push(mk(
+                                format!(
+                                    "its AXI4-Stream port is wired to `{}.{}`, which the model \
+                                     cannot deliver: only the internal TX-to-RX loopback is modelled",
+                                    c.instance, c.port
+                                ),
+                                Some("AXI4-Stream FIFO (memory mapped)".to_string()),
+                            ));
+                            continue;
+                        }
+                    }
                     "axi_intc" => {
                         if let Some(src) = design.intc_inputs.iter().find_map(|l| {
                             (l.intc == ip.instance
