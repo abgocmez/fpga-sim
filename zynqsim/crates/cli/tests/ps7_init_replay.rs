@@ -149,4 +149,3 @@ elf = "{elf}"
         "error should mention timeout, got:\n{err}"
     );
 }
-

@@ -266,4 +266,3 @@ fn multi_slave_runs_on_icarus() {
     assert_eq!(v["protocol_checks"]["errors"], 0);
     assert_eq!(v["bus_accesses"], 5);
 }
-

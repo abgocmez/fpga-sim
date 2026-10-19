@@ -348,9 +348,14 @@ fn catalog_classification() {
         VendorIp { .. }
     ));
     assert!(matches!(
+        classify("xilinx.com:ip:axi_quad_spi:3.2", "axi_quad_spi"),
+        VendorIp { ref name, .. } if name == "axi_quad_spi"
+    ));
+    assert!(matches!(
         classify("xilinx.com:ip:smartconnect:1.0", "smartconnect"),
         Infrastructure { .. }
     ));
+
     assert_eq!(
         classify("xilinx.com:module_ref:foo:1.0", "foo"),
         UserRtl { packaged: false }

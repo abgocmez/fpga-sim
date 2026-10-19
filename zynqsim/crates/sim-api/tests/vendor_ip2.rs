@@ -244,3 +244,12 @@ fn the_sensor_value_the_host_sets_is_what_the_iic_master_reads() {
     assert!(u.contains("T raw=0xF9E0 mC=-12250"), "{u}");
     assert!(u.contains("RESULT: ALL PASS"), "{u}");
 }
+
+#[test]
+fn the_axi_quad_spi_model_runs_loopback_transfers_and_interrupts() {
+    let (p, dir) = load("spi-demo");
+    let mut e = p.build_engine(&dir).unwrap_or_else(|e| panic!("{e}"));
+    run_us(e.as_mut(), 20_000);
+    let u = uart(e.as_mut(), 1);
+    assert!(u.contains("RESULT: ALL PASS"), "{u}");
+}

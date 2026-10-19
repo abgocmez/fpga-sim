@@ -1,0 +1,33 @@
+# AXI Quad SPI v3.2 (crates/vendor-ip, ADR-040) on the PL:
+# loops back SPI transfers, tests register reset, interrupts, and FIFO resets.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "native"
+pl = "native"
+
+[sim]
+quantum_ns = 1000
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_spi.elf"
+
+[native]
+axi_quad_spi_0 = "axi_quad_spi"
+
+[native_params.axi_quad_spi_0]
+C_FIFO_DEPTH = 16
+C_SCK_RATIO = 32
+C_NUM_SS_BITS = 1
+ADDRESS_SIZE = "0x10000"
+
+[connect]
+"axi_quad_spi_0.S_AXI" = "M_AXI_GP0@0x41E00000"
+"axi_quad_spi_0.ip2intc_irpt" = "IRQ_F2P[0]"
+

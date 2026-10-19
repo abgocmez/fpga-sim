@@ -900,7 +900,7 @@ impl Project {
         })?;
         // Discover non-native RTL slave placements from connect:
         let mut placements: Vec<(String, u8, u64)> = Vec::new();
-        for (k, _v) in &self.connect {
+        for k in self.connect.keys() {
             if let Some((inst, _port)) = k.split_once('.') {
                 if self.native.contains_key(inst) {
                     continue;

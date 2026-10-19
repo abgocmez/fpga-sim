@@ -12,6 +12,9 @@ use xsa_import::ps7_init::{ClockTree, Ps7InitOp, derive_clock_tree, parse_ps7_in
 /// Maximum poll attempts before timing out on `mask_poll`.
 pub const MAX_POLL_ITERATIONS: usize = 2000;
 
+/// Initialisation sequence operations and optional derived clock tree.
+pub type Ps7InitPayload = (Vec<Ps7InitOp>, Option<ClockTree>);
+
 /// Resolves and loads `ps7_init` operations and derived clock tree for `project`.
 ///
 /// Returns `Ok(Some((ops, clock_tree)))` if enabled and available,
@@ -19,7 +22,7 @@ pub const MAX_POLL_ITERATIONS: usize = 2000;
 pub fn load_project_ps7_init(
     project: &Project,
     base: &Path,
-) -> Result<Option<(Vec<Ps7InitOp>, Option<ClockTree>)>, ApiError> {
+) -> Result<Option<Ps7InitPayload>, ApiError> {
     let explicitly_disabled = project.boot.as_ref().and_then(|b| b.ps7_init) == Some(false);
     if explicitly_disabled {
         return Ok(None);
@@ -71,17 +74,15 @@ pub fn load_project_ps7_init(
 pub fn replay_native(bus: &mut SystemBus, ops: &[Ps7InitOp]) -> Result<(), ApiError> {
     for op in ops {
         match *op {
-            Ps7InitOp::Write { addr, value } => {
-                match bus.write(addr as u64, 4, value as u64) {
-                    Ok(()) => {}
-                    Err(mem_sys::BusFault::Unmapped(_)) => {}
-                    Err(e) => {
-                        return Err(ApiError::internal(format!(
-                            "ps7_init native write to {addr:#010x} failed: {e:?}"
-                        )));
-                    }
+            Ps7InitOp::Write { addr, value } => match bus.write(addr as u64, 4, value as u64) {
+                Ok(()) => {}
+                Err(mem_sys::BusFault::Unmapped(_)) => {}
+                Err(e) => {
+                    return Err(ApiError::internal(format!(
+                        "ps7_init native write to {addr:#010x} failed: {e:?}"
+                    )));
                 }
-            }
+            },
             Ps7InitOp::MaskWrite { addr, mask, value } => {
                 let cur = match bus.read(addr as u64, 4) {
                     Ok(v) => v as u32,
@@ -134,7 +135,6 @@ pub fn replay_native(bus: &mut SystemBus, ops: &[Ps7InitOp]) -> Result<(), ApiEr
     }
     Ok(())
 }
-
 
 /// Returns whether QEMU's Remote-Port HP0 memory path does not decode `addr`.
 ///
@@ -279,4 +279,3 @@ mod tests {
         );
     }
 }
-

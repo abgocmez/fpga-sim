@@ -77,4 +77,3 @@ mod tests {
         assert_eq!(ddrc.read(0x10, 4).unwrap(), 0x1234_5678);
     }
 }
-

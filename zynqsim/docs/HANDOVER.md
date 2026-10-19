@@ -141,10 +141,11 @@ decision was made, the affected `examples/` added to the determinism table, and 
 
 
 ### D. IP models, and real IP through the Vivado simulation export (effort M per IP; L overall)
-* **Models.** Candidates in order of how often designs use them: AXI VDMA, AXI Quad SPI, AXI Ethernet Lite, AXI4-Stream FIFO, Clocking
-  Wizard (registers), Video Timing Controller, AXI4-Stream to Video Out. Pattern: `crates/vendor-ip` (`gpio.rs`, `timer.rs`),
-  XSA mapping in `sim-api/src/xsa.rs`, an example with Rust firmware and a real Vivado XSA from a Tcl script, unit tests
-  per register and a QEMU end-to-end test. Register maps come from the product guides: mark `VERIFY:`.
+* **Status.**
+  - **AXI Quad SPI v3.2 (COMPLETED, ADR-040):** Implemented in `crates/vendor-ip/src/spi.rs` as a `pl_native::RegisterBlock` (`DGIER`, `IPISR`, `IPIER`, `SRR`, `SPICR`, `SPISR`, `SPIDTR`, `SPIDRR`, `SPISSR`, `TX_FIFO_OCY`, `RX_FIFO_OCY`), with loopback mode, FIFO reset bits, slave select active-low masking, and interrupt generation to `IRQ_F2P`. Verified with guest firmware `firmware/spi_demo`, `fixtures/elf/rust_spi.elf`, `examples/spi-demo`, `cli::native_pl::axi_quad_spi_firmware_runs_on_the_native_ps_with_the_vendor_model`, `sim-api::vendor_ip2::the_axi_quad_spi_model_runs_loopback_transfers_and_interrupts`, and determinism 5/5 identical runs (`fnv1a64:ad75b66de3ec904e`).
+* **Remaining Models.** Candidates in order: AXI VDMA, AXI Ethernet Lite, AXI4-Stream FIFO, Clocking
+  Wizard (registers), Video Timing Controller, AXI4-Stream to Video Out. Pattern: `crates/vendor-ip`,
+  XSA mapping in `sim-api/src/xsa.rs`, an example with Rust firmware, unit tests per register and end-to-end tests.
 * **Real IP.** For designs whose IP has a Vivado simulation model, `export_simulation` gives the compiled-library flow:
   verify `-L secureip`/`unisims_ver` runs for a design with an AXI GPIO or a clocking wizard through XSim
   (`docs/adr/017-export-simulation.md` says this was not verified), then document which IP can run this way

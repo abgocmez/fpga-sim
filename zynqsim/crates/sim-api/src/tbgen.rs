@@ -1471,10 +1471,7 @@ pub struct SlaveDesc<'a> {
 /// Generates a testbench instantiating multiple AXI4-Lite slaves, an address decoder
 /// routing `M_AXI_GP0` accesses to each slave by address range, and optional AXI4 master
 /// bridges connecting to PS memory.
-pub fn generate_multi_slave_testbench(
-    slaves: &[SlaveDesc<'_>],
-    clock_hz: Option<u64>,
-) -> String {
+pub fn generate_multi_slave_testbench(slaves: &[SlaveDesc<'_>], clock_hz: Option<u64>) -> String {
     let mut s = String::new();
     let _ = writeln!(
         s,
@@ -1495,7 +1492,10 @@ pub fn generate_multi_slave_testbench(
                 .trim_end_matches('0')
                 .trim_end_matches('.')
                 .to_string();
-            (half, format!("// {} MHz, from the block design", hz as f64 / 1e6))
+            (
+                half,
+                format!("// {} MHz, from the block design", hz as f64 / 1e6),
+            )
         }
         _ => ("5".to_string(), "// 100 MHz = FCLK_CLK0".to_string()),
     };
@@ -1521,8 +1521,12 @@ pub fn generate_multi_slave_testbench(
     for (idx, slv) in slaves.iter().enumerate() {
         let pfx = slv.instance;
         let pin_groups = detect_pin_groups(slv.module);
-        let mut role_of: HashMap<&str, &str> =
-            slv.axi.signals.iter().map(|(r, n)| (n.as_str(), *r)).collect();
+        let mut role_of: HashMap<&str, &str> = slv
+            .axi
+            .signals
+            .iter()
+            .map(|(r, n)| (n.as_str(), *r))
+            .collect();
         if let Some((mst, _)) = &slv.master {
             for (r, n) in &mst.signals {
                 role_of.insert(n.as_str(), *r);
@@ -1530,7 +1534,11 @@ pub fn generate_multi_slave_testbench(
         }
 
         // Port signal declarations
-        let _ = writeln!(s, "    // ---- Slave {idx}: {} ({}) ----", pfx, slv.module.name);
+        let _ = writeln!(
+            s,
+            "    // ---- Slave {idx}: {} ({}) ----",
+            pfx, slv.module.name
+        );
         for p in &slv.module.ports {
             let n = &p.name;
             if *n == slv.axi.clock || slv.axi.reset.as_ref().is_some_and(|(r, _)| r == n) {
@@ -1557,7 +1565,10 @@ pub fn generate_multi_slave_testbench(
                 (Dir::In, None) => {
                     let l = n.to_ascii_lowercase();
                     if l.contains("clk") || l.contains("clock") {
-                        let _ = writeln!(s, "    wire {w}{net} = aclk;   // other clock: tied to FCLK0");
+                        let _ = writeln!(
+                            s,
+                            "    wire {w}{net} = aclk;   // other clock: tied to FCLK0"
+                        );
                     } else {
                         let _ = writeln!(
                             s,
@@ -2557,4 +2568,3 @@ mod tests {
         assert!(tb.contains("zs_chk_mst_1"));
     }
 }
-

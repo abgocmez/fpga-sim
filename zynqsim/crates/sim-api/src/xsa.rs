@@ -961,11 +961,8 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
         if user_slaves.len() == 1 {
             let s0 = &user_slaves[0];
             let dev = s0.master.as_ref().map(|(_, d)| *d).unwrap_or(2);
-            let mut text = tbgen::generate_testbench_with_irqs(
-                &s0.module,
-                &s0.axi,
-                Some(&s0.irq_bits),
-            );
+            let mut text =
+                tbgen::generate_testbench_with_irqs(&s0.module, &s0.axi, Some(&s0.irq_bits));
             if dev != 2 {
                 text = text.replace(
                     "localparam int HP0_DEV = 2;",

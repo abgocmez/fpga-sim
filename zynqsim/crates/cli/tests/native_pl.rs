@@ -3,6 +3,7 @@
 //! * `examples/native-gpio-timer-uart`: the GPIO/timer/UART Lite firmware on the native PS
 //!   with the vendor-ip models. Its UART text matches the QEMU example (QEMU is compared when
 //!   it is installed; the test skips that half with `SKIPPED:` otherwise).
+//! * `examples/spi-demo`: the AXI Quad SPI firmware on the native PS with the vendor-ip model.
 //! * Five engines in one process give one trace digest (determinism).
 //! * Project validation: which PS/PL pairs are accepted and what is refused, with the reason.
 
@@ -85,6 +86,28 @@ fn gpio_timer_uart_firmware_runs_on_the_native_ps_with_the_vendor_models() {
         "Hello from AXI UART Lite\r\n",
         "the PL UART Lite (uart_read port 2) carries the greeting"
     );
+    assert!(e.status(false).pl_backend == "native");
+}
+
+#[test]
+fn axi_quad_spi_firmware_runs_on_the_native_ps_with_the_vendor_model() {
+    let mut e = engine("spi-demo", "native", "native");
+    e.command(Command::Run {
+        duration_ps: 20_000_000_000,
+    })
+    .expect("runs without QEMU or XSim");
+    let uart1 = uart_text(e.as_mut(), 1);
+    for line in [
+        "axi-quad-spi demo",
+        "initial: spicr=0x180 spisr=0x25",
+        "spi reset ok",
+        "loopback: transferred 4 bytes successfully",
+        "spi irq count: 4",
+        "fifo reset ok",
+        "RESULT: ALL PASS",
+    ] {
+        assert!(uart1.contains(line), "UART1 lacks `{line}`:\n{uart1}");
+    }
     assert!(e.status(false).pl_backend == "native");
 }
 

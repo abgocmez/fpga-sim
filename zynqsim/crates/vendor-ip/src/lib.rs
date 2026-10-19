@@ -25,6 +25,7 @@ pub mod gpio;
 pub mod iic;
 pub mod intc;
 mod params;
+pub mod spi;
 pub mod timer;
 pub mod uartlite;
 
@@ -41,6 +42,7 @@ use pl_api::{
 };
 pub use pl_native::IrqDest;
 use pl_native::{NativePl, RegisterBlock};
+pub use spi::{AxiQuadSpi, SpiConfig, SpiHandle};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 use timer::{AxiTimer, TimerConfig, TimerHandle};
@@ -55,6 +57,7 @@ pub const MODELS: &[&str] = &[
     "axi_iic",
     "axi_bram_ctrl",
     "axi_intc",
+    "axi_quad_spi",
 ];
 
 /// True when `name` (`axi_gpio`) is a model of this library.
@@ -103,6 +106,14 @@ pub fn param_names(model: &str) -> &'static [&'static str] {
             "C_HAS_FAST",
             "C_IVAR_RESET_VALUE",
             "C_HAS_CASC",
+        ],
+        "axi_quad_spi" => &[
+            "C_FIFO_DEPTH",
+            "C_SCK_RATIO",
+            "C_NUM_SS_BITS",
+            "C_NUM_TRANSFER_BITS",
+            "C_SPI_MODE",
+            "C_USE_STARTUP",
         ],
         _ => &[],
     }
@@ -303,6 +314,7 @@ pub struct VendorPl {
     iics: Vec<IicBind>,
     brams: Vec<(String, BramHandle)>,
     intcs: Vec<(String, IntcHandle)>,
+    spis: Vec<(String, SpiHandle)>,
     /// Pin changes of the I2C masters, stamped with their (possibly future) bus times; they
     /// are handed out once PL time has reached them.
     iic_events: Arc<Mutex<Vec<PinEvent>>>,
@@ -346,6 +358,7 @@ impl VendorPl {
             iics: Vec::new(),
             brams: Vec::new(),
             intcs: Vec::new(),
+            spis: Vec::new(),
             iic_events: Arc::new(Mutex::new(Vec::new())),
             board_out: Vec::new(),
             pin_events: Vec::new(),
@@ -518,6 +531,12 @@ impl VendorPl {
                 self.intcs.push((inst.name.clone(), handle));
                 Box::new(c)
             }
+            "axi_quad_spi" => {
+                let cfg = SpiConfig::from_params(&inst.params, size).map_err(ctx)?;
+                let (s, handle) = AxiQuadSpi::new(&inst.name, cfg);
+                self.spis.push((inst.name.clone(), handle));
+                Box::new(s)
+            }
             other => {
                 return Err(format!(
                     "instance `{}`: `{other}` is not a vendor-ip model; available: {}",
@@ -610,6 +629,14 @@ impl VendorPl {
             .iter()
             .find(|i| i.name == name)
             .map(|i| i.handle.clone())
+    }
+
+    /// The SPI handle of instance `name`.
+    pub fn spi(&self, name: &str) -> Option<SpiHandle> {
+        self.spis
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, h)| h.clone())
     }
 
     /// The timer handles, by instance name.

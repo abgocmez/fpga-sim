@@ -358,4 +358,3 @@ mod tests {
         assert_eq!(ev.len(), 4);
     }
 }
-

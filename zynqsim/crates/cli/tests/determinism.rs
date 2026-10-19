@@ -84,6 +84,10 @@ const CASES: &[Case] = &[
         qemu: false,
         ..case("native-math", "30ms")
     },
+    Case {
+        qemu: false,
+        ..case("spi-demo", "20ms")
+    },
     case("dual-core-qemu", "80ms"),
     // Unmodified Xilinx BSP applications (fixtures/bsp); bsp-peripherals ends in the SCU
     // watchdog test that never returns (no watchdog in this QEMU machine), which is deterministic too.

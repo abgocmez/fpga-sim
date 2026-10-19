@@ -110,7 +110,9 @@ fn parse_lines(body: &str, ops: &mut Vec<Ps7InitOp>) -> Result<(), XsaError> {
             }
             "mask_poll" => {
                 if parts.len() < 3 {
-                    return Err(XsaError(format!("mask_poll has too few arguments: `{line}`")));
+                    return Err(XsaError(format!(
+                        "mask_poll has too few arguments: `{line}`"
+                    )));
                 }
                 ops.push(Ps7InitOp::MaskPoll {
                     addr: parse_u32(parts[1])?,
@@ -438,4 +440,3 @@ mod tests {
         assert_eq!(ct.uart_hz, 99_999_999);
     }
 }
-

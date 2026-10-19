@@ -328,3 +328,57 @@ fn a_boot_bin_next_to_an_xsa_gives_one_project_with_both() {
     .unwrap_err();
     assert!(err.message.contains("checksum"), "{}", err.message);
 }
+
+#[test]
+fn an_axi_quad_spi_instance_is_mapped_as_a_native_model() {
+    let dir = temp("qspi_plan");
+    let hwh = dir.join("design.hwh");
+    std::fs::write(
+        &hwh,
+        r#"<EDKSYSTEM EDWVERSION="1.2" VIVADOVERSION="2022.1">
+  <SYSTEMINFO ARCH="zynq" DEVICE="7z020" NAME="synth"/>
+  <MODULES>
+    <MODULE INSTANCE="processing_system7_0" MODTYPE="processing_system7" VLNV="xilinx.com:ip:processing_system7:5.5">
+      <PORTS>
+        <PORT CLKFREQUENCY="100000000" DIR="O" NAME="FCLK_CLK0" SIGIS="clk"/>
+      </PORTS>
+      <BUSINTERFACES>
+        <BUSINTERFACE BUSNAME="ps_gp0" DATAWIDTH="32" NAME="M_AXI_GP0" TYPE="MASTER"/>
+      </BUSINTERFACES>
+      <MEMORYMAP>
+        <MEMRANGE ADDRESSBLOCK="Reg" BASEVALUE="0x41E00000" HIGHVALUE="0x41E0FFFF" INSTANCE="axi_quad_spi_0" MASTERBUSINTERFACE="M_AXI_GP0" MEMTYPE="REGISTER" SLAVEBUSINTERFACE="AXI_LITE"/>
+      </MEMORYMAP>
+    </MODULE>
+    <MODULE INSTANCE="axi_quad_spi_0" MODTYPE="axi_quad_spi" VLNV="xilinx.com:ip:axi_quad_spi:3.2">
+      <PARAMETERS>
+        <PARAMETER NAME="C_FIFO_DEPTH" VALUE="16"/>
+        <PARAMETER NAME="C_NUM_SS_BITS" VALUE="1"/>
+      </PARAMETERS>
+      <PORTS>
+        <PORT CLKFREQUENCY="100000000" DIR="I" NAME="ext_spi_clk" SIGIS="clk"/>
+      </PORTS>
+      <BUSINTERFACES>
+        <BUSINTERFACE BUSNAME="ps_gp0" DATAWIDTH="32" NAME="AXI_LITE" TYPE="SLAVE"/>
+      </BUSINTERFACES>
+    </MODULE>
+  </MODULES>
+</EDKSYSTEM>"#,
+    )
+    .unwrap();
+
+    let out = dir.join("proj");
+    let opts = ImportOptions {
+        elf: Some("dummy.elf".to_string()),
+        ..Default::default()
+    };
+    let plan = xsa::plan(&hwh, &out, &opts).unwrap();
+    assert!(plan.unmodelled.is_empty(), "{:?}", plan.unmodelled);
+    assert_eq!(plan.project.native["axi_quad_spi_0"], "axi_quad_spi");
+    assert_eq!(
+        plan.project.native_placement("axi_quad_spi_0"),
+        Some((0, 0x41E0_0000))
+    );
+    let params = &plan.project.native_params["axi_quad_spi_0"];
+    assert_eq!(params["C_FIFO_DEPTH"].to_string(), "16");
+    assert_eq!(params["C_NUM_SS_BITS"].to_string(), "1");
+}

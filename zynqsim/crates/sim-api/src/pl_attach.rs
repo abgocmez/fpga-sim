@@ -33,6 +33,7 @@ pub const NATIVE_MODELS: &[&str] = &[
     "axi_iic",
     "axi_bram_ctrl",
     "axi_intc",
+    "axi_quad_spi",
 ];
 
 /// A native PL model to place on a GP port.
@@ -208,15 +209,16 @@ pub fn rtl_native_target(spec: &RtlNativeSpec) -> Result<Box<dyn PlTarget + Send
                             )));
                         }
                     };
-                    module
-                        .set_irq_output(port)
-                        .map_err(|e| ApiError::invalid_argument(format!("`{}.{port}`: {e}", slave.instance)))?;
+                    module.set_irq_output(port).map_err(|e| {
+                        ApiError::invalid_argument(format!("`{}.{port}`: {e}", slave.instance))
+                    })?;
                     Some(n)
                 }
                 _ => {
                     return Err(ApiError::invalid_argument(format!(
                         "`{}`: backends.pl = \"rtl-native\" supports one interrupt output; {} are connected",
-                        slave.instance, irqs.len()
+                        slave.instance,
+                        irqs.len()
                     )));
                 }
             };
@@ -709,6 +711,11 @@ mod tests {
             bindings: Default::default(),
         };
         assert!(build_pl(std::slice::from_ref(&ok), None).is_ok());
+        let spi = NativeInstance {
+            model: "axi_quad_spi".into(),
+            ..ok.clone()
+        };
+        assert!(build_pl(&[spi], None).is_ok());
         let bad = NativeInstance {
             model: "not_a_model".into(),
             ..ok
