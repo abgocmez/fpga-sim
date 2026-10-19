@@ -1126,6 +1126,7 @@ impl Project {
                             Some(&p.cpu_clock)
                         }
                     }) {
+                        Some(custom) if custom.trim().eq_ignore_ascii_case("reset") => None,
                         Some(custom) => parse_cpu_clock(custom).map(Some)?,
                         None => clock_tree
                             .as_ref()

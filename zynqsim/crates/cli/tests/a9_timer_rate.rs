@@ -57,7 +57,7 @@ fn uart_after(project: &str, duration: &str) -> String {
 
 /// A project file next to the test's scratch directory with the given
 /// `[ps] cpu_clock` line (or none), running the same firmware.
-fn project_with_clock(name: &str, clock_line: &str) -> String {
+fn project_with_backend_and_clock(name: &str, ps_backend: &str, clock_line: &str) -> String {
     let elf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/elf/rust_timer_rate.elf")
         .to_string_lossy()
@@ -66,12 +66,16 @@ fn project_with_clock(name: &str, clock_line: &str) -> String {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("{name}.toml"));
     let text = format!(
-        "schema_version = 1\n\n[board]\nname = \"zybo-z7-20\"\n\n[backends]\nps = \"qemu\"\n\
+        "schema_version = 1\n\n[board]\nname = \"zybo-z7-20\"\n\n[backends]\nps = \"{ps_backend}\"\n\
          pl = \"demo\"\n\n[sim]\nquantum_ns = 1000\nicount_shift = 1\n\n[boot]\nmode = \"elf\"\n\n\
          [ps]\n{clock_line}\n\n[cpu0]\nelf = \"{elf}\"\n"
     );
     std::fs::write(&path, text).unwrap();
     path.to_string_lossy().into_owned()
+}
+
+fn project_with_clock(name: &str, clock_line: &str) -> String {
+    project_with_backend_and_clock(name, "qemu", clock_line)
 }
 
 #[test]
@@ -116,3 +120,4 @@ fn the_private_timer_still_ticks_at_100_mhz_a_known_deviation() {
         "the private timer runs at the BSP rate now: update D3 in docs/conformance/bsp-apps.md and this test\n{uart}"
     );
 }
+

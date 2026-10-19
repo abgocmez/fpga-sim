@@ -136,37 +136,221 @@ pub fn replay_native(bus: &mut SystemBus, ops: &[Ps7InitOp]) -> Result<(), ApiEr
     Ok(())
 }
 
-/// Returns whether QEMU's Remote-Port HP0 memory path does not decode `addr`.
+/// An entry in the explicit QEMU skip allow-list for unmapped or non-decoded registers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SkippedRegisterRule {
+    /// Start address (inclusive).
+    pub start: u32,
+    /// End address (inclusive).
+    pub end: u32,
+    /// Hardware block / peripheral name.
+    pub block: &'static str,
+    /// Rationale explaining why QEMU does not decode or model this range over Remote-Port HP0.
+    pub reason: &'static str,
+}
+
+/// Explicit allow-list of register ranges skipped during QEMU ps7_init replay.
 ///
-/// In the Zynq-7000, HP ports primarily route to DDR and OCM. Over QEMU's Remote-Port HP0
-/// bridge, accesses to unmapped or non-decoded blocks return DECERR:
-/// - DDR controller registers (`0xF8006000..=0xF8006FFF`)
-/// - Device configuration registers (`0xF8007000..=0xF8007FFF`)
-/// - PS GPIO registers (`0xE000A000..=0xE000AFFF`)
-/// - CoreSight debug components (`0xF8800000..=0xF88FFFFF`)
-///
-/// As documented in ADR-038, these registers are skipped during QEMU replay.
+/// Over QEMU's Remote-Port HP0 memory path, accesses to unmapped blocks return DECERR.
+/// Registers in this list are deliberately not decoded over HP0 or lack models in QEMU.
+/// Any attempted access to an address outside SLCR (0xF800_0000..=0xF800_0FFF), RAM, or OCM
+/// that is not in this explicit allow-list will fail with an informative error rather than being
+/// silently ignored.
+pub const QEMU_SKIPPED_REGISTER_ALLOW_LIST: &[SkippedRegisterRule] = &[
+    SkippedRegisterRule {
+        start: 0xF800_6000,
+        end: 0xF800_6FFF,
+        block: "DDRC",
+        reason: "DDR controller registers not decoded over HP0 and not modelled in QEMU (DRAM is mapped as plain RAM)",
+    },
+    SkippedRegisterRule {
+        start: 0xF800_7000,
+        end: 0xF800_7FFF,
+        block: "DEVCFG",
+        reason: "Device configuration registers not decoded over HP0 and unmapped in QEMU FDT machine (ADR-029)",
+    },
+    SkippedRegisterRule {
+        start: 0xE000_0000,
+        end: 0xE000_1FFF,
+        block: "UART",
+        reason: "PS UART registers not decoded over HP0 bridge (guest initializes UART after boot)",
+    },
+    SkippedRegisterRule {
+        start: 0xE000_2000,
+        end: 0xE000_3FFF,
+        block: "USB",
+        reason: "PS USB controller registers not decoded over HP0 bridge",
+    },
+    SkippedRegisterRule {
+        start: 0xE000_4000,
+        end: 0xE000_5FFF,
+        block: "I2C",
+        reason: "PS I2C controller registers not decoded over HP0 bridge",
+    },
+    SkippedRegisterRule {
+        start: 0xE000_6000,
+        end: 0xE000_7FFF,
+        block: "SPI",
+        reason: "PS SPI controller registers not decoded over HP0 bridge",
+    },
+    SkippedRegisterRule {
+        start: 0xE000_8000,
+        end: 0xE000_9FFF,
+        block: "CAN",
+        reason: "PS CAN controller registers not decoded over HP0 bridge",
+    },
+    SkippedRegisterRule {
+        start: 0xE000_A000,
+        end: 0xE000_AFFF,
+        block: "GPIO",
+        reason: "PS GPIO registers not decoded over HP0 bridge",
+    },
+    SkippedRegisterRule {
+        start: 0xE000_B000,
+        end: 0xE000_CFFF,
+        block: "GEM",
+        reason: "PS Gigabit Ethernet controller registers not decoded over HP0 bridge",
+    },
+    SkippedRegisterRule {
+        start: 0xE000_D000,
+        end: 0xE000_DFFF,
+        block: "QSPI",
+        reason: "PS QSPI controller registers not decoded over HP0 bridge",
+    },
+    SkippedRegisterRule {
+        start: 0xE000_E000,
+        end: 0xE000_EFFF,
+        block: "SMC",
+        reason: "Static Memory Controller registers not decoded over HP0 bridge",
+    },
+    SkippedRegisterRule {
+        start: 0xE010_0000,
+        end: 0xE010_1FFF,
+        block: "SDIO",
+        reason: "PS SDIO controller registers not decoded over HP0 bridge",
+    },
+    SkippedRegisterRule {
+        start: 0xF800_1000,
+        end: 0xF800_2FFF,
+        block: "TTC",
+        reason: "PS Triple Timer Counter registers not decoded over HP0 bridge",
+    },
+    SkippedRegisterRule {
+        start: 0xF800_3000,
+        end: 0xF800_3FFF,
+        block: "DMAC",
+        reason: "PS DMA controller registers not decoded over HP0 bridge",
+    },
+    SkippedRegisterRule {
+        start: 0xF800_5000,
+        end: 0xF800_5FFF,
+        block: "SWDT",
+        reason: "PS System Watchdog Timer registers not decoded over HP0 bridge",
+    },
+    SkippedRegisterRule {
+        start: 0xF800_8000,
+        end: 0xF800_BFFF,
+        block: "AFI",
+        reason: "AXI HP interface and configuration registers not decoded over HP0 bridge",
+    },
+    SkippedRegisterRule {
+        start: 0xF880_0000,
+        end: 0xF88F_FFFF,
+        block: "CoreSight",
+        reason: "CoreSight debug and trace components not decoded over HP0 bridge",
+    },
+    SkippedRegisterRule {
+        start: 0xF8F0_0000,
+        end: 0xF8F0_1FFF,
+        block: "MPCore",
+        reason: "ARM Cortex-A9 MPCore private peripheral registers (SCU, GIC, Timers) internal to CPU and not accessible over HP0 bridge",
+    },
+    SkippedRegisterRule {
+        start: 0xF800_0B74,
+        end: 0xF800_0B74,
+        block: "DDRIOB_DCI",
+        reason: "DDRIOB DCI calibration status register not modelled in QEMU",
+    },
+];
+
+/// Returns the allow-list rule if `addr` is permitted to be skipped on QEMU, or `None`.
+pub fn qemu_skipped_rule(addr: u32) -> Option<&'static SkippedRegisterRule> {
+    QEMU_SKIPPED_REGISTER_ALLOW_LIST
+        .iter()
+        .find(|rule| (rule.start..=rule.end).contains(&addr))
+}
+
+/// Backwards-compatible check whether QEMU skips `addr`.
 pub fn qemu_skips_addr(addr: u32) -> bool {
-    (0xF800_6000..=0xF800_6FFF).contains(&addr)
-        || (0xF800_7000..=0xF800_7FFF).contains(&addr)
-        || (0xE000_A000..=0xE000_AFFF).contains(&addr)
-        || (0xF880_0000..=0xF88F_FFFF).contains(&addr)
+    qemu_skipped_rule(addr).is_some()
+}
+
+/// Whether `addr` is decoded and accessible over QEMU's Remote-Port HP0 memory path.
+pub fn qemu_hp0_decodes(addr: u32) -> bool {
+    (0xF800_0000..=0xF800_0FFF).contains(&addr)
+        || (0x0000_0000..=0x3FFF_FFFF).contains(&addr)
+        || (0xFFFC_0000..=0xFFFF_FFFF).contains(&addr)
+}
+
+/// A recorded operation that was skipped during QEMU replay.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkippedOpRecord {
+    /// Zero-based index of the operation in the original sequence.
+    pub op_index: usize,
+    /// Physical address targeted by the operation.
+    pub addr: u32,
+    /// Name of the peripheral or block.
+    pub block: &'static str,
+    /// Documented rationale for skipping on QEMU.
+    pub reason: &'static str,
+}
+
+/// Structured report of operations performed and skipped during QEMU ps7_init replay.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct QemuReplayReport {
+    /// Number of operations applied to QEMU via Remote-Port.
+    pub applied: usize,
+    /// Operations skipped according to the explicit allow-list.
+    pub skipped: Vec<SkippedOpRecord>,
 }
 
 /// Replays `ps7_init` operations on `QemuMachine` via Remote-Port memory access.
 ///
-/// Unmapped registers in QEMU's HP0 path are skipped per [`qemu_skips_addr`].
-/// DDRIOB DCI calibration status (`0xF8000B74`) is not modeled in QEMU and is skipped.
+/// Registers in the explicit allow-list ([`QEMU_SKIPPED_REGISTER_ALLOW_LIST`]) are skipped
+/// and recorded in the returned [`QemuReplayReport`] with their documented rationale.
+/// Any operation targeting an address that is neither in the allow-list nor decoded by HP0
+/// fails immediately with an informative error.
 pub fn replay_qemu(
     machine: &mut backend_qemu::QemuMachine,
     ops: &[Ps7InitOp],
-) -> Result<(), ApiError> {
-    for op in ops {
+) -> Result<QemuReplayReport, ApiError> {
+    let mut report = QemuReplayReport::default();
+    for (op_index, op) in ops.iter().enumerate() {
+        let addr = match *op {
+            Ps7InitOp::Write { addr, .. }
+            | Ps7InitOp::MaskWrite { addr, .. }
+            | Ps7InitOp::MaskPoll { addr, .. } => addr,
+            Ps7InitOp::MaskDelay { .. } => continue,
+        };
+
+        if let Some(rule) = qemu_skipped_rule(addr) {
+            report.skipped.push(SkippedOpRecord {
+                op_index,
+                addr,
+                block: rule.block,
+                reason: rule.reason,
+            });
+            continue;
+        }
+
+        if !qemu_hp0_decodes(addr) {
+            return Err(ApiError::invalid_argument(format!(
+                "ps7_init operation #{op_index} targets register {addr:#010x} which is not decoded over QEMU Remote-Port HP0 and not in the explicit allow-list"
+            )));
+        }
+
         match *op {
             Ps7InitOp::Write { addr, value } => {
-                if qemu_skips_addr(addr) {
-                    continue;
-                }
                 machine
                     .write_memory(addr as u64, &value.to_le_bytes())
                     .map_err(|e| {
@@ -174,11 +358,9 @@ pub fn replay_qemu(
                             "ps7_init QEMU write to {addr:#010x} failed: {e}"
                         ))
                     })?;
+                report.applied += 1;
             }
             Ps7InitOp::MaskWrite { addr, mask, value } => {
-                if qemu_skips_addr(addr) {
-                    continue;
-                }
                 let cur_bytes = machine.read_memory(addr as u64, 4).map_err(|e| {
                     ApiError::internal(format!(
                         "ps7_init QEMU read before mask_write on {addr:#010x} failed: {e}"
@@ -193,11 +375,9 @@ pub fn replay_qemu(
                             "ps7_init QEMU mask_write to {addr:#010x} failed: {e}"
                         ))
                     })?;
+                report.applied += 1;
             }
             Ps7InitOp::MaskPoll { addr, mask } => {
-                if qemu_skips_addr(addr) || addr == 0xF800_0B74 {
-                    continue;
-                }
                 let mut satisfied = false;
                 for _ in 0..MAX_POLL_ITERATIONS {
                     let cur_bytes = machine.read_memory(addr as u64, 4).map_err(|e| {
@@ -216,11 +396,12 @@ pub fn replay_qemu(
                         "ps7_init mask_poll timeout on register {addr:#010x} with mask {mask:#010x}"
                     )));
                 }
+                report.applied += 1;
             }
             Ps7InitOp::MaskDelay { .. } => {}
         }
     }
-    Ok(())
+    Ok(report)
 }
 
 #[cfg(test)]
@@ -277,5 +458,87 @@ mod tests {
             "expected timeout message, got: {}",
             err.message
         );
+    }
+
+    #[test]
+    fn qemu_allow_list_identifies_skipped_ranges_with_reasons() {
+        assert_eq!(qemu_skipped_rule(0xF800_6000).unwrap().block, "DDRC");
+        assert_eq!(qemu_skipped_rule(0xF800_6054).unwrap().block, "DDRC");
+        assert_eq!(qemu_skipped_rule(0xF800_7000).unwrap().block, "DEVCFG");
+        assert_eq!(qemu_skipped_rule(0xE000_A000).unwrap().block, "GPIO");
+        assert_eq!(qemu_skipped_rule(0xE000_2000).unwrap().block, "USB");
+        assert_eq!(qemu_skipped_rule(0xE000_B000).unwrap().block, "GEM");
+        assert_eq!(qemu_skipped_rule(0xE000_E000).unwrap().block, "SMC");
+        assert_eq!(qemu_skipped_rule(0xF880_0000).unwrap().block, "CoreSight");
+        assert_eq!(qemu_skipped_rule(0xF800_0B74).unwrap().block, "DDRIOB_DCI");
+
+        assert_eq!(qemu_skipped_rule(0xE000_1034).unwrap().block, "UART");
+        assert_eq!(qemu_skipped_rule(0xE000_4000).unwrap().block, "I2C");
+        assert_eq!(qemu_skipped_rule(0xE000_6000).unwrap().block, "SPI");
+        assert_eq!(qemu_skipped_rule(0xE000_8000).unwrap().block, "CAN");
+        assert_eq!(qemu_skipped_rule(0xE000_D000).unwrap().block, "QSPI");
+        assert_eq!(qemu_skipped_rule(0xE010_0000).unwrap().block, "SDIO");
+        assert_eq!(qemu_skipped_rule(0xF800_1000).unwrap().block, "TTC");
+        assert_eq!(qemu_skipped_rule(0xF800_5000).unwrap().block, "SWDT");
+
+        // SLCR registers are NOT in the skip allow-list; they must be written!
+        assert!(qemu_skipped_rule(0xF800_0008).is_none());
+        assert!(qemu_skipped_rule(0xF800_0100).is_none());
+        assert!(qemu_skipped_rule(0xF800_0120).is_none());
+
+        // HP0 decodes SLCR, RAM, OCM
+        assert!(qemu_hp0_decodes(0xF800_0008));
+        assert!(qemu_hp0_decodes(0x0010_0000));
+        assert!(qemu_hp0_decodes(0x0000_0000));
+        assert!(qemu_hp0_decodes(0xFFFF_0000));
+        assert!(!qemu_hp0_decodes(0xF800_6000));
+        assert!(!qemu_hp0_decodes(0xDEAD_BEEF));
+    }
+
+    #[test]
+    fn fixtures_handoff_xsa_all_ops_either_decoded_or_allowed_skip() {
+        let fixtures_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("fixtures");
+        if !fixtures_dir.is_dir() {
+            return;
+        }
+
+        let xsa_paths = [
+            fixtures_dir.join("handoff/design.xsa"),
+            fixtures_dir.join("bsp/zs_ps_all.xsa"),
+            fixtures_dir.join("xsa/zs_dma_fifo.xsa"),
+            fixtures_dir.join("xsa/zs_dma_loopback.xsa"),
+            fixtures_dir.join("xsa/zs_iic_bram.xsa"),
+            fixtures_dir.join("xsa/zs_intc.xsa"),
+            fixtures_dir.join("xsa/zs_math_gpio.xsa"),
+            fixtures_dir.join("xsa/zs_math_only.xsa"),
+            fixtures_dir.join("xsa/zs_two_math.xsa"),
+            fixtures_dir.join("xsa/zs_vendor_ip.xsa"),
+        ];
+
+        for path in xsa_paths {
+            assert!(path.is_file(), "Path does not exist: {}", path.display());
+            let handoff = match xsa_import::read(&path) {
+                Ok(h) => h,
+                Err(e) => panic!("Failed to read {}: {:?}", path.display(), e),
+            };
+            for (idx, op) in handoff.archive.ps7_init_ops.iter().enumerate() {
+                let addr = match op {
+                    Ps7InitOp::Write { addr, .. } => *addr,
+                    Ps7InitOp::MaskWrite { addr, .. } => *addr,
+                    Ps7InitOp::MaskPoll { addr, .. } => *addr,
+                    Ps7InitOp::MaskDelay { .. } => continue,
+                };
+                assert!(
+                    qemu_hp0_decodes(addr) || qemu_skips_addr(addr),
+                    "In {}, op #{idx} addr {addr:#010x} is neither decoded over HP0 nor in allow-list",
+                    path.display()
+                );
+            }
+        }
     }
 }

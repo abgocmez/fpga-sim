@@ -23,9 +23,10 @@ pub mod net;
 use interop::{
     BusAccess, BusCmd, Interrupt, Packet, Session, SessionError, Sync, cap, flags, resp,
 };
+pub use pl_api::PsMasterPort;
 use pl_api::{
     BusError, BusResult, DEV_M_AXI_GP0, DEV_M_AXI_GP1, DEV_WIRES_PL_TO_PS, DEV_WIRES_PS_TO_PL,
-    PlTarget, PsMasterPort, PsPort,
+    PlTarget, PsPort,
 };
 use std::collections::VecDeque;
 use std::fmt;
@@ -1001,6 +1002,16 @@ impl QemuMachine {
     /// the vCPU thread holding QEMU's global lock, so the monitor cannot
     /// answer while the machine is held.
     pub fn read_memory(&mut self, addr: u64, len: usize) -> Result<Vec<u8>, QemuError> {
+        self.read_memory_via(PsMasterPort::SAxiHp0, addr, len)
+    }
+
+    /// Reads guest physical memory through the specified master port (`S_AXI_HP*`, `S_AXI_GP*`, `S_AXI_ACP`).
+    pub fn read_memory_via(
+        &mut self,
+        port: PsMasterPort,
+        addr: u64,
+        len: usize,
+    ) -> Result<Vec<u8>, QemuError> {
         const CHUNK: usize = 4096;
         if len > 64 * 1024 * 1024 {
             return Err(QemuError::Memory("read larger than 64 MiB".to_string()));
@@ -1009,8 +1020,8 @@ impl QemuMachine {
         let mut ps = PsCtx::new(&mut self.rp, &mut self.pending, self.now_ns);
         for (i, chunk) in out.chunks_mut(CHUNK).enumerate() {
             let a = addr + (i * CHUNK) as u64;
-            ps.mem_read(PsMasterPort::SAxiHp0, a, chunk)
-                .map_err(|e| QemuError::Memory(format!("read at {a:#x}: {e}")))?;
+            ps.mem_read(port, a, chunk)
+                .map_err(|e| QemuError::Memory(format!("read at {a:#x} via {port:?}: {e}")))?;
         }
         Ok(out)
     }
@@ -1018,12 +1029,22 @@ impl QemuMachine {
     /// Writes guest physical memory through the same path as
     /// [`QemuMachine::read_memory`].
     pub fn write_memory(&mut self, addr: u64, data: &[u8]) -> Result<(), QemuError> {
+        self.write_memory_via(PsMasterPort::SAxiHp0, addr, data)
+    }
+
+    /// Writes guest physical memory through the specified master port.
+    pub fn write_memory_via(
+        &mut self,
+        port: PsMasterPort,
+        addr: u64,
+        data: &[u8],
+    ) -> Result<(), QemuError> {
         const CHUNK: usize = 4096;
         let mut ps = PsCtx::new(&mut self.rp, &mut self.pending, self.now_ns);
         for (i, chunk) in data.chunks(CHUNK).enumerate() {
             let a = addr + (i * CHUNK) as u64;
-            ps.mem_write(PsMasterPort::SAxiHp0, a, chunk)
-                .map_err(|e| QemuError::Memory(format!("write at {a:#x}: {e}")))?;
+            ps.mem_write(port, a, chunk)
+                .map_err(|e| QemuError::Memory(format!("write at {a:#x} via {port:?}: {e}")))?;
         }
         Ok(())
     }

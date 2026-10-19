@@ -141,12 +141,20 @@ Goal: a stranger can take a trivial Vitis project + Vivado XSA and see it run, w
 * **Documentation updated:** Stale text in `docs/TEST_YOUR_DESIGN.md` and `README.md` corrected (`ps7_init` replay, multi-slave,
   A32/Thumb/VFP native PS capabilities, `.\demo.cmd --quick`).
 
-### A. QEMU side of `ps7_init` (M)
-* Make DDRC/DEVCFG writes reach QEMU (check the HP0 route; otherwise a tiny A32 stub that performs the writes and
-  runs first, as the round-1 plan said) and fix the QEMU private timer at 333.33 MHz (the global timer was fixed by a
-  DTB property; the private one was not). Acceptance: a test reading the private timer rate on QEMU after the replay
-  (`firmware/timer_rate`) gives 333.33 MHz; skipped registers only from an explicit allow-list, never silently.
-  Then update STATUS row 65 and the `ps7_init` row.
+### A. QEMU side of `ps7_init` (M) — DONE
+* **Explicit Skip Allow-List & Auditing (`QemuReplayReport`):** Replaced silent `qemu_skips_addr` checks with an
+  explicit allow-list (`QEMU_SKIPPED_REGISTER_ALLOW_LIST`, `SkippedRegisterRule`) documenting exact block names and
+  architectural reasons (DDRC, DEVCFG, UART, USB, I2C, SPI, CAN, GPIO, GEM, QSPI, SMC, SDIO, TTC, SWDT, AFI, CoreSight,
+  MPCore/timers, and DDRIOB DCI calibration status). Operations targeting addresses outside HP0-decoded memory (SLCR, RAM, OCM)
+  and not in the allow-list immediately fail with an informative diagnostic instead of silently proceeding.
+* **QEMU `arm_mptimer` Limitation Documented (H6):** Upstream Xilinx QEMU 6.1.0 (`arm_mptimer.c`) hardcodes the timer scale
+  to `10` ns (100 MHz) in C (`(((control >> 8) & 0xff) + 1) * 10`) without DTB or QOM properties to reclock it (confirmed by
+  code inspection and `arm_mptimer,?` model dump; ADR-029). The global timer is clocked at 333.33 MHz via DTB (`clock-frequency`),
+  while the private timer deviation remains pinned by `a9_timer_rate::the_private_timer_still_ticks_at_100_mhz_a_known_deviation`.
+  Native PS models both timers at 333.33 MHz (`PERIPH_DIV = 2`).
+* **Verification & Status:** All 5 tests in `ps7_init_replay.rs`, `handoff.rs` (running BOOT.BIN end-to-end), and `a9_timer_rate.rs`
+  pass. STATUS.md rows 66, 414, and 546 updated.
+
 
 ### D. More IP models and real IP (M each)
 * Next models in order: AXI VDMA, AXI Ethernet Lite, Video Timing Controller, AXI4-Stream to Video Out (follow
