@@ -104,6 +104,7 @@ const CASES: &[Case] = &[
     case("rust-debug", "20ms"),
     case("dma-loopback", "20ms"),
     case("dma-sg", "20ms"),
+    case("vdma-demo", "6ms"),
     case("gpio-timer-uart", "20ms"),
     Case {
         // The button press is scripted: capture on its rising edge at 3 ms.

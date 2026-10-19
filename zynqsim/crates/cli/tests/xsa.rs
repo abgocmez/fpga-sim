@@ -68,12 +68,98 @@ fn ensure_dpi_lib() {
     }
 }
 
-/// The design with an AXI VDMA (no model): the project is generated, the report names the
+/// The design with an AXI Ethernet Lite (no model): the project is generated, the report names the
 /// unmodelled IP, and `run` stops with the diagnostic instead of simulating a design that is
-/// not there. (The AXI GPIO of `zs_math_gpio.xsa` has a vendor-ip model, see below.)
+/// not there.
 #[test]
 fn an_unmodelled_ip_is_reported_and_stops_the_run() {
-    let d = temp("dma");
+    let d = temp("ethlite");
+    let xsa = fixtures().join("xsa/zs_math_ethlite.hwh");
+    let rtl = fixtures().join("rtl/math/my_math_ip.v");
+    let elf = fixtures().join("elf/math_test.elf");
+    let o = zynqsim(&[
+        "--json",
+        "init",
+        "--xsa",
+        xsa.to_str().unwrap(),
+        "--out",
+        d.to_str().unwrap(),
+        "--rtl",
+        rtl.to_str().unwrap(),
+        "--elf",
+        elf.to_str().unwrap(),
+    ]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let v: Value = serde_json::from_str(&stdout(&o)).unwrap();
+    assert_eq!(v["design"], "design_ethlite");
+    assert_eq!(v["testbench_module"], "my_math_ip");
+    assert_eq!(v["runnable"], false);
+    let un = v["unmodelled"].as_array().unwrap();
+    assert_eq!(un.len(), 1);
+    assert_eq!(un[0]["instance"], "axi_ethernetlite_0");
+    assert_eq!(un[0]["vlnv"], "xilinx.com:ip:axi_ethernetlite:3.0");
+    assert_eq!(un[0]["base"], "0x43000000");
+    assert!(
+        un[0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("`vendor-ip` model that does not exist yet")
+    );
+
+    let toml = std::fs::read_to_string(d.join("project.toml")).unwrap();
+    assert!(
+        toml.contains("\"u_math.S_AXI\" = \"M_AXI_GP0@0x43C00000\""),
+        "{toml}"
+    );
+    assert!(
+        toml.contains("\"axi_ethernetlite_0.ip2intc_irpt\" = \"IRQ_F2P[0]\""),
+        "{toml}"
+    );
+    assert!(
+        toml.contains("\"u_math.S_AXI_ACLK\" = \"FCLK_CLK0\""),
+        "{toml}"
+    );
+    let report = std::fs::read_to_string(d.join("xsa-report.md")).unwrap();
+    assert!(report.contains("NOT RUNNABLE"), "{report}");
+    assert!(
+        report.contains("xilinx.com:ip:axi_ethernetlite:3.0"),
+        "{report}"
+    );
+    assert!(report.contains("0x43C00000"), "{report}");
+    assert!(report.contains("IRQ_F2P[0]"), "{report}");
+    assert!(d.join("tb/cosim_top.sv").is_file());
+
+    // `run` refuses with the diagnostic and exit code 1 (validation failed).
+    let r = zynqsim(&[
+        "run",
+        "--project",
+        d.join("project.toml").to_str().unwrap(),
+        "--for",
+        "1ms",
+    ]);
+    assert_eq!(r.status.code(), Some(1), "{}", stderr(&r));
+    let e = stderr(&r);
+    assert!(
+        e.contains("axi_ethernetlite_0")
+            && e.contains("xilinx.com:ip:axi_ethernetlite:3.0")
+            && e.contains("0x43000000"),
+        "{e}"
+    );
+
+    // Refuses to overwrite.
+    let again = zynqsim(&[
+        "init",
+        "--xsa",
+        xsa.to_str().unwrap(),
+        "--out",
+        d.to_str().unwrap(),
+    ]);
+    assert_eq!(again.status.code(), Some(2), "{}", stderr(&again));
+}
+
+#[test]
+fn the_vdma_design_maps_the_vdma_model() {
+    let d = temp("vdma_map");
     let xsa = fixtures().join("xsa/zs_math_vdma.hwh");
     let rtl = fixtures().join("rtl/math/my_math_ip.v");
     let elf = fixtures().join("elf/math_test.elf");
@@ -92,66 +178,9 @@ fn an_unmodelled_ip_is_reported_and_stops_the_run() {
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     let v: Value = serde_json::from_str(&stdout(&o)).unwrap();
     assert_eq!(v["design"], "design_vdma");
-    assert_eq!(v["testbench_module"], "my_math_ip");
-    assert_eq!(v["runnable"], false);
-    let un = v["unmodelled"].as_array().unwrap();
-    assert_eq!(un.len(), 1);
-    assert_eq!(un[0]["instance"], "axi_vdma_0");
-    assert_eq!(un[0]["vlnv"], "xilinx.com:ip:axi_vdma:6.3");
-    assert_eq!(un[0]["base"], "0x43000000");
-    assert!(
-        un[0]["reason"]
-            .as_str()
-            .unwrap()
-            .contains("`vendor-ip` model that does not exist yet")
-    );
-
+    assert_eq!(v["runnable"], true);
     let toml = std::fs::read_to_string(d.join("project.toml")).unwrap();
-    assert!(
-        toml.contains("\"u_math.S_AXI\" = \"M_AXI_GP0@0x43C00000\""),
-        "{toml}"
-    );
-    assert!(
-        toml.contains("\"axi_vdma_0.mm2s_introut\" = \"IRQ_F2P[0]\""),
-        "{toml}"
-    );
-    assert!(
-        toml.contains("\"u_math.S_AXI_ACLK\" = \"FCLK_CLK0\""),
-        "{toml}"
-    );
-    let report = std::fs::read_to_string(d.join("xsa-report.md")).unwrap();
-    assert!(report.contains("NOT RUNNABLE"), "{report}");
-    assert!(report.contains("xilinx.com:ip:axi_vdma:6.3"), "{report}");
-    assert!(report.contains("0x43C00000"), "{report}");
-    assert!(report.contains("IRQ_F2P[0]"), "{report}");
-    assert!(d.join("tb/cosim_top.sv").is_file());
-
-    // `run` refuses with the diagnostic and exit code 1 (validation failed).
-    let r = zynqsim(&[
-        "run",
-        "--project",
-        d.join("project.toml").to_str().unwrap(),
-        "--for",
-        "1ms",
-    ]);
-    assert_eq!(r.status.code(), Some(1), "{}", stderr(&r));
-    let e = stderr(&r);
-    assert!(
-        e.contains("axi_vdma_0")
-            && e.contains("xilinx.com:ip:axi_vdma:6.3")
-            && e.contains("0x43000000"),
-        "{e}"
-    );
-
-    // Refuses to overwrite.
-    let again = zynqsim(&[
-        "init",
-        "--xsa",
-        xsa.to_str().unwrap(),
-        "--out",
-        d.to_str().unwrap(),
-    ]);
-    assert_eq!(again.status.code(), Some(2), "{}", stderr(&again));
+    assert!(toml.contains("axi_vdma_0 = \"axi_vdma\""), "{toml}");
 }
 
 /// Without the RTL the module reference has no source: that is reported, not guessed.

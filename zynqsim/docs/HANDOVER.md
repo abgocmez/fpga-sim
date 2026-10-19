@@ -35,6 +35,7 @@ Replaces the round-1 handover; its finished items are summarised in section 2.
 | AXI Quad SPI (ADR-040) | done, tested | `vendor-ip/src/spi.rs`, `examples/spi-demo` |
 | AXI4-Stream FIFO (ADR-041) | implemented + tested, `VERIFY:` items open | `vendor-ip/src/axis_fifo.rs`, `examples/axis-fifo-demo` |
 | Clocking Wizard (ADR-042) | implemented + tested, `VERIFY:` items open; model changes no clock | `vendor-ip/src/clk_wiz.rs`, `examples/clk-wiz-demo`; `xsa-import/src/hwh.rs` reclassifies a `clk_wiz` with an AXI4-Lite window from passive to native |
+| AXI VDMA (ADR-043) | implemented + tested, `VERIFY:` items open | `vendor-ip/src/vdma.rs`, `examples/vdma-demo`; 2D line stride, park & circular buffer store addressing up to 32 frame stores, stream loopback |
 | P1: User path, `zynqsim doctor`, `try-xsa` | done, verified | `zynqsim doctor`, `cargo xtask try-xsa`, `demo::xsa-native-*`, `docs/TEST_YOUR_DESIGN.md` |
 | Fast gate, demo tour, packaging | done | `cargo xtask ci --fast`, `cargo xtask demo [--quick]` |
 
@@ -45,7 +46,7 @@ Replaces the round-1 handover; its finished items are summarised in section 2.
 Works (needs QEMU+XSim for the full path; the native path needs neither):
 * A **Vitis bare-metal ELF** for Cortex-A9 (hello world, GPIO/timer/UART/GIC/TTC, Xilinx BSP drivers, many BSP
   example apps: `fixtures/bsp`) run on QEMU, or natively with `ps = "native"`.
-* A **Vivado XSA** (`write_hw_platform`) with the PS7 and any of: AXI GPIO, Timer, UART Lite, DMA, IIC, BRAM, INTC,
+* A **Vivado XSA** (`write_hw_platform`) with the PS7 and any of: AXI GPIO, Timer, UART Lite, DMA, VDMA, IIC, BRAM, INTC,
   Quad SPI, AXI4-Stream FIFO (MM), Clocking Wizard (as models), plus **one or more user AXI4-Lite slaves** in
   Verilog/SystemVerilog (module reference). `zynqsim init --xsa design.xsa --rtl my_ip.v --boot-bin BOOT.BIN`
   (or `--elf`). A **BOOT.BIN** from `bootgen` boots (only the application partition runs).
@@ -53,8 +54,8 @@ Works (needs QEMU+XSim for the full path; the native path needs neither):
 * The user RTL can also run in Verilator, Icarus or the native 4-state engine without Vivado.
 
 Does not work / not proven:
-* An XSA containing any IP without a model stops the run and is listed under `[xsa.unmodelled]` (VDMA, Ethernet,
-  video IP, most others).
+* An XSA containing any IP without a model stops the run and is listed under `[xsa.unmodelled]` (Ethernet Lite,
+  video IP, CDMA, most others).
 * The FSBL is never executed; the bitstream is not simulated; no timing; QEMU gets `ps7_init` only partially.
 * All Xilinx IP are register-level models from product guides, **never compared with hardware** (`VERIFY:`).
 * AXI4 slaves and AXI-Stream in user RTL, non-32-bit AXI masters, audio/video from an XSA: hand-written testbenches only.
@@ -157,12 +158,16 @@ Goal: a stranger can take a trivial Vitis project + Vivado XSA and see it run, w
 
 
 ### D. More IP models and real IP (M each)
-* Next models in order: AXI VDMA, AXI Ethernet Lite, Video Timing Controller, AXI4-Stream to Video Out (follow
+* **AXI VDMA (`axi_vdma` 6.3, ADR-043) — DONE:** Behavioural model in `crates/vendor-ip/src/vdma.rs`,
+  2D stride/frame transfers, park & circular buffer store modes (1..32 frame stores with `REG_INDEX` banking),
+  interrupts on output 0 (MM2S) and output 1 (S2MM), `STREAM_LOOPBACK`, firmware demo `firmware/vdma_demo`,
+  example `examples/vdma-demo/project.toml`, determinism 5/5, unit tests and integration tests passing.
+* Next models in order: AXI Ethernet Lite, Video Timing Controller, AXI4-Stream to Video Out (follow
   section 4). Each: Vitis driver example passes (`fixtures/bsp` has `xaxidma`/`xiic` style apps; add the missing ones).
 * **Real IP through `export_simulation`:** verify `-L secureip`/`unisims_ver` runs for a design with an AXI GPIO or
   clocking wizard in XSim (ADR-017 says this was never verified); then document which IP can run this way instead of
-  a model. This avoids guessing register behaviour and is the cheapest way to verify the `VERIFY:` items of ADR-040/041/042.
-* Compare the SPI/FIFO/ClkWiz models with XSim runs of the real IP where possible and promote rows to `verified` only
+  a model. This avoids guessing register behaviour and is the cheapest way to verify the `VERIFY:` items of ADR-040/041/042/043.
+* Compare the SPI/FIFO/ClkWiz/VDMA models with XSim runs of the real IP where possible and promote rows to `verified` only
   with a test that shows it.
 
 ### H. Quality

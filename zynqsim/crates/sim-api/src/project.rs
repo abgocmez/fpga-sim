@@ -1378,7 +1378,7 @@ impl Project {
                 ));
             }
             for (inst, model) in &self.native {
-                if model == "axi_dma" {
+                if model == "axi_dma" || model == "axi_vdma" {
                     d.push(err(
                         &format!("native.{inst}"),
                         "the native PS has no HP/ACP master port, so a DMA cannot move data \

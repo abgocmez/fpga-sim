@@ -1,0 +1,47 @@
+# AXI VDMA 6.3 2D video transfer loopback with no RTL: the Xilinx IP runs as a vendor-ip model
+# (crates/vendor-ip, ADR-043) on the native PL.
+#
+# Firmware: firmware/vdma_demo (Rust, no_std). MM2S reads 2D frames from DDR through the
+# S_AXI_HP0 path, the AXI4-Stream loops back (M_AXIS_MM2S -> S_AXIS_S2MM), S2MM writes to a
+# second frame buffer; both channels interrupt (IRQ_F2P[0] and [1]).
+#
+#   zynqsim run --project examples/vdma-demo/project.toml --for 4ms
+#   expect on UART1: "VDMA core version: 0x6030000", "VDMA PASS", "RESULT: ALL PASS"
+#
+# Needs: the Xilinx QEMU (Vitis). No Vivado is needed to RUN this.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "native"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_vdma.elf"
+
+[native]
+axi_vdma_0 = "axi_vdma"
+
+[native_params.axi_vdma_0]
+C_NUM_FSTORES = 3
+CLK_FREQ_HZ = 100000000
+PS_PORT = "S_AXI_HP0"
+STREAM_LOOPBACK = 1
+ADDRESS_SIZE = "0x10000"
+
+[connect]
+"axi_vdma_0.S_AXI_LITE" = "M_AXI_GP0@0x43000000"
+"axi_vdma_0.M_AXI_MM2S" = "S_AXI_HP0"
+"axi_vdma_0.M_AXI_S2MM" = "S_AXI_HP0"
+"axi_vdma_0.mm2s_introut" = "IRQ_F2P[0]"
+"axi_vdma_0.s2mm_introut" = "IRQ_F2P[1]"
+

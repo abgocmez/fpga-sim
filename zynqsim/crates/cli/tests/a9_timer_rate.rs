@@ -120,4 +120,3 @@ fn the_private_timer_still_ticks_at_100_mhz_a_known_deviation() {
         "the private timer runs at the BSP rate now: update D3 in docs/conformance/bsp-apps.md and this test\n{uart}"
     );
 }
-

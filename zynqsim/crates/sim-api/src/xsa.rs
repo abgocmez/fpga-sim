@@ -636,7 +636,7 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
                     }
                 }
                 match name.as_str() {
-                    "axi_dma" => {
+                    "axi_dma" | "axi_vdma" => {
                         // The memory path: the HP port the block design connects the masters to.
                         let port = ip
                             .master_windows
@@ -691,6 +691,11 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
                                 ));
                             }
                             Streams::Peer(peer) => {
+                                let label = if name == "axi_vdma" {
+                                    "AXI VDMA"
+                                } else {
+                                    "AXI DMA"
+                                };
                                 unmodelled.push(mk(
                                     format!(
                                         "its AXI4-Stream side is connected to `{peer}`; the model \
@@ -698,7 +703,7 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
                                          loopback (a stream connection to user RTL in XSim or \
                                          to other IP does not exist)"
                                     ),
-                                    Some("AXI DMA".to_string()),
+                                    Some(label.to_string()),
                                 ));
                                 continue;
                             }

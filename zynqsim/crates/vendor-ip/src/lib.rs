@@ -33,6 +33,7 @@ mod params;
 pub mod spi;
 pub mod timer;
 pub mod uartlite;
+pub mod vdma;
 
 pub use params::{Params, flag, number, parse_number, ranged};
 
@@ -54,6 +55,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 use timer::{AxiTimer, TimerConfig, TimerHandle};
 use uartlite::{AxiUartLite, UartConfig, UartHandle};
+pub use vdma::{AxiVdma, VdmaConfig, VdmaHandle};
 
 /// Model names [`VendorPl::add`] accepts, by IP catalog name.
 pub const MODELS: &[&str] = &[
@@ -61,6 +63,7 @@ pub const MODELS: &[&str] = &[
     "axi_timer",
     "axi_uartlite",
     "axi_dma",
+    "axi_vdma",
     "axi_iic",
     "axi_bram_ctrl",
     "axi_intc",
@@ -104,6 +107,20 @@ pub fn param_names(model: &str) -> &'static [&'static str] {
             "C_ENABLE_MULTI_CHANNEL",
             "C_MICRO_DMA",
         ],
+        "axi_vdma" => &[
+            "C_INCLUDE_MM2S",
+            "C_INCLUDE_S2MM",
+            "C_NUM_FSTORES",
+            "C_MM2S_LINEBUFFER_DEPTH",
+            "C_S2MM_LINEBUFFER_DEPTH",
+            "C_MM2S_GENLOCK_MODE",
+            "C_S2MM_GENLOCK_MODE",
+            "C_INCLUDE_SG",
+            "C_M_AXI_MM2S_DATA_WIDTH",
+            "C_M_AXI_S2MM_DATA_WIDTH",
+            "STREAM_LOOPBACK",
+            "PS_PORT",
+        ],
         "axi_iic" => &["C_SCL_CLK_FREQ_KHZ"],
         "axi_bram_ctrl" => &["C_ECC", "C_S_AXI_DATA_WIDTH"],
         "axi_intc" => &[
@@ -134,11 +151,11 @@ pub fn param_names(model: &str) -> &'static [&'static str] {
     }
 }
 
-/// The interrupt output index of port `port` of `model` (the AXI DMA has two outputs, the
+/// The interrupt output index of port `port` of `model` (the AXI DMA and VDMA have two outputs, the
 /// other models one).
 pub fn irq_output_index(model: &str, port: &str) -> usize {
     match (model, port) {
-        ("axi_dma", "s2mm_introut") => 1,
+        ("axi_dma", "s2mm_introut") | ("axi_vdma", "s2mm_introut") => 1,
         _ => 0,
     }
 }
@@ -326,6 +343,7 @@ pub struct VendorPl {
     triggers: Vec<TriggerBind>,
     uarts: Vec<UartBind>,
     dmas: Vec<(String, DmaHandle)>,
+    vdmas: Vec<(String, VdmaHandle)>,
     iics: Vec<IicBind>,
     brams: Vec<(String, BramHandle)>,
     intcs: Vec<(String, IntcHandle)>,
@@ -372,6 +390,7 @@ impl VendorPl {
             triggers: Vec::new(),
             uarts: Vec::new(),
             dmas: Vec::new(),
+            vdmas: Vec::new(),
             iics: Vec::new(),
             brams: Vec::new(),
             intcs: Vec::new(),
@@ -509,6 +528,12 @@ impl VendorPl {
                 self.dmas.push((inst.name.clone(), handle));
                 Box::new(d)
             }
+            "axi_vdma" => {
+                let cfg = VdmaConfig::from_params(&inst.params, size).map_err(ctx)?;
+                let (v, handle) = AxiVdma::new(&inst.name, cfg);
+                self.vdmas.push((inst.name.clone(), handle));
+                Box::new(v)
+            }
             "axi_iic" => {
                 let cfg = IicConfig::from_params(&inst.params, size).map_err(ctx)?;
                 let (i, handle) = AxiIic::new(&inst.name, cfg);
@@ -633,6 +658,14 @@ impl VendorPl {
     /// The DMA handle of instance `name`.
     pub fn dma(&self, name: &str) -> Option<DmaHandle> {
         self.dmas
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, h)| h.clone())
+    }
+
+    /// The VDMA handle of instance `name`.
+    pub fn vdma(&self, name: &str) -> Option<VdmaHandle> {
+        self.vdmas
             .iter()
             .find(|(n, _)| n == name)
             .map(|(_, h)| h.clone())
@@ -1267,7 +1300,7 @@ mod tests {
             .unwrap_err();
         assert!(e.contains("overlaps"), "{e}");
         let e = pl
-            .add(&inst("c", "axi_vdma", 0x4300_0000, None, &[]))
+            .add(&inst("c", "axi_ethernetlite", 0x4300_0000, None, &[]))
             .unwrap_err();
         assert!(e.contains("not a vendor-ip model"), "{e}");
         let e = pl

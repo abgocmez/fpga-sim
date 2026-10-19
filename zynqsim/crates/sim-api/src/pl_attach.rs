@@ -30,6 +30,7 @@ pub const NATIVE_MODELS: &[&str] = &[
     "axi_timer",
     "axi_uartlite",
     "axi_dma",
+    "axi_vdma",
     "axi_iic",
     "axi_bram_ctrl",
     "axi_intc",

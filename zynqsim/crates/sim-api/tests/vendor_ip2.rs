@@ -281,3 +281,23 @@ fn the_axi_fifo_model_loops_packets_back_and_raises_interrupts() {
         assert!(u.contains(line), "UART1 lacks `{line}`:\n{u}");
     }
 }
+
+#[test]
+fn the_axi_vdma_model_runs_2d_frame_transfers_and_interrupts() {
+    if !qemu_present() {
+        eprintln!("SKIPPED: Xilinx QEMU not found");
+        return;
+    }
+    let mut e = engine("vdma-demo");
+    run_us(e.as_mut(), 10_000);
+    let u = uart(e.as_mut(), 1);
+    for line in [
+        "VDMA core version: 0x6030000",
+        "park mode copied 256 bytes, 0 words differ",
+        "circular mode copied 256 bytes, 0 words differ",
+        "VDMA PASS",
+        "RESULT: ALL PASS",
+    ] {
+        assert!(u.contains(line), "UART1 lacks `{line}`:\n{u}");
+    }
+}

@@ -32,12 +32,12 @@ fn out_dir(tag: &str) -> String {
 #[test]
 fn an_xsa_with_an_unmodelled_ip_creates_a_project_that_will_not_open() {
     let mut s = server();
-    let out = out_dir("dma");
+    let out = out_dir("ethlite");
     let r = call(
         &mut s,
         "project_create_from_xsa",
         json!({
-            "xsa_path": "fixtures/xsa/zs_math_vdma.hwh",
+            "xsa_path": "fixtures/xsa/zs_math_ethlite.hwh",
             "out_dir": out,
             "rtl": ["fixtures/rtl/math/my_math_ip.v"],
             "elf": "fixtures/elf/math_test.elf",
@@ -45,14 +45,14 @@ fn an_xsa_with_an_unmodelled_ip_creates_a_project_that_will_not_open() {
     );
     assert_eq!(r["isError"], false, "{r}");
     let v = &r["structuredContent"];
-    assert_eq!(v["design"], "design_vdma");
+    assert_eq!(v["design"], "design_ethlite");
     assert_eq!(v["vivado_version"], "2022.1");
     assert_eq!(v["runnable"], false);
     assert_eq!(v["testbench_module"], "my_math_ip");
     assert_eq!(v["ps7"]["fclk"][0]["enabled"], true);
     let un = v["unmodelled"].as_array().unwrap();
     assert_eq!(un.len(), 1, "{un:?}");
-    assert_eq!(un[0]["instance"], "axi_vdma_0");
+    assert_eq!(un[0]["instance"], "axi_ethernetlite_0");
     assert_eq!(un[0]["base"], "0x43000000");
     let irqs = v["interrupts"].as_array().unwrap();
     assert_eq!(irqs.len(), 1);
@@ -64,7 +64,7 @@ fn an_xsa_with_an_unmodelled_ip_creates_a_project_that_will_not_open() {
         .map(|i| i["instance"].as_str().unwrap())
         .collect();
     assert!(
-        inst.contains(&"u_math") && inst.contains(&"axi_vdma_0"),
+        inst.contains(&"u_math") && inst.contains(&"axi_ethernetlite_0"),
         "{inst:?}"
     );
     assert!(
@@ -72,7 +72,7 @@ fn an_xsa_with_an_unmodelled_ip_creates_a_project_that_will_not_open() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|d| d["field"] == "xsa.unmodelled.axi_vdma_0" && d["severity"] == "error"),
+            .any(|d| d["field"] == "xsa.unmodelled.axi_ethernetlite_0" && d["severity"] == "error"),
         "{v}"
     );
 
@@ -93,7 +93,7 @@ fn an_xsa_with_an_unmodelled_ip_creates_a_project_that_will_not_open() {
     let again = call(
         &mut s,
         "project_create_from_xsa",
-        json!({ "xsa_path": "fixtures/xsa/zs_math_vdma.hwh", "out_dir": out }),
+        json!({ "xsa_path": "fixtures/xsa/zs_math_ethlite.hwh", "out_dir": out }),
     );
     assert_eq!(again["isError"], true, "{again}");
     assert!(
