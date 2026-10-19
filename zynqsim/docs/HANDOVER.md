@@ -132,16 +132,13 @@ decision was made, the affected `examples/` added to the determinism table, and 
   - Single-slave backward compatibility preserved (all 6 tests in `cli::tests::xsa` pass).
 
 
-### C. Run the Xilinx BSP applications natively and finish native-math (value medium-high, effort M)
-* **Why.** `examples/native-math` stalls: the BSP start code reads 0xF800D010 (devcfg) which the native bus did not
-  map when it was written (`ps-periph` has devcfg now), and then needs the MMU and VFP setup. This is the
-  "no external tools" proof of the spec (P6 exit).
-* **How.** Map devcfg/other BSP-read registers in `zynq_system()`; run each `fixtures/bsp/*.elf` natively one by one
-  and list the first unmodelled access/instruction; implement it (data points: `docs/conformance/native-ps.md`).
-  Then compare UART and register results with QEMU like `native_ps_diff.rs` does.
-* **Acceptance.** `bsp-hello` and the BSP driver examples that QEMU passes also pass natively (documented
-  differences allowed, never hidden); `examples/native-math` prints ALL PASS with `ps = "native"`, `pl = "rtl-native"`
-  and no external tool; determinism 5x; `native-math` moves from `EXCLUDED` to `CASES`.
+### C. Run the Xilinx BSP applications natively and finish native-math (COMPLETED)
+* **Status.** **Done and verified.** Implemented in commit `08c40d3`: devcfg mapping, CP15 VFP/NEON coprocessor enable, full VFP instruction dispatch and single-precision arithmetic, Thumb-2 parallel arithmetic/saturating instructions (`qadd`, `qsub`, `sadd16`, etc.), and unmodified Xilinx BSP execution.
+* **Evidence.**
+  - `examples/native-math` passes with `ps = "native"` and `pl = "rtl-native"`, printing `RESULT: ALL PASS` on UART1 with 7 vectors and 21 bus accesses.
+  - Determinism: verified in `crates/cli/tests/determinism.rs` (`fnv1a64:0a8f224ff0ba710c` across 5 runs).
+  - BSP applications pass in `crates/cli/tests/bsp_native.rs` and `crates/cli/tests/native_ps_diff.rs`.
+
 
 ### D. IP models, and real IP through the Vivado simulation export (effort M per IP; L overall)
 * **Models.** Candidates in order of how often designs use them: AXI VDMA, AXI Quad SPI, AXI Ethernet Lite, AXI4-Stream FIFO, Clocking
