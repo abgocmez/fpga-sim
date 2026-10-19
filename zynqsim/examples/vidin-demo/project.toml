@@ -1,0 +1,45 @@
+# Video In to AXI4-Stream (v_vid_in_axi4s 4.0, PG043) with no RTL: the Xilinx IP runs as a vendor-ip model
+# (crates/vendor-ip, ADR-049) on the native PL.
+#
+# Firmware: firmware/vidin_demo (Rust, no_std). CPU tests version, software reset,
+# autonomous pattern generation, lock synchronization, stream FIFO readout and pop,
+# receiving interrupt on IRQ_F2P[0].
+#
+#   zynqsim run --project examples/vidin-demo/project.toml --for 6ms
+#   expect on UART1: "VIDIN Version:", "VIDIN interrupt received", "VIDIN stream pop ok", "VIDIN PASS", "RESULT: ALL PASS"
+#
+# Needs: the Xilinx QEMU (Vitis). No Vivado is needed to RUN this.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "native"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_vidin.elf"
+
+[native]
+v_vid_in_axi4s_0 = "v_vid_in_axi4s"
+
+[native_params.v_vid_in_axi4s_0]
+C_PIXELS_PER_CLOCK = 1
+C_COMPONENTS_PER_PIXEL = 3
+C_M_AXIS_VIDEO_DATA_WIDTH = 8
+C_ADDR_WIDTH = 10
+CLK_FREQ_HZ = 100000000
+ADDRESS_SIZE = "0x10000"
+
+[connect]
+"v_vid_in_axi4s_0.ctrl" = "M_AXI_GP0@0x43000000"
+"v_vid_in_axi4s_0.irq" = "IRQ_F2P[0]"
+

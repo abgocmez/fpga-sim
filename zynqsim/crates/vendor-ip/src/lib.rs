@@ -68,7 +68,9 @@ pub mod uart16550;
 pub use uart16550::{AxiUart16550, Uart16550Config, Uart16550Handle, Uart16550Stats};
 pub mod v_axi4s_vid_out;
 pub use v_axi4s_vid_out::{AxiVidOut, VidOutConfig, VidOutHandle, VidOutStats};
+pub mod v_vid_in_axi4s;
 pub use v_tc::{AxiVTc, VTcConfig, VTcHandle, VTcStats};
+pub use v_vid_in_axi4s::{AxiVidIn, VidInConfig, VidInHandle, VidInStats};
 pub use vdma::{AxiVdma, VdmaConfig, VdmaHandle};
 
 /// Model names [`VendorPl::add`] accepts, by IP catalog name.
@@ -89,6 +91,7 @@ pub const MODELS: &[&str] = &[
     "clk_wiz",
     "v_tc",
     "v_axi4s_vid_out",
+    "v_vid_in_axi4s",
 ];
 
 /// True when `name` (`axi_gpio`) is a model of this library.
@@ -201,6 +204,15 @@ pub fn param_names(model: &str) -> &'static [&'static str] {
             "C_PIXELS_PER_CLOCK",
             "C_COMPONENTS_PER_PIXEL",
             "C_S_AXIS_VIDEO_DATA_WIDTH",
+            "C_ADDR_WIDTH",
+            "C_HAS_ASYNC_CLK",
+            "C_SYNC_LOCK_THRESHOLD",
+            "CLK_FREQ_HZ",
+        ],
+        "v_vid_in_axi4s" => &[
+            "C_PIXELS_PER_CLOCK",
+            "C_COMPONENTS_PER_PIXEL",
+            "C_M_AXIS_VIDEO_DATA_WIDTH",
             "C_ADDR_WIDTH",
             "C_HAS_ASYNC_CLK",
             "C_SYNC_LOCK_THRESHOLD",
@@ -414,6 +426,7 @@ pub struct VendorPl {
     cdmas: Vec<(String, CdmaHandle)>,
     uarts16550: Vec<(String, Uart16550Handle)>,
     vid_outs: Vec<(String, VidOutHandle)>,
+    vid_ins: Vec<(String, VidInHandle)>,
     /// Pin changes of the I2C masters, stamped with their (possibly future) bus times; they
     /// are handed out once PL time has reached them.
     iic_events: Arc<Mutex<Vec<PinEvent>>>,
@@ -466,6 +479,7 @@ impl VendorPl {
             cdmas: Vec::new(),
             uarts16550: Vec::new(),
             vid_outs: Vec::new(),
+            vid_ins: Vec::new(),
             iic_events: Arc::new(Mutex::new(Vec::new())),
             board_out: Vec::new(),
             pin_events: Vec::new(),
@@ -692,6 +706,12 @@ impl VendorPl {
                 self.vid_outs.push((inst.name.clone(), handle));
                 Box::new(v)
             }
+            "v_vid_in_axi4s" => {
+                let cfg = VidInConfig::from_params(&inst.params, size).map_err(ctx)?;
+                let (v, handle) = AxiVidIn::new(&inst.name, cfg);
+                self.vid_ins.push((inst.name.clone(), handle));
+                Box::new(v)
+            }
             other => {
                 return Err(format!(
                     "instance `{}`: `{other}` is not a vendor-ip model; available: {}",
@@ -853,6 +873,14 @@ impl VendorPl {
     /// The AXI4-Stream to Video Out handle of instance `name`.
     pub fn vid_out(&self, name: &str) -> Option<VidOutHandle> {
         self.vid_outs
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, h)| h.clone())
+    }
+
+    /// The Video In to AXI4-Stream handle of instance `name`.
+    pub fn vid_in(&self, name: &str) -> Option<VidInHandle> {
+        self.vid_ins
             .iter()
             .find(|(n, _)| n == name)
             .map(|(_, h)| h.clone())
@@ -1096,7 +1124,9 @@ impl PlTarget for VendorPl {
     }
 
     fn has_media(&self) -> bool {
-        self.rtl.as_ref().is_some_and(|r| r.has_media()) || !self.vid_outs.is_empty()
+        self.rtl.as_ref().is_some_and(|r| r.has_media())
+            || !self.vid_outs.is_empty()
+            || !self.vid_ins.is_empty()
     }
 
     fn drain_media(&mut self) -> Vec<MediaEvent> {
@@ -1107,6 +1137,9 @@ impl PlTarget for VendorPl {
             .unwrap_or_default();
         for (_, vo) in &self.vid_outs {
             events.extend(vo.drain_media());
+        }
+        for (_, vi) in &self.vid_ins {
+            events.extend(vi.drain_media());
         }
         events
     }

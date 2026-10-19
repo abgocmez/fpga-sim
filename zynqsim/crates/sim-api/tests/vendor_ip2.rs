@@ -410,3 +410,27 @@ fn the_axi_vid_out_model_runs_loopback_and_interrupts() {
         assert!(u.contains(line), "UART1 lacks `{line}`:\n{u}");
     }
 }
+
+#[test]
+fn the_axi_vid_in_model_runs_capture_and_interrupts() {
+    if !qemu_present() {
+        eprintln!("SKIPPED: Xilinx QEMU not found");
+        return;
+    }
+    let mut e = engine("vidin-demo");
+    run_us(e.as_mut(), 10_000);
+    let u = uart(e.as_mut(), 1);
+    for line in [
+        "vidin demo: Video In to AXI4-Stream 4.0 frame capture and timing",
+        "VIDIN Version: 0x04000000",
+        "VIDIN software reset ok",
+        "VIDIN resolution configured (8x4 active, 10x5 total)",
+        "VIDIN interrupt received",
+        "locked=true",
+        "VIDIN stream pop ok",
+        "VIDIN PASS",
+        "RESULT: ALL PASS",
+    ] {
+        assert!(u.contains(line), "UART1 lacks `{line}`:\n{u}");
+    }
+}
