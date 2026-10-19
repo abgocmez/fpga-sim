@@ -330,6 +330,53 @@ fn a_boot_bin_next_to_an_xsa_gives_one_project_with_both() {
 }
 
 #[test]
+fn a_clock_wizard_with_an_axi_lite_window_is_mapped_as_a_native_model() {
+    let dir = temp("clkwiz_plan");
+    let hwh = dir.join("design.hwh");
+    std::fs::write(
+        &hwh,
+        r#"<EDKSYSTEM EDWVERSION="1.2" VIVADOVERSION="2022.1">
+  <SYSTEMINFO ARCH="zynq" DEVICE="7z020" NAME="synth"/>
+  <MODULES>
+    <MODULE INSTANCE="processing_system7_0" MODTYPE="processing_system7" VLNV="xilinx.com:ip:processing_system7:5.5">
+      <PORTS>
+        <PORT CLKFREQUENCY="100000000" DIR="O" NAME="FCLK_CLK0" SIGIS="clk"/>
+      </PORTS>
+      <BUSINTERFACES>
+        <BUSINTERFACE BUSNAME="ps_gp0" DATAWIDTH="32" NAME="M_AXI_GP0" TYPE="MASTER"/>
+      </BUSINTERFACES>
+      <MEMORYMAP>
+        <MEMRANGE ADDRESSBLOCK="Reg" BASEVALUE="0x43C00000" HIGHVALUE="0x43C0FFFF" INSTANCE="clk_wiz_0" MASTERBUSINTERFACE="M_AXI_GP0" MEMTYPE="REGISTER" SLAVEBUSINTERFACE="S_AXI_LITE"/>
+      </MEMORYMAP>
+    </MODULE>
+    <MODULE INSTANCE="clk_wiz_0" MODTYPE="clk_wiz" VLNV="xilinx.com:ip:clk_wiz:6.0">
+      <PARAMETERS>
+        <PARAMETER NAME="PRIM_IN_FREQ" VALUE="125.000"/>
+      </PARAMETERS>
+      <BUSINTERFACES>
+        <BUSINTERFACE BUSNAME="ps_gp0" DATAWIDTH="32" NAME="S_AXI_LITE" TYPE="SLAVE"/>
+      </BUSINTERFACES>
+    </MODULE>
+  </MODULES>
+</EDKSYSTEM>"#,
+    )
+    .unwrap();
+
+    let out = dir.join("proj");
+    let opts = ImportOptions {
+        elf: Some("dummy.elf".to_string()),
+        ..Default::default()
+    };
+    let plan = xsa::plan(&hwh, &out, &opts).unwrap();
+    assert!(plan.unmodelled.is_empty(), "{:?}", plan.unmodelled);
+    assert_eq!(plan.project.native["clk_wiz_0"], "clk_wiz");
+    assert_eq!(
+        plan.project.native_placement("clk_wiz_0"),
+        Some((0, 0x43C0_0000))
+    );
+}
+
+#[test]
 fn an_axi_quad_spi_instance_is_mapped_as_a_native_model() {
     let dir = temp("qspi_plan");
     let hwh = dir.join("design.hwh");

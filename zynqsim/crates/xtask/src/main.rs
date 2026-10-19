@@ -197,6 +197,7 @@ const FIRMWARE: &[(&str, &str)] = &[
     ("two_math", "rust_two_math.elf"),
     ("spi_demo", "rust_spi.elf"),
     ("axis_fifo_demo", "rust_axis_fifo.elf"),
+    ("clk_wiz_demo", "rust_clk_wiz.elf"),
 ];
 
 /// Builds `firmware/` (its own workspace) and copies the ELFs into `fixtures/elf`.

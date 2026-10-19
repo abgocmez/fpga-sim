@@ -9,6 +9,7 @@
 //! * [`intc::AxiIntc`]: AXI Interrupt Controller 4.1 (PG099);
 //! * [`spi::AxiQuadSpi`]: AXI Quad SPI 3.2 (PG153), standard SPI master with loopback;
 //! * [`axis_fifo::AxisFifo`]: AXI4-Stream FIFO 4.2 (PG080), memory-mapped, stream loopback.
+//! * [`clk_wiz::AxiClkWiz`]: Clocking Wizard 6.0 (PG065), registers and lock timing (ADR-042).
 //!
 //! Each model is a [`pl_native::RegisterBlock`], so it plugs into [`pl_native::NativePl`] at a
 //! base address and drives one `IRQ_F2P` line through the lock-step `advance`. [`VendorPl`]
@@ -23,6 +24,7 @@
 
 pub mod axis_fifo;
 pub mod bram;
+pub mod clk_wiz;
 pub mod dma;
 pub mod gpio;
 pub mod iic;
@@ -36,6 +38,7 @@ pub use params::{Params, flag, number, parse_number, ranged};
 
 pub use axis_fifo::{AxisFifo, AxisFifoConfig, AxisFifoHandle};
 use bram::{AxiBramCtrl, BramConfig, BramHandle};
+pub use clk_wiz::{AxiClkWiz, ClkWizConfig, ClkWizHandle};
 use dma::{AxiDma, DmaConfig, DmaHandle};
 use gpio::{AxiGpio, GpioConfig, GpioHandle};
 use iic::{AxiIic, I2cBus, IicConfig, IicHandle};
@@ -63,6 +66,7 @@ pub const MODELS: &[&str] = &[
     "axi_intc",
     "axi_quad_spi",
     "axi_fifo_mm_s",
+    "clk_wiz",
 ];
 
 /// True when `name` (`axi_gpio`) is a model of this library.
@@ -121,6 +125,11 @@ pub fn param_names(model: &str) -> &'static [&'static str] {
             "C_USE_STARTUP",
         ],
         "axi_fifo_mm_s" => &["C_TX_FIFO_DEPTH", "C_RX_FIFO_DEPTH", "C_INTERFACE_TYPE"],
+        "clk_wiz" => &[
+            "PRIM_IN_FREQ",
+            "CLKOUT1_REQUESTED_OUT_FREQ",
+            "USE_DYN_RECONFIG",
+        ],
         _ => &[],
     }
 }
@@ -322,6 +331,7 @@ pub struct VendorPl {
     intcs: Vec<(String, IntcHandle)>,
     spis: Vec<(String, SpiHandle)>,
     fifos: Vec<(String, AxisFifoHandle)>,
+    clk_wizs: Vec<(String, ClkWizHandle)>,
     /// Pin changes of the I2C masters, stamped with their (possibly future) bus times; they
     /// are handed out once PL time has reached them.
     iic_events: Arc<Mutex<Vec<PinEvent>>>,
@@ -367,6 +377,7 @@ impl VendorPl {
             intcs: Vec::new(),
             spis: Vec::new(),
             fifos: Vec::new(),
+            clk_wizs: Vec::new(),
             iic_events: Arc::new(Mutex::new(Vec::new())),
             board_out: Vec::new(),
             pin_events: Vec::new(),
@@ -551,6 +562,12 @@ impl VendorPl {
                 self.fifos.push((inst.name.clone(), handle));
                 Box::new(f)
             }
+            "clk_wiz" => {
+                let cfg = ClkWizConfig::from_params(&inst.params, size).map_err(ctx)?;
+                let (c, handle) = AxiClkWiz::new(&inst.name, cfg);
+                self.clk_wizs.push((inst.name.clone(), handle));
+                Box::new(c)
+            }
             other => {
                 return Err(format!(
                     "instance `{}`: `{other}` is not a vendor-ip model; available: {}",
@@ -656,6 +673,14 @@ impl VendorPl {
     /// The SPI handle of instance `name`.
     pub fn spi(&self, name: &str) -> Option<SpiHandle> {
         self.spis
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, h)| h.clone())
+    }
+
+    /// The Clocking Wizard handle of instance `name`.
+    pub fn clk_wiz(&self, name: &str) -> Option<ClkWizHandle> {
+        self.clk_wizs
             .iter()
             .find(|(n, _)| n == name)
             .map(|(_, h)| h.clone())

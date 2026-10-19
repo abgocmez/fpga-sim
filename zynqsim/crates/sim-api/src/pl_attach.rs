@@ -35,6 +35,7 @@ pub const NATIVE_MODELS: &[&str] = &[
     "axi_intc",
     "axi_quad_spi",
     "axi_fifo_mm_s",
+    "clk_wiz",
 ];
 
 /// A native PL model to place on a GP port.

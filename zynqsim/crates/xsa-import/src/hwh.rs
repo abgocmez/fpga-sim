@@ -348,6 +348,22 @@ pub fn parse_hwh(text: &str) -> Result<Design, String> {
     // Windows reached by PL masters stay in master_windows; drop the PS7 ones that were
     // assigned (the PS7 is not an IpInstance, so none were stored there).
 
+    // A Clocking Wizard with an AXI4-Lite window from the PS has registers the firmware reaches:
+    // it is modelled (`vendor-ip` `clk_wiz`, ADR-042). Without a window it stays passive.
+    for ip in design.ips.iter_mut() {
+        let reached = ip
+            .address
+            .iter()
+            .any(|a| matches!(a.master_interface.as_str(), "M_AXI_GP0" | "M_AXI_GP1"));
+        if ip.modtype == "clk_wiz" && reached && matches!(ip.class, IpClass::Infrastructure { .. })
+        {
+            ip.class = IpClass::VendorIp {
+                name: "clk_wiz".to_string(),
+                title: "Clocking Wizard".to_string(),
+            };
+        }
+    }
+
     resolve_interrupts(&mut design);
     resolve_intc_inputs(&mut design);
     resolve_clocks_and_resets(&mut design);

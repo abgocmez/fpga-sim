@@ -246,6 +246,16 @@ fn the_sensor_value_the_host_sets_is_what_the_iic_master_reads() {
 }
 
 #[test]
+fn the_clock_wizard_model_relocks_after_reconfiguration_and_raises_its_interrupt() {
+    let (p, dir) = load("clk-wiz-demo");
+    let mut e = p.build_engine(&dir).unwrap_or_else(|e| panic!("{e}"));
+    run_us(e.as_mut(), 20_000);
+    let u = uart(e.as_mut(), 1);
+    assert!(u.contains("reconfig: relocked"), "{u}");
+    assert!(u.contains("RESULT: ALL PASS"), "{u}");
+}
+
+#[test]
 fn the_axi_quad_spi_model_runs_loopback_transfers_and_interrupts() {
     let (p, dir) = load("spi-demo");
     let mut e = p.build_engine(&dir).unwrap_or_else(|e| panic!("{e}"));
