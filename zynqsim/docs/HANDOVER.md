@@ -36,6 +36,7 @@ Replaces the round-1 handover; its finished items are summarised in section 2.
 | AXI4-Stream FIFO (ADR-041) | implemented + tested, `VERIFY:` items open | `vendor-ip/src/axis_fifo.rs`, `examples/axis-fifo-demo` |
 | Clocking Wizard (ADR-042) | implemented + tested, `VERIFY:` items open; model changes no clock | `vendor-ip/src/clk_wiz.rs`, `examples/clk-wiz-demo`; `xsa-import/src/hwh.rs` reclassifies a `clk_wiz` with an AXI4-Lite window from passive to native |
 | AXI VDMA (ADR-043) | implemented + tested, `VERIFY:` items open | `vendor-ip/src/vdma.rs`, `examples/vdma-demo`; 2D line stride, park & circular buffer store addressing up to 32 frame stores, stream loopback |
+| AXI Ethernet Lite (ADR-044) | done, tested | `vendor-ip/src/ethernetlite.rs`, `examples/ethlite-demo` |
 | P1: User path, `zynqsim doctor`, `try-xsa` | done, verified | `zynqsim doctor`, `cargo xtask try-xsa`, `demo::xsa-native-*`, `docs/TEST_YOUR_DESIGN.md` |
 | Fast gate, demo tour, packaging | done | `cargo xtask ci --fast`, `cargo xtask demo [--quick]` |
 
@@ -162,7 +163,13 @@ Goal: a stranger can take a trivial Vitis project + Vivado XSA and see it run, w
   2D stride/frame transfers, park & circular buffer store modes (1..32 frame stores with `REG_INDEX` banking),
   interrupts on output 0 (MM2S) and output 1 (S2MM), `STREAM_LOOPBACK`, firmware demo `firmware/vdma_demo`,
   example `examples/vdma-demo/project.toml`, determinism 5/5, unit tests and integration tests passing.
-* Next models in order: AXI Ethernet Lite, Video Timing Controller, AXI4-Stream to Video Out (follow
+* **AXI Ethernet Lite (`axi_ethernetlite` 3.0, ADR-044) — DONE:** Behavioural model in `crates/vendor-ip/src/ethernetlite.rs`,
+  8 KiB address window (`0x2000` bytes), TX ping/pong buffers, RX ping/pong buffers, MDIO PHY management
+  (`MDIOADDR`, `MDIOWR`, `MDIORD`, `MDIOCTRL` with simulated Marvell-like PHY registers), `GIE` (`0x07F8`),
+  `ip2intc_irpt` interrupt output, internal loopback, external frame injection/extraction (`push_rx`, `take_tx`),
+  firmware demo `firmware/ethlite_demo`, example `examples/ethlite-demo/project.toml`, determinism 5/5,
+  unit tests and integration tests passing.
+* Next models in order: Video Timing Controller, AXI4-Stream to Video Out (follow
   section 4). Each: Vitis driver example passes (`fixtures/bsp` has `xaxidma`/`xiic` style apps; add the missing ones).
 * **Real IP through `export_simulation`:** verify `-L secureip`/`unisims_ver` runs for a design with an AXI GPIO or
   clocking wizard in XSim (ADR-017 says this was never verified); then document which IP can run this way instead of

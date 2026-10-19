@@ -4,6 +4,8 @@
 //! * [`timer::AxiTimer`]: AXI Timer 2.0 (PG079);
 //! * [`uartlite::AxiUartLite`]: AXI UART Lite 2.0 (PG142);
 //! * [`dma::AxiDma`]: AXI DMA 7.1 (PG021), direct register and scatter-gather mode;
+//! * [`vdma::AxiVdma`]: AXI VDMA 6.3 (PG020), video frame buffer DMA (ADR-043);
+//! * [`ethernetlite::AxiEthernetLite`]: AXI Ethernet Lite 3.0 (PG135);
 //! * [`iic::AxiIic`]: AXI IIC 2.1 (PG090), dynamic-mode master on a Pmod port;
 //! * [`bram::AxiBramCtrl`]: AXI BRAM Controller 4.1 (PG078) with its block memory;
 //! * [`intc::AxiIntc`]: AXI Interrupt Controller 4.1 (PG099);
@@ -26,6 +28,7 @@ pub mod axis_fifo;
 pub mod bram;
 pub mod clk_wiz;
 pub mod dma;
+pub mod ethernetlite;
 pub mod gpio;
 pub mod iic;
 pub mod intc;
@@ -41,6 +44,9 @@ pub use axis_fifo::{AxisFifo, AxisFifoConfig, AxisFifoHandle};
 use bram::{AxiBramCtrl, BramConfig, BramHandle};
 pub use clk_wiz::{AxiClkWiz, ClkWizConfig, ClkWizHandle};
 use dma::{AxiDma, DmaConfig, DmaHandle};
+pub use ethernetlite::{
+    AxiEthernetLite, EthernetLiteConfig, EthernetLiteHandle, EthernetLiteStats,
+};
 use gpio::{AxiGpio, GpioConfig, GpioHandle};
 use iic::{AxiIic, I2cBus, IicConfig, IicHandle};
 use intc::{AxiIntc, IntcConfig, IntcHandle};
@@ -64,6 +70,7 @@ pub const MODELS: &[&str] = &[
     "axi_uartlite",
     "axi_dma",
     "axi_vdma",
+    "axi_ethernetlite",
     "axi_iic",
     "axi_bram_ctrl",
     "axi_intc",
@@ -120,6 +127,15 @@ pub fn param_names(model: &str) -> &'static [&'static str] {
             "C_M_AXI_S2MM_DATA_WIDTH",
             "STREAM_LOOPBACK",
             "PS_PORT",
+        ],
+        "axi_ethernetlite" => &[
+            "C_INCLUDE_GLOBAL_BUFFERS",
+            "C_INCLUDE_INTERNAL_LOOPBACK",
+            "C_INCLUDE_MDIO",
+            "C_TX_PINGPONG",
+            "C_RX_PINGPONG",
+            "LOOPBACK",
+            "STREAM_LOOPBACK",
         ],
         "axi_iic" => &["C_SCL_CLK_FREQ_KHZ"],
         "axi_bram_ctrl" => &["C_ECC", "C_S_AXI_DATA_WIDTH"],
@@ -344,6 +360,7 @@ pub struct VendorPl {
     uarts: Vec<UartBind>,
     dmas: Vec<(String, DmaHandle)>,
     vdmas: Vec<(String, VdmaHandle)>,
+    ethernetlites: Vec<(String, EthernetLiteHandle)>,
     iics: Vec<IicBind>,
     brams: Vec<(String, BramHandle)>,
     intcs: Vec<(String, IntcHandle)>,
@@ -391,6 +408,7 @@ impl VendorPl {
             uarts: Vec::new(),
             dmas: Vec::new(),
             vdmas: Vec::new(),
+            ethernetlites: Vec::new(),
             iics: Vec::new(),
             brams: Vec::new(),
             intcs: Vec::new(),
@@ -534,6 +552,12 @@ impl VendorPl {
                 self.vdmas.push((inst.name.clone(), handle));
                 Box::new(v)
             }
+            "axi_ethernetlite" => {
+                let cfg = EthernetLiteConfig::from_params(&inst.params, size).map_err(ctx)?;
+                let (e, handle) = AxiEthernetLite::new(&inst.name, cfg);
+                self.ethernetlites.push((inst.name.clone(), handle));
+                Box::new(e)
+            }
             "axi_iic" => {
                 let cfg = IicConfig::from_params(&inst.params, size).map_err(ctx)?;
                 let (i, handle) = AxiIic::new(&inst.name, cfg);
@@ -666,6 +690,14 @@ impl VendorPl {
     /// The VDMA handle of instance `name`.
     pub fn vdma(&self, name: &str) -> Option<VdmaHandle> {
         self.vdmas
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, h)| h.clone())
+    }
+
+    /// The Ethernet Lite handle of instance `name`.
+    pub fn ethernetlite(&self, name: &str) -> Option<EthernetLiteHandle> {
+        self.ethernetlites
             .iter()
             .find(|(n, _)| n == name)
             .map(|(_, h)| h.clone())
@@ -1300,7 +1332,7 @@ mod tests {
             .unwrap_err();
         assert!(e.contains("overlaps"), "{e}");
         let e = pl
-            .add(&inst("c", "axi_ethernetlite", 0x4300_0000, None, &[]))
+            .add(&inst("c", "axi_uart16550", 0x4300_0000, None, &[]))
             .unwrap_err();
         assert!(e.contains("not a vendor-ip model"), "{e}");
         let e = pl

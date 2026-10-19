@@ -205,6 +205,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethlite_demo"
+version = "0.1.0"
+dependencies = [
+ "rt",
+]
+
+[[package]]
 name = "gpio_timer_uart"
 version = "0.1.0"
 dependencies = [

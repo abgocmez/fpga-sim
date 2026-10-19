@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<!--
+  HAND-WRITTEN handoff in Vivado's HWH schema (NOT Vivado output): the user's math IP plus an
+  AXI UART 16550, which has no vendor-ip model. It exists so the "unmodelled IP stops the run"
+  path is tested now that the AXI GPIO, Timer, UART Lite, DMA, VDMA, Ethernet Lite, IIC, BRAM controller and interrupt
+  controller have models.
+-->
+<EDKSYSTEM EDWVERSION="1.2" VIVADOVERSION="2022.1">
+  <SYSTEMINFO ARCH="zynq" DEVICE="7z020" NAME="design_uart16550"/>
+  <MODULES>
+    <MODULE INSTANCE="processing_system7_0" MODTYPE="processing_system7" VLNV="xilinx.com:ip:processing_system7:5.5">
+      <PARAMETERS>
+        <PARAMETER NAME="PCW_USE_M_AXI_GP0" VALUE="1"/>
+        <PARAMETER NAME="PCW_USE_FABRIC_INTERRUPT" VALUE="1"/>
+        <PARAMETER NAME="PCW_IRQ_F2P_INTR" VALUE="1"/>
+        <PARAMETER NAME="PCW_EN_CLK0_PORT" VALUE="1"/>
+        <PARAMETER NAME="PCW_FPGA0_PERIPHERAL_FREQMHZ" VALUE="100"/>
+      </PARAMETERS>
+      <PORTS>
+        <PORT DIR="I" LEFT="0" NAME="IRQ_F2P" RIGHT="0" SENSITIVITY="LEVEL_HIGH" SIGIS="INTERRUPT">
+          <CONNECTIONS><CONNECTION INSTANCE="axi_uart16550_0" PORT="ip2intc_irpt"/></CONNECTIONS>
+        </PORT>
+        <PORT CLKFREQUENCY="100000000" DIR="O" NAME="FCLK_CLK0" SIGIS="clk"/>
+      </PORTS>
+      <MEMORYMAP>
+        <MEMRANGE ADDRESSBLOCK="Reg" BASEVALUE="0x43C00000" HIGHVALUE="0x43C00FFF" INSTANCE="u_math" MASTERBUSINTERFACE="M_AXI_GP0" MEMTYPE="REGISTER" SLAVEBUSINTERFACE="S_AXI"/>
+        <MEMRANGE ADDRESSBLOCK="Reg" BASEVALUE="0x43000000" HIGHVALUE="0x4300FFFF" INSTANCE="axi_uart16550_0" MASTERBUSINTERFACE="M_AXI_GP0" MEMTYPE="REGISTER" SLAVEBUSINTERFACE="S_AXI"/>
+      </MEMORYMAP>
+    </MODULE>
+    <MODULE INSTANCE="u_math" MODTYPE="my_math_ip" VLNV="xilinx.com:module_ref:my_math_ip:1.0">
+      <PORTS>
+        <PORT CLKFREQUENCY="100000000" DIR="I" NAME="S_AXI_ACLK" SIGIS="clk">
+          <CONNECTIONS><CONNECTION INSTANCE="processing_system7_0" PORT="FCLK_CLK0"/></CONNECTIONS>
+        </PORT>
+      </PORTS>
+    </MODULE>
+    <MODULE INSTANCE="axi_uart16550_0" MODTYPE="axi_uart16550" VLNV="xilinx.com:ip:axi_uart16550:2.0">
+      <PORTS>
+        <PORT CLKFREQUENCY="100000000" DIR="I" NAME="s_axi_aclk" SIGIS="clk">
+          <CONNECTIONS><CONNECTION INSTANCE="processing_system7_0" PORT="FCLK_CLK0"/></CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" NAME="ip2intc_irpt" SENSITIVITY="LEVEL_HIGH" SIGIS="INTERRUPT">
+          <CONNECTIONS><CONNECTION INSTANCE="processing_system7_0" PORT="IRQ_F2P"/></CONNECTIONS>
+        </PORT>
+      </PORTS>
+    </MODULE>
+  </MODULES>
+</EDKSYSTEM>
+

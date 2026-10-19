@@ -182,6 +182,7 @@ fn plumbing_clock_wizards_and_block_memory_are_passive_ip() {
     for (vlnv, name) in [
         ("xilinx.com:ip:axi_dma:7.1", "axi_dma"),
         ("xilinx.com:ip:axi_vdma:6.3", "axi_vdma"),
+        ("xilinx.com:ip:axi_ethernetlite:3.0", "axi_ethernetlite"),
         ("xilinx.com:ip:axi_quad_spi:3.2", "axi_quad_spi"),
     ] {
         assert!(matches!(classify(vlnv, name), VendorIp { .. }), "{name}");

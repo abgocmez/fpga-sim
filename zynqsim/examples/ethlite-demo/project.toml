@@ -1,0 +1,44 @@
+# AXI Ethernet Lite 3.0 frame loopback with no RTL: the Xilinx IP runs as a vendor-ip model
+# (crates/vendor-ip, ADR-044) on the native PL.
+#
+# Firmware: firmware/ethlite_demo (Rust, no_std). CPU writes 64-byte frame into the TX ping
+# buffer on M_AXI_GP0, internal loopback routes the frame to RX ping buffer, receiver asserts
+# ip2intc_irpt on IRQ_F2P[0], CPU verifies frame bytes and length.
+#
+#   zynqsim run --project examples/ethlite-demo/project.toml --for 6ms
+#   expect on UART1: "MDIO PHY ID:", "Loopback frame verified", "ETHLITE PASS", "RESULT: ALL PASS"
+#
+# Needs: the Xilinx QEMU (Vitis). No Vivado is needed to RUN this.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "native"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_ethlite.elf"
+
+[native]
+axi_ethernetlite_0 = "axi_ethernetlite"
+
+[native_params.axi_ethernetlite_0]
+C_INCLUDE_GLOBAL_BUFFERS = 0
+C_INCLUDE_INTERNAL_LOOPBACK = 1
+C_INCLUDE_MDIO = 1
+CLK_FREQ_HZ = 100000000
+ADDRESS_SIZE = "0x2000"
+
+[connect]
+"axi_ethernetlite_0.S_AXI" = "M_AXI_GP0@0x43000000"
+"axi_ethernetlite_0.ip2intc_irpt" = "IRQ_F2P[0]"
+
