@@ -362,3 +362,27 @@ fn the_axi_cdma_model_runs_transfers_and_interrupts() {
         assert!(u.contains(line), "UART1 lacks `{line}`:\n{u}");
     }
 }
+
+#[test]
+fn the_axi_uart16550_model_runs_loopback_and_interrupts() {
+    if !qemu_present() {
+        eprintln!("SKIPPED: Xilinx QEMU not found");
+        return;
+    }
+    let mut e = engine("uart16550-demo");
+    run_us(e.as_mut(), 10_000);
+    let u = uart(e.as_mut(), 1);
+    for line in [
+        "uart16550 demo: AXI UART 16550 2.0 loopback and interrupts",
+        "UART16550 LSR reset: 0x60",
+        "UART16550 scratchpad ok",
+        "UART16550 baud divisor and LCR ok",
+        "UART16550 FIFO control ok",
+        "UART16550 polled loopback ok",
+        "UART16550 interrupt ok",
+        "UART16550 PASS",
+        "RESULT: ALL PASS",
+    ] {
+        assert!(u.contains(line), "UART1 lacks `{line}`:\n{u}");
+    }
+}

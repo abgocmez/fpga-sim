@@ -64,6 +64,8 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 use timer::{AxiTimer, TimerConfig, TimerHandle};
 use uartlite::{AxiUartLite, UartConfig, UartHandle};
+pub mod uart16550;
+pub use uart16550::{AxiUart16550, Uart16550Config, Uart16550Handle, Uart16550Stats};
 pub use v_tc::{AxiVTc, VTcConfig, VTcHandle, VTcStats};
 pub use vdma::{AxiVdma, VdmaConfig, VdmaHandle};
 
@@ -72,6 +74,7 @@ pub const MODELS: &[&str] = &[
     "axi_gpio",
     "axi_timer",
     "axi_uartlite",
+    "axi_uart16550",
     "axi_dma",
     "axi_vdma",
     "axi_cdma",
@@ -184,6 +187,12 @@ pub fn param_names(model: &str) -> &'static [&'static str] {
             "C_M_AXI_ADDR_WIDTH",
             "C_M_AXI_MAX_BURST_LEN",
             "PS_PORT",
+        ],
+        "axi_uart16550" => &[
+            "C_S_AXI_CLK_FREQ_HZ",
+            "C_S_AXI_ACLK_FREQ_HZ",
+            "C_IS_A_16550",
+            "C_HAS_EXTERNAL_XIN",
         ],
         _ => &[],
     }
@@ -391,6 +400,7 @@ pub struct VendorPl {
     clk_wizs: Vec<(String, ClkWizHandle)>,
     vtcs: Vec<(String, VTcHandle)>,
     cdmas: Vec<(String, CdmaHandle)>,
+    uarts16550: Vec<(String, Uart16550Handle)>,
     /// Pin changes of the I2C masters, stamped with their (possibly future) bus times; they
     /// are handed out once PL time has reached them.
     iic_events: Arc<Mutex<Vec<PinEvent>>>,
@@ -441,6 +451,7 @@ impl VendorPl {
             clk_wizs: Vec::new(),
             vtcs: Vec::new(),
             cdmas: Vec::new(),
+            uarts16550: Vec::new(),
             iic_events: Arc::new(Mutex::new(Vec::new())),
             board_out: Vec::new(),
             pin_events: Vec::new(),
@@ -655,6 +666,12 @@ impl VendorPl {
                 self.cdmas.push((inst.name.clone(), handle));
                 Box::new(c)
             }
+            "axi_uart16550" => {
+                let cfg = Uart16550Config::from_params(&inst.params, size).map_err(ctx)?;
+                let (u, handle) = AxiUart16550::new(&inst.name, cfg);
+                self.uarts16550.push((inst.name.clone(), handle));
+                Box::new(u)
+            }
             other => {
                 return Err(format!(
                     "instance `{}`: `{other}` is not a vendor-ip model; available: {}",
@@ -800,6 +817,14 @@ impl VendorPl {
     /// The AXI CDMA handle of instance `name`.
     pub fn cdma(&self, name: &str) -> Option<CdmaHandle> {
         self.cdmas
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, h)| h.clone())
+    }
+
+    /// The AXI UART 16550 handle of instance `name`.
+    pub fn uart16550(&self, name: &str) -> Option<Uart16550Handle> {
+        self.uarts16550
             .iter()
             .find(|(n, _)| n == name)
             .map(|(_, h)| h.clone())
@@ -1386,7 +1411,7 @@ mod tests {
             .unwrap_err();
         assert!(e.contains("overlaps"), "{e}");
         let e = pl
-            .add(&inst("c", "axi_uart16550", 0x4300_0000, None, &[]))
+            .add(&inst("c", "axi_hwicap", 0x4300_0000, None, &[]))
             .unwrap_err();
         assert!(e.contains("not a vendor-ip model"), "{e}");
         let e = pl

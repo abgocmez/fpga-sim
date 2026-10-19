@@ -68,13 +68,13 @@ fn ensure_dpi_lib() {
     }
 }
 
-/// The design with an AXI UART 16550 (no model): the project is generated, the report names the
+/// The design with an AXI HWICAP (no model): the project is generated, the report names the
 /// unmodelled IP, and `run` stops with the diagnostic instead of simulating a design that is
 /// not there.
 #[test]
 fn an_unmodelled_ip_is_reported_and_stops_the_run() {
-    let d = temp("uart16550");
-    let xsa = fixtures().join("xsa/zs_math_uart16550.hwh");
+    let d = temp("hwicap");
+    let xsa = fixtures().join("xsa/zs_math_hwicap.hwh");
     let rtl = fixtures().join("rtl/math/my_math_ip.v");
     let elf = fixtures().join("elf/math_test.elf");
     let o = zynqsim(&[
@@ -91,13 +91,13 @@ fn an_unmodelled_ip_is_reported_and_stops_the_run() {
     ]);
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     let v: Value = serde_json::from_str(&stdout(&o)).unwrap();
-    assert_eq!(v["design"], "design_uart16550");
+    assert_eq!(v["design"], "design_hwicap");
     assert_eq!(v["testbench_module"], "my_math_ip");
     assert_eq!(v["runnable"], false);
     let un = v["unmodelled"].as_array().unwrap();
     assert_eq!(un.len(), 1);
-    assert_eq!(un[0]["instance"], "axi_uart16550_0");
-    assert_eq!(un[0]["vlnv"], "xilinx.com:ip:axi_uart16550:2.0");
+    assert_eq!(un[0]["instance"], "axi_hwicap_0");
+    assert_eq!(un[0]["vlnv"], "xilinx.com:ip:axi_hwicap:3.0");
     assert_eq!(un[0]["base"], "0x43000000");
     assert!(
         un[0]["reason"]
@@ -112,7 +112,7 @@ fn an_unmodelled_ip_is_reported_and_stops_the_run() {
         "{toml}"
     );
     assert!(
-        toml.contains("\"axi_uart16550_0.ip2intc_irpt\" = \"IRQ_F2P[0]\""),
+        toml.contains("\"axi_hwicap_0.ip2intc_irpt\" = \"IRQ_F2P[0]\""),
         "{toml}"
     );
     assert!(
@@ -121,10 +121,7 @@ fn an_unmodelled_ip_is_reported_and_stops_the_run() {
     );
     let report = std::fs::read_to_string(d.join("xsa-report.md")).unwrap();
     assert!(report.contains("NOT RUNNABLE"), "{report}");
-    assert!(
-        report.contains("xilinx.com:ip:axi_uart16550:2.0"),
-        "{report}"
-    );
+    assert!(report.contains("xilinx.com:ip:axi_hwicap:3.0"), "{report}");
     assert!(report.contains("0x43C00000"), "{report}");
     assert!(report.contains("IRQ_F2P[0]"), "{report}");
     assert!(d.join("tb/cosim_top.sv").is_file());
@@ -140,8 +137,8 @@ fn an_unmodelled_ip_is_reported_and_stops_the_run() {
     assert_eq!(r.status.code(), Some(1), "{}", stderr(&r));
     let e = stderr(&r);
     assert!(
-        e.contains("axi_uart16550_0")
-            && e.contains("xilinx.com:ip:axi_uart16550:2.0")
+        e.contains("axi_hwicap_0")
+            && e.contains("xilinx.com:ip:axi_hwicap:3.0")
             && e.contains("0x43000000"),
         "{e}"
     );
@@ -262,6 +259,35 @@ fn the_cdma_design_maps_the_cdma_model() {
     assert_eq!(v["runnable"], true);
     let toml = std::fs::read_to_string(d.join("project.toml")).unwrap();
     assert!(toml.contains("axi_cdma_0 = \"axi_cdma\""), "{toml}");
+}
+
+#[test]
+fn the_uart16550_design_maps_the_uart16550_model() {
+    let d = temp("uart16550_map");
+    let xsa = fixtures().join("xsa/zs_math_uart16550.hwh");
+    let rtl = fixtures().join("rtl/math/my_math_ip.v");
+    let elf = fixtures().join("elf/math_test.elf");
+    let o = zynqsim(&[
+        "--json",
+        "init",
+        "--xsa",
+        xsa.to_str().unwrap(),
+        "--out",
+        d.to_str().unwrap(),
+        "--rtl",
+        rtl.to_str().unwrap(),
+        "--elf",
+        elf.to_str().unwrap(),
+    ]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let v: Value = serde_json::from_str(&stdout(&o)).unwrap();
+    assert_eq!(v["design"], "design_uart16550");
+    assert_eq!(v["runnable"], true);
+    let toml = std::fs::read_to_string(d.join("project.toml")).unwrap();
+    assert!(
+        toml.contains("axi_uart16550_0 = \"axi_uart16550\""),
+        "{toml}"
+    );
 }
 
 /// Without the RTL the module reference has no source: that is reported, not guessed.

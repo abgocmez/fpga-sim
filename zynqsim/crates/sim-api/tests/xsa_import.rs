@@ -93,7 +93,47 @@ fn the_gpio_design_maps_the_user_ip_and_places_the_gpio_model_next_to_it() {
 
 #[test]
 fn an_ip_without_a_model_is_recorded_and_stops_the_run() {
-    let out = temp("uart16550");
+    let out = temp("hwicap");
+    let opts = ImportOptions {
+        rtl: vec![fixtures().join("rtl/math/my_math_ip.v")],
+        elf: Some(
+            fixtures()
+                .join("elf/math_test.elf")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        ..Default::default()
+    };
+    let plan = xsa::plan(&fixtures().join("xsa/zs_math_hwicap.hwh"), &out, &opts).unwrap();
+    assert_eq!(plan.testbench_module.as_deref(), Some("my_math_ip"));
+    assert_eq!(plan.unmodelled.len(), 1);
+    let u = &plan.unmodelled[0];
+    assert_eq!(
+        (u.instance.as_str(), u.vlnv.as_str()),
+        ("axi_hwicap_0", "xilinx.com:ip:axi_hwicap:3.0")
+    );
+    assert_eq!(u.base.as_deref(), Some("0x43000000"));
+    assert_eq!(u.size, Some(0x10000));
+    assert_eq!(u.irq, vec![0]);
+    assert!(!plan.runnable_design());
+    assert!(plan.project.native.is_empty());
+
+    plan.write(&out).unwrap();
+    let loaded = Project::load(&out.join("project.toml")).unwrap();
+    let e = errors(&loaded, &out);
+    assert_eq!(e.len(), 1, "{e:?}");
+    assert_eq!(e[0].0, "xsa.unmodelled.axi_hwicap_0");
+    assert!(e[0].1.contains("does not exist yet"), "{e:?}");
+    assert!(e[0].1.contains("0x43000000"));
+    let err = loaded.build_engine(&out).err().expect("must refuse");
+    assert!(err.message.contains("axi_hwicap_0"), "{}", err.message);
+    assert!(plan.report.contains("NOT RUNNABLE"));
+    assert!(plan.report.contains("`axi_hwicap_0`"));
+}
+
+#[test]
+fn the_uart16550_design_maps_the_uart16550_native_model() {
+    let out = temp("uart16550_native");
     let opts = ImportOptions {
         rtl: vec![fixtures().join("rtl/math/my_math_ip.v")],
         elf: Some(
@@ -106,29 +146,14 @@ fn an_ip_without_a_model_is_recorded_and_stops_the_run() {
     };
     let plan = xsa::plan(&fixtures().join("xsa/zs_math_uart16550.hwh"), &out, &opts).unwrap();
     assert_eq!(plan.testbench_module.as_deref(), Some("my_math_ip"));
-    assert_eq!(plan.unmodelled.len(), 1);
-    let u = &plan.unmodelled[0];
+    assert!(plan.unmodelled.is_empty(), "{:?}", plan.unmodelled);
+    assert!(plan.runnable_design());
+    assert_eq!(plan.project.native["axi_uart16550_0"], "axi_uart16550");
+    assert_eq!(plan.project.native_irq("axi_uart16550_0"), Some(0));
     assert_eq!(
-        (u.instance.as_str(), u.vlnv.as_str()),
-        ("axi_uart16550_0", "xilinx.com:ip:axi_uart16550:2.0")
+        plan.project.native_placement("axi_uart16550_0"),
+        Some((0, 0x4300_0000))
     );
-    assert_eq!(u.base.as_deref(), Some("0x43000000"));
-    assert_eq!(u.size, Some(0x10000));
-    assert_eq!(u.irq, vec![0]);
-    assert!(!plan.runnable_design());
-    assert!(plan.project.native.is_empty());
-
-    plan.write(&out).unwrap();
-    let loaded = Project::load(&out.join("project.toml")).unwrap();
-    let e = errors(&loaded, &out);
-    assert_eq!(e.len(), 1, "{e:?}");
-    assert_eq!(e[0].0, "xsa.unmodelled.axi_uart16550_0");
-    assert!(e[0].1.contains("does not exist yet"), "{e:?}");
-    assert!(e[0].1.contains("0x43000000"));
-    let err = loaded.build_engine(&out).err().expect("must refuse");
-    assert!(err.message.contains("axi_uart16550_0"), "{}", err.message);
-    assert!(plan.report.contains("NOT RUNNABLE"));
-    assert!(plan.report.contains("`axi_uart16550_0`"));
 }
 
 #[test]

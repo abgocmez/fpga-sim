@@ -183,7 +183,14 @@ Goal: a stranger can take a trivial Vitis project + Vivado XSA and see it run, w
   bytes to transfer (`BTT`), memory-to-memory copy via `PsPort` in Simple and Scatter-Gather modes,
   `cdma_introut` interrupt, firmware demo `firmware/cdma_demo`, example `examples/cdma-demo/project.toml`,
   determinism 5/5, unit tests and integration tests passing.
-* Next models in order: AXI4-Stream to Video Out (`v_axi4s_vid_out`), AXI UART 16550 (`axi_uart16550`).
+* **AXI UART 16550 (`axi_uart16550` 2.0, ADR-047) — DONE:** Behavioural model in `crates/vendor-ip/src/uart16550.rs`,
+  64 KiB address window (`0x10000` bytes), standard 16550 register bank mapped at base offset `0x1000` (`XUN_REG_OFFSET`),
+  DLAB banking for `DLL`/`DLM` divisor latches, registers `RBR`, `THR`, `IER`, `IIR`, `FCR`, `LCR`, `MCR`, `LSR`, `MSR`, `SCR`,
+  16-deep FIFOs with configurable trigger levels (1, 4, 8, 14 bytes), diagnostic loopback mode (`MCR & 0x10`),
+  `OUT2` (`MCR & 0x08`) interrupt output gating, `ip2intc_irpt` interrupt output, firmware demo `firmware/uart16550_demo`,
+  example `examples/uart16550-demo/project.toml`, determinism 5/5, unit tests and integration tests passing.
+  Preserved unmodelled IP rejection tests by introducing `fixtures/xsa/zs_math_hwicap.hwh` (`xilinx.com:ip:axi_hwicap:3.0`).
+* Next models in order: AXI4-Stream to Video Out (`v_axi4s_vid_out`), Video In to AXI4-Stream (`v_vid_in_axi4s`).
   Each: Vitis driver example passes (`fixtures/bsp` has `xaxidma`/`xiic` style apps; add the missing ones).
 * **Real IP through `export_simulation`:** verify `-L secureip`/`unisims_ver` runs for a design with an AXI GPIO or
   clocking wizard in XSim (ADR-017 says this was never verified); then document which IP can run this way instead of

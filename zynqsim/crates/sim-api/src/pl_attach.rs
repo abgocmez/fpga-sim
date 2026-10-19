@@ -29,6 +29,7 @@ pub const NATIVE_MODELS: &[&str] = &[
     "axi_gpio",
     "axi_timer",
     "axi_uartlite",
+    "axi_uart16550",
     "axi_dma",
     "axi_vdma",
     "axi_cdma",

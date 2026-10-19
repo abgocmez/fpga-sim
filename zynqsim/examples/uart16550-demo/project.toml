@@ -1,0 +1,42 @@
+# AXI UART 16550 2.0 with no RTL: the Xilinx IP runs as a vendor-ip model
+# (crates/vendor-ip, ADR-047) on the native PL.
+#
+# Firmware: firmware/uart16550_demo (Rust, no_std). Scratchpad register, baud rate divisor latch,
+# FIFO control, loopback transmit and receive, and RX data interrupt on IRQ_F2P[0].
+#
+#   zynqsim run --project examples/uart16550-demo/project.toml --for 6ms
+#   expect on UART1: "UART16550 PASS", "RESULT: ALL PASS"
+#
+# Needs: the Xilinx QEMU (Vitis). No Vivado is needed to RUN this.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "native"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_uart16550.elf"
+
+[native]
+axi_uart16550_0 = "axi_uart16550"
+
+[native_params.axi_uart16550_0]
+C_S_AXI_CLK_FREQ_HZ = 100000000
+C_IS_A_16550 = 1
+C_HAS_EXTERNAL_XIN = 0
+ADDRESS_SIZE = "0x10000"
+
+[connect]
+"axi_uart16550_0.S_AXI" = "M_AXI_GP0@0x43000000"
+"axi_uart16550_0.ip2intc_irpt" = "IRQ_F2P[0]"
+
