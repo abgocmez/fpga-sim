@@ -64,6 +64,8 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 use timer::{AxiTimer, TimerConfig, TimerHandle};
 use uartlite::{AxiUartLite, UartConfig, UartHandle};
+pub mod ila;
+pub use ila::{AxiIla, IlaConfig, IlaHandle, IlaStats};
 pub mod uart16550;
 pub use uart16550::{AxiUart16550, Uart16550Config, Uart16550Handle, Uart16550Stats};
 pub mod v_axi4s_vid_out;
@@ -92,6 +94,7 @@ pub const MODELS: &[&str] = &[
     "v_tc",
     "v_axi4s_vid_out",
     "v_vid_in_axi4s",
+    "ila",
 ];
 
 /// True when `name` (`axi_gpio`) is a model of this library.
@@ -216,6 +219,13 @@ pub fn param_names(model: &str) -> &'static [&'static str] {
             "C_ADDR_WIDTH",
             "C_HAS_ASYNC_CLK",
             "C_SYNC_LOCK_THRESHOLD",
+            "CLK_FREQ_HZ",
+        ],
+        "ila" => &[
+            "C_NUM_DATA_PROBE",
+            "C_PROBE0_WIDTH",
+            "C_DATA_DEPTH",
+            "C_EN_STRG_QUAL",
             "CLK_FREQ_HZ",
         ],
         _ => &[],
@@ -427,6 +437,7 @@ pub struct VendorPl {
     uarts16550: Vec<(String, Uart16550Handle)>,
     vid_outs: Vec<(String, VidOutHandle)>,
     vid_ins: Vec<(String, VidInHandle)>,
+    ilas: Vec<(String, IlaHandle)>,
     /// Pin changes of the I2C masters, stamped with their (possibly future) bus times; they
     /// are handed out once PL time has reached them.
     iic_events: Arc<Mutex<Vec<PinEvent>>>,
@@ -480,6 +491,7 @@ impl VendorPl {
             uarts16550: Vec::new(),
             vid_outs: Vec::new(),
             vid_ins: Vec::new(),
+            ilas: Vec::new(),
             iic_events: Arc::new(Mutex::new(Vec::new())),
             board_out: Vec::new(),
             pin_events: Vec::new(),
@@ -712,6 +724,12 @@ impl VendorPl {
                 self.vid_ins.push((inst.name.clone(), handle));
                 Box::new(v)
             }
+            "ila" => {
+                let cfg = IlaConfig::from_params(&inst.params, size).map_err(ctx)?;
+                let (i, handle) = AxiIla::new(&inst.name, cfg);
+                self.ilas.push((inst.name.clone(), handle));
+                Box::new(i)
+            }
             other => {
                 return Err(format!(
                     "instance `{}`: `{other}` is not a vendor-ip model; available: {}",
@@ -881,6 +899,14 @@ impl VendorPl {
     /// The Video In to AXI4-Stream handle of instance `name`.
     pub fn vid_in(&self, name: &str) -> Option<VidInHandle> {
         self.vid_ins
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, h)| h.clone())
+    }
+
+    /// The Integrated Logic Analyzer handle of instance `name`.
+    pub fn ila(&self, name: &str) -> Option<IlaHandle> {
+        self.ilas
             .iter()
             .find(|(n, _)| n == name)
             .map(|(_, h)| h.clone())

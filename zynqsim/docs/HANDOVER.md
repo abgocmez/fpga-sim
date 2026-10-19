@@ -204,7 +204,14 @@ Goal: a stranger can take a trivial Vitis project + Vivado XSA and see it run, w
   and watermarks, stream readout and pop port (`STREAM_DATA`/`STREAM_CTRL`), frame/line/pixel counters, version `0x0400_0000`,
   simulated video beam progression, autonomous test pattern generation, frame completion interrupts, `MediaEvent` emission, firmware demo
   `firmware/vidin_demo`, example `examples/vidin-demo/project.toml`, determinism 5/5, unit tests and integration tests passing.
-* Next models in order: ILA, VIO.
+* **Integrated Logic Analyzer (`ila` 6.2, ADR-050) — DONE:** Behavioural model in `crates/vendor-ip/src/ila.rs`,
+  64 KiB address window (`0x10000` bytes), registers `CR` (arm, disarm, trig_now, auto_rearm, reset, stim_en),
+  `SR` (armed, triggered, full, idle, state codes), `ISR`/`IER` (W1C interrupts for trigger match and buffer full),
+  trigger probe value/mask/mode comparison (`PROBE0_VAL`, `PROBE0_MASK`, `PROBE0_MODE`), sample buffer depth/count/trig_pos,
+  version `0x0602_0000`, sequential trace readout port (`TRACE_RADDR`/`TRACE_RDATA` with auto-increment), direct memory-mapped
+  trace buffer window (`0x1000..=0x1000 + 4*depth`), live probe readout, autonomous probe stimulus generator, firmware demo
+  `firmware/ila_demo`, example `examples/ila-demo/project.toml`, determinism 5/5, unit tests and integration tests passing.
+* Next model: Virtual Input/Output (`vio` 3.0, PG159, ADR-051).
   Each: Vitis driver example passes (`fixtures/bsp` has `xaxidma`/`xiic` style apps; add the missing ones).
 * **Real IP through `export_simulation`:** verify `-L secureip`/`unisims_ver` runs for a design with an AXI GPIO or
   clocking wizard in XSim (ADR-017 says this was never verified); then document which IP can run this way instead of

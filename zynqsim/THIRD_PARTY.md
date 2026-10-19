@@ -56,7 +56,7 @@ linked; they are located at run time and driven as separate processes (see
 | atspi-connection | 0.9.0 | Apache-2.0 OR MIT |
 | atspi-proxies | 0.9.0 | Apache-2.0 OR MIT |
 | autocfg | 1.5.1 | Apache-2.0 OR MIT |
-| base64 | 0.23.1 | MIT OR Apache-2.0 |
+| base64 | 0.22.1, 0.23.1 | MIT OR Apache-2.0 |
 | bit-set | 0.8.0 | Apache-2.0 OR MIT |
 | bit-vec | 0.8.0 | Apache-2.0 OR MIT |
 | bitbybit | 2.0.1 | MIT |
@@ -119,6 +119,7 @@ linked; they are located at run time and driven as separate processes (see
 | endi | 1.1.1 | MIT |
 | enumflags2 | 0.7.12 | MIT OR Apache-2.0 |
 | enumflags2_derive | 0.7.12 | MIT OR Apache-2.0 |
+| enumn | 0.1.14 | MIT OR Apache-2.0 |
 | epaint | 0.32.3 | MIT OR Apache-2.0 |
 | epaint_default_fonts | 0.32.3 | (MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0 |
 | equivalent | 1.0.3 | Apache-2.0 OR MIT |
@@ -170,6 +171,7 @@ linked; they are located at run time and driven as separate processes (see
 | hex | 0.4.3 | MIT OR Apache-2.0 |
 | hex-literal | 1.1.0 | MIT OR Apache-2.0 |
 | hexf-parse | 0.2.1 | CC0-1.0 |
+| home | 0.5.11 | MIT OR Apache-2.0 |
 | icu_collections | 2.1.1 | Unicode-3.0 |
 | icu_locale_core | 2.1.1 | Unicode-3.0 |
 | icu_normalizer | 2.1.1 | Unicode-3.0 |
@@ -281,6 +283,7 @@ linked; they are located at run time and driven as separate processes (see
 | redox_syscall | 0.4.1, 0.5.18, 0.9.4 | MIT |
 | renderdoc-sys | 1.1.0 | MIT OR Apache-2.0 |
 | rfd | 0.17.2 | MIT |
+| ron | 0.10.1 | MIT OR Apache-2.0 |
 | roxmltree | 0.20.0 | MIT OR Apache-2.0 |
 | rustc-hash | 1.1.0, 2.1.3 | Apache-2.0/MIT |
 | rustc_version | 0.4.1 | MIT OR Apache-2.0 |

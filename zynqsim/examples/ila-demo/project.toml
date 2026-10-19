@@ -1,0 +1,46 @@
+# Integrated Logic Analyzer (ila 6.2, PG172) with no RTL: the Xilinx IP runs as a vendor-ip model
+# (crates/vendor-ip, ADR-050) on the native PL.
+#
+# Firmware: firmware/ila_demo (Rust, no_std). CPU tests version, software reset,
+# autonomous probe stimulus generation, programmable trigger matching with interrupt delivery,
+# sequential and memory-mapped trace buffer readout, immediate software triggering,
+# receiving interrupt on IRQ_F2P[0].
+#
+#   zynqsim run --project examples/ila-demo/project.toml --for 6ms
+#   expect on UART1: "ILA Version:", "ILA software reset ok", "ILA interrupt received", "ILA sequential readout ok", "ILA direct buffer window ok", "ILA immediate trigger test ok", "ILA PASS", "RESULT: ALL PASS"
+#
+# Needs: the Xilinx QEMU (Vitis). No Vivado is needed to RUN this.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "native"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_ila.elf"
+
+[native]
+ila_0 = "ila"
+
+[native_params.ila_0]
+C_NUM_DATA_PROBE = 1
+C_PROBE0_WIDTH = 32
+C_DATA_DEPTH = 1024
+C_EN_STRG_QUAL = 0
+CLK_FREQ_HZ = 100000000
+ADDRESS_SIZE = "0x10000"
+
+[connect]
+"ila_0.ctrl" = "M_AXI_GP0@0x43000000"
+"ila_0.irq" = "IRQ_F2P[0]"
+

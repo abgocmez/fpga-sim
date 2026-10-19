@@ -434,3 +434,27 @@ fn the_axi_vid_in_model_runs_capture_and_interrupts() {
         assert!(u.contains(line), "UART1 lacks `{line}`:\n{u}");
     }
 }
+
+#[test]
+fn the_axi_ila_model_runs_capture_and_interrupts() {
+    if !qemu_present() {
+        eprintln!("SKIPPED: Xilinx QEMU not found");
+        return;
+    }
+    let mut e = engine("ila-demo");
+    run_us(e.as_mut(), 10_000);
+    let u = uart(e.as_mut(), 1);
+    for line in [
+        "ila demo: Integrated Logic Analyzer 6.2 trace capture and trigger verification",
+        "ILA Version: 0x06020000",
+        "ILA software reset ok",
+        "ILA interrupt received",
+        "ILA sequential readout ok",
+        "ILA direct buffer window ok",
+        "ILA immediate trigger test ok",
+        "ILA PASS",
+        "RESULT: ALL PASS",
+    ] {
+        assert!(u.contains(line), "UART1 lacks `{line}`:\n{u}");
+    }
+}

@@ -348,6 +348,32 @@ fn the_vid_in_design_maps_the_vid_in_model() {
     );
 }
 
+#[test]
+fn the_ila_design_maps_the_ila_model() {
+    let d = temp("ila_map");
+    let xsa = fixtures().join("xsa/zs_math_ila.hwh");
+    let rtl = fixtures().join("rtl/math/my_math_ip.v");
+    let elf = fixtures().join("elf/math_test.elf");
+    let o = zynqsim(&[
+        "--json",
+        "init",
+        "--xsa",
+        xsa.to_str().unwrap(),
+        "--out",
+        d.to_str().unwrap(),
+        "--rtl",
+        rtl.to_str().unwrap(),
+        "--elf",
+        elf.to_str().unwrap(),
+    ]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let v: Value = serde_json::from_str(&stdout(&o)).unwrap();
+    assert_eq!(v["design"], "design_ila");
+    assert_eq!(v["runnable"], true);
+    let toml = std::fs::read_to_string(d.join("project.toml")).unwrap();
+    assert!(toml.contains("ila_0 = \"ila\""), "{toml}");
+}
+
 /// Without the RTL the module reference has no source: that is reported, not guessed.
 #[test]
 fn a_module_reference_without_its_rtl_asks_for_it() {
