@@ -26,6 +26,7 @@
 
 pub mod axis_fifo;
 pub mod bram;
+pub mod cdma;
 pub mod clk_wiz;
 pub mod dma;
 pub mod ethernetlite;
@@ -43,6 +44,7 @@ pub use params::{Params, flag, number, parse_number, ranged};
 
 pub use axis_fifo::{AxisFifo, AxisFifoConfig, AxisFifoHandle};
 use bram::{AxiBramCtrl, BramConfig, BramHandle};
+pub use cdma::{AxiCdma, CdmaConfig, CdmaHandle, CdmaStats};
 pub use clk_wiz::{AxiClkWiz, ClkWizConfig, ClkWizHandle};
 use dma::{AxiDma, DmaConfig, DmaHandle};
 pub use ethernetlite::{
@@ -72,6 +74,7 @@ pub const MODELS: &[&str] = &[
     "axi_uartlite",
     "axi_dma",
     "axi_vdma",
+    "axi_cdma",
     "axi_ethernetlite",
     "axi_iic",
     "axi_bram_ctrl",
@@ -173,6 +176,14 @@ pub fn param_names(model: &str) -> &'static [&'static str] {
             "C_MAX_LINES",
             "C_NUM_FSYNCS",
             "CLK_FREQ_HZ",
+        ],
+        "axi_cdma" => &[
+            "C_INCLUDE_SG",
+            "C_INCLUDE_DRE",
+            "C_M_AXI_DATA_WIDTH",
+            "C_M_AXI_ADDR_WIDTH",
+            "C_M_AXI_MAX_BURST_LEN",
+            "PS_PORT",
         ],
         _ => &[],
     }
@@ -379,6 +390,7 @@ pub struct VendorPl {
     fifos: Vec<(String, AxisFifoHandle)>,
     clk_wizs: Vec<(String, ClkWizHandle)>,
     vtcs: Vec<(String, VTcHandle)>,
+    cdmas: Vec<(String, CdmaHandle)>,
     /// Pin changes of the I2C masters, stamped with their (possibly future) bus times; they
     /// are handed out once PL time has reached them.
     iic_events: Arc<Mutex<Vec<PinEvent>>>,
@@ -428,6 +440,7 @@ impl VendorPl {
             fifos: Vec::new(),
             clk_wizs: Vec::new(),
             vtcs: Vec::new(),
+            cdmas: Vec::new(),
             iic_events: Arc::new(Mutex::new(Vec::new())),
             board_out: Vec::new(),
             pin_events: Vec::new(),
@@ -636,6 +649,12 @@ impl VendorPl {
                 self.vtcs.push((inst.name.clone(), handle));
                 Box::new(v)
             }
+            "axi_cdma" => {
+                let cfg = CdmaConfig::from_params(&inst.params, size).map_err(ctx)?;
+                let (c, handle) = AxiCdma::new(&inst.name, cfg);
+                self.cdmas.push((inst.name.clone(), handle));
+                Box::new(c)
+            }
             other => {
                 return Err(format!(
                     "instance `{}`: `{other}` is not a vendor-ip model; available: {}",
@@ -773,6 +792,14 @@ impl VendorPl {
     /// The Video Timing Controller handle of instance `name`.
     pub fn v_tc(&self, name: &str) -> Option<VTcHandle> {
         self.vtcs
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, h)| h.clone())
+    }
+
+    /// The AXI CDMA handle of instance `name`.
+    pub fn cdma(&self, name: &str) -> Option<CdmaHandle> {
+        self.cdmas
             .iter()
             .find(|(n, _)| n == name)
             .map(|(_, h)| h.clone())

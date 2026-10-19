@@ -185,6 +185,7 @@ fn plumbing_clock_wizards_and_block_memory_are_passive_ip() {
         ("xilinx.com:ip:axi_ethernetlite:3.0", "axi_ethernetlite"),
         ("xilinx.com:ip:axi_quad_spi:3.2", "axi_quad_spi"),
         ("xilinx.com:ip:v_tc:6.2", "v_tc"),
+        ("xilinx.com:ip:axi_cdma:4.1", "axi_cdma"),
     ] {
         assert!(matches!(classify(vlnv, name), VendorIp { .. }), "{name}");
     }

@@ -341,3 +341,24 @@ fn the_video_timing_controller_generates_timings_and_interrupts() {
         assert!(u.contains(line), "UART1 lacks `{line}`:\n{u}");
     }
 }
+
+#[test]
+fn the_axi_cdma_model_runs_transfers_and_interrupts() {
+    if !qemu_present() {
+        eprintln!("SKIPPED: Xilinx QEMU not found");
+        return;
+    }
+    let mut e = engine("cdma-demo");
+    run_us(e.as_mut(), 10_000);
+    let u = uart(e.as_mut(), 1);
+    for line in [
+        "cdma demo: AXI CDMA 4.1 memory-to-memory DMA transfer",
+        "CDMA status idle: 0x0001000a",
+        "CDMA transfer completed (256 bytes)",
+        "Buffer verification ok",
+        "CDMA PASS",
+        "RESULT: ALL PASS",
+    ] {
+        assert!(u.contains(line), "UART1 lacks `{line}`:\n{u}");
+    }
+}

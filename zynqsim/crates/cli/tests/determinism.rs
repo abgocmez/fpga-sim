@@ -107,6 +107,7 @@ const CASES: &[Case] = &[
     case("vdma-demo", "6ms"),
     case("ethlite-demo", "6ms"),
     case("vtc-demo", "6ms"),
+    case("cdma-demo", "6ms"),
     case("gpio-timer-uart", "20ms"),
     Case {
         // The button press is scripted: capture on its rising edge at 3 ms.

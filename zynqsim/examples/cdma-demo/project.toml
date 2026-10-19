@@ -1,0 +1,46 @@
+# AXI CDMA 4.1 memory-to-memory DMA with no RTL: the Xilinx IP runs as a vendor-ip model
+# (crates/vendor-ip, ADR-046) on the native PL.
+#
+# Firmware: firmware/cdma_demo (Rust, no_std). Memory-to-memory transfer via Simple Mode,
+# reading from source buffer and writing to destination buffer in RAM through S_AXI_HP0;
+# completion interrupt on IRQ_F2P[0].
+#
+#   zynqsim run --project examples/cdma-demo/project.toml --for 6ms
+#   expect on UART1: "CDMA status idle: 0x00000002", "CDMA transfer completed", "CDMA PASS", "RESULT: ALL PASS"
+#
+# Needs: the Xilinx QEMU (Vitis). No Vivado is needed to RUN this.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "native"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_cdma.elf"
+
+[native]
+axi_cdma_0 = "axi_cdma"
+
+[native_params.axi_cdma_0]
+C_INCLUDE_SG = 1
+C_INCLUDE_DRE = 1
+C_M_AXI_DATA_WIDTH = 32
+C_M_AXI_MAX_BURST_LEN = 16
+PS_PORT = "S_AXI_HP0"
+ADDRESS_SIZE = "0x10000"
+
+[connect]
+"axi_cdma_0.S_AXI_LITE" = "M_AXI_GP0@0x43000000"
+"axi_cdma_0.M_AXI" = "S_AXI_HP0"
+"axi_cdma_0.cdma_introut" = "IRQ_F2P[0]"
+

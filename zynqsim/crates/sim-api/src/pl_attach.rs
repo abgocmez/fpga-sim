@@ -31,6 +31,7 @@ pub const NATIVE_MODELS: &[&str] = &[
     "axi_uartlite",
     "axi_dma",
     "axi_vdma",
+    "axi_cdma",
     "axi_ethernetlite",
     "axi_iic",
     "axi_bram_ctrl",

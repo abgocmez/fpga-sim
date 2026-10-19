@@ -210,6 +210,31 @@ fn the_vtc_design_maps_the_vtc_native_model() {
 }
 
 #[test]
+fn the_cdma_design_maps_the_cdma_native_model() {
+    let out = temp("cdma_native");
+    let opts = ImportOptions {
+        rtl: vec![fixtures().join("rtl/math/my_math_ip.v")],
+        elf: Some(
+            fixtures()
+                .join("elf/math_test.elf")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        ..Default::default()
+    };
+    let plan = xsa::plan(&fixtures().join("xsa/zs_math_cdma.hwh"), &out, &opts).unwrap();
+    assert_eq!(plan.testbench_module.as_deref(), Some("my_math_ip"));
+    assert!(plan.unmodelled.is_empty(), "{:?}", plan.unmodelled);
+    assert!(plan.runnable_design());
+    assert_eq!(plan.project.native["axi_cdma_0"], "axi_cdma");
+    assert_eq!(plan.project.native_irq("axi_cdma_0"), Some(0));
+    assert_eq!(
+        plan.project.native_placement("axi_cdma_0"),
+        Some((0, 0x4300_0000))
+    );
+}
+
+#[test]
 fn a_user_rtl_only_design_validates_clean() {
     let out = temp("clean");
     let opts = ImportOptions {
