@@ -36,6 +36,7 @@ mod params;
 pub mod spi;
 pub mod timer;
 pub mod uartlite;
+pub mod v_tc;
 pub mod vdma;
 
 pub use params::{Params, flag, number, parse_number, ranged};
@@ -61,6 +62,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 use timer::{AxiTimer, TimerConfig, TimerHandle};
 use uartlite::{AxiUartLite, UartConfig, UartHandle};
+pub use v_tc::{AxiVTc, VTcConfig, VTcHandle, VTcStats};
 pub use vdma::{AxiVdma, VdmaConfig, VdmaHandle};
 
 /// Model names [`VendorPl::add`] accepts, by IP catalog name.
@@ -77,6 +79,7 @@ pub const MODELS: &[&str] = &[
     "axi_quad_spi",
     "axi_fifo_mm_s",
     "clk_wiz",
+    "v_tc",
 ];
 
 /// True when `name` (`axi_gpio`) is a model of this library.
@@ -162,6 +165,14 @@ pub fn param_names(model: &str) -> &'static [&'static str] {
             "PRIM_IN_FREQ",
             "CLKOUT1_REQUESTED_OUT_FREQ",
             "USE_DYN_RECONFIG",
+        ],
+        "v_tc" => &[
+            "C_GENERATE_EN",
+            "C_DETECT_EN",
+            "C_MAX_PIXELS",
+            "C_MAX_LINES",
+            "C_NUM_FSYNCS",
+            "CLK_FREQ_HZ",
         ],
         _ => &[],
     }
@@ -367,6 +378,7 @@ pub struct VendorPl {
     spis: Vec<(String, SpiHandle)>,
     fifos: Vec<(String, AxisFifoHandle)>,
     clk_wizs: Vec<(String, ClkWizHandle)>,
+    vtcs: Vec<(String, VTcHandle)>,
     /// Pin changes of the I2C masters, stamped with their (possibly future) bus times; they
     /// are handed out once PL time has reached them.
     iic_events: Arc<Mutex<Vec<PinEvent>>>,
@@ -415,6 +427,7 @@ impl VendorPl {
             spis: Vec::new(),
             fifos: Vec::new(),
             clk_wizs: Vec::new(),
+            vtcs: Vec::new(),
             iic_events: Arc::new(Mutex::new(Vec::new())),
             board_out: Vec::new(),
             pin_events: Vec::new(),
@@ -617,6 +630,12 @@ impl VendorPl {
                 self.clk_wizs.push((inst.name.clone(), handle));
                 Box::new(c)
             }
+            "v_tc" => {
+                let cfg = VTcConfig::from_params(&inst.params, size).map_err(ctx)?;
+                let (v, handle) = AxiVTc::new(&inst.name, cfg);
+                self.vtcs.push((inst.name.clone(), handle));
+                Box::new(v)
+            }
             other => {
                 return Err(format!(
                     "instance `{}`: `{other}` is not a vendor-ip model; available: {}",
@@ -746,6 +765,14 @@ impl VendorPl {
     /// The Clocking Wizard handle of instance `name`.
     pub fn clk_wiz(&self, name: &str) -> Option<ClkWizHandle> {
         self.clk_wizs
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, h)| h.clone())
+    }
+
+    /// The Video Timing Controller handle of instance `name`.
+    pub fn v_tc(&self, name: &str) -> Option<VTcHandle> {
+        self.vtcs
             .iter()
             .find(|(n, _)| n == name)
             .map(|(_, h)| h.clone())

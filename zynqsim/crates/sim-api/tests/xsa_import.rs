@@ -185,6 +185,31 @@ fn the_ethlite_design_maps_the_ethlite_native_model() {
 }
 
 #[test]
+fn the_vtc_design_maps_the_vtc_native_model() {
+    let out = temp("vtc_native");
+    let opts = ImportOptions {
+        rtl: vec![fixtures().join("rtl/math/my_math_ip.v")],
+        elf: Some(
+            fixtures()
+                .join("elf/math_test.elf")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        ..Default::default()
+    };
+    let plan = xsa::plan(&fixtures().join("xsa/zs_math_vtc.hwh"), &out, &opts).unwrap();
+    assert_eq!(plan.testbench_module.as_deref(), Some("my_math_ip"));
+    assert!(plan.unmodelled.is_empty(), "{:?}", plan.unmodelled);
+    assert!(plan.runnable_design());
+    assert_eq!(plan.project.native["v_tc_0"], "v_tc");
+    assert_eq!(plan.project.native_irq("v_tc_0"), Some(0));
+    assert_eq!(
+        plan.project.native_placement("v_tc_0"),
+        Some((0, 0x4300_0000))
+    );
+}
+
+#[test]
 fn a_user_rtl_only_design_validates_clean() {
     let out = temp("clean");
     let opts = ImportOptions {

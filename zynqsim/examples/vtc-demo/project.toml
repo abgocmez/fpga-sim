@@ -1,0 +1,44 @@
+# Video Timing Controller (v_tc 6.2, PG016) with no RTL: the Xilinx IP runs as a vendor-ip model
+# (crates/vendor-ip, ADR-045) on the native PL.
+#
+# Firmware: firmware/vtc_demo (Rust, no_std). CPU configures 640x480 active timing,
+# enables video generator and frame sync interrupts, receives interrupt on IRQ_F2P[0].
+#
+#   zynqsim run --project examples/vtc-demo/project.toml --for 6ms
+#   expect on UART1: "VTC Version:", "VTC frame interrupt received", "VTC PASS", "RESULT: ALL PASS"
+#
+# Needs: the Xilinx QEMU (Vitis). No Vivado is needed to RUN this.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "native"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_vtc.elf"
+
+[native]
+v_tc_0 = "v_tc"
+
+[native_params.v_tc_0]
+C_GENERATE_EN = 1
+C_DETECT_EN = 0
+C_MAX_PIXELS = 1920
+C_MAX_LINES = 1080
+CLK_FREQ_HZ = 100000000
+ADDRESS_SIZE = "0x10000"
+
+[connect]
+"v_tc_0.ctrl" = "M_AXI_GP0@0x43000000"
+"v_tc_0.irq" = "IRQ_F2P[0]"
+

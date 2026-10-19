@@ -321,3 +321,23 @@ fn the_axi_ethernetlite_model_loops_packets_and_interrupts() {
         assert!(u.contains(line), "UART1 lacks `{line}`:\n{u}");
     }
 }
+
+#[test]
+fn the_video_timing_controller_generates_timings_and_interrupts() {
+    if !qemu_present() {
+        eprintln!("SKIPPED: Xilinx QEMU not found");
+        return;
+    }
+    let mut e = engine("vtc-demo");
+    run_us(e.as_mut(), 10_000);
+    let u = uart(e.as_mut(), 1);
+    for line in [
+        "vtc demo: Video Timing Controller generator and interrupt demo",
+        "VTC Version: 0x06020000",
+        "VTC frame interrupt received",
+        "VTC PASS",
+        "RESULT: ALL PASS",
+    ] {
+        assert!(u.contains(line), "UART1 lacks `{line}`:\n{u}");
+    }
+}

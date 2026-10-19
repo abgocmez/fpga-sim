@@ -489,3 +489,10 @@ version = "0.1.0"
 dependencies = [
  "rt",
 ]
+
+[[package]]
+name = "vtc_demo"
+version = "0.1.0"
+dependencies = [
+ "rt",
+]

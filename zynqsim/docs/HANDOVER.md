@@ -37,6 +37,7 @@ Replaces the round-1 handover; its finished items are summarised in section 2.
 | Clocking Wizard (ADR-042) | implemented + tested, `VERIFY:` items open; model changes no clock | `vendor-ip/src/clk_wiz.rs`, `examples/clk-wiz-demo`; `xsa-import/src/hwh.rs` reclassifies a `clk_wiz` with an AXI4-Lite window from passive to native |
 | AXI VDMA (ADR-043) | implemented + tested, `VERIFY:` items open | `vendor-ip/src/vdma.rs`, `examples/vdma-demo`; 2D line stride, park & circular buffer store addressing up to 32 frame stores, stream loopback |
 | AXI Ethernet Lite (ADR-044) | done, tested | `vendor-ip/src/ethernetlite.rs`, `examples/ethlite-demo` |
+| Video Timing Controller (ADR-045) | done, tested | `vendor-ip/src/v_tc.rs`, `examples/vtc-demo` |
 | P1: User path, `zynqsim doctor`, `try-xsa` | done, verified | `zynqsim doctor`, `cargo xtask try-xsa`, `demo::xsa-native-*`, `docs/TEST_YOUR_DESIGN.md` |
 | Fast gate, demo tour, packaging | done | `cargo xtask ci --fast`, `cargo xtask demo [--quick]` |
 
@@ -169,8 +170,13 @@ Goal: a stranger can take a trivial Vitis project + Vivado XSA and see it run, w
   `ip2intc_irpt` interrupt output, internal loopback, external frame injection/extraction (`push_rx`, `take_tx`),
   firmware demo `firmware/ethlite_demo`, example `examples/ethlite-demo/project.toml`, determinism 5/5,
   unit tests and integration tests passing.
-* Next models in order: Video Timing Controller, AXI4-Stream to Video Out (follow
-  section 4). Each: Vitis driver example passes (`fixtures/bsp` has `xaxidma`/`xiic` style apps; add the missing ones).
+* **Video Timing Controller (`v_tc` 6.2, ADR-045) — DONE:** Behavioural model in `crates/vendor-ip/src/v_tc.rs`,
+  64 KiB address window (`0x10000` bytes), generator active size (`GASIZE`), horizontal/vertical timing (`GHSIZE`,
+  `GVSIZE`, `GHSYNC`, `GVSYNC`), frame syncs (`FS00`..`FS15`), generator delay (`GGD`), pixel-clock accumulator,
+  generator timing progression emitting FSYNC0, VBLANK, and AVIDEO interrupts, W1C ISR, firmware demo `firmware/vtc_demo`,
+  example `examples/vtc-demo/project.toml`, determinism 5/5, unit tests and integration tests passing.
+* Next models in order: AXI4-Stream to Video Out (`v_axi4s_vid_out`), AXI CDMA (`axi_cdma`), AXI UART 16550 (`axi_uart16550`).
+  Each: Vitis driver example passes (`fixtures/bsp` has `xaxidma`/`xiic` style apps; add the missing ones).
 * **Real IP through `export_simulation`:** verify `-L secureip`/`unisims_ver` runs for a design with an AXI GPIO or
   clocking wizard in XSim (ADR-017 says this was never verified); then document which IP can run this way instead of
   a model. This avoids guessing register behaviour and is the cheapest way to verify the `VERIFY:` items of ADR-040/041/042/043.
