@@ -484,7 +484,7 @@ the machine); it passed alone and in the second full run.
 | Project validation: `boot.file` required / missing / damaged (finding text carries field and offset), `cpu0.elf` ignored with a warning, no `cpu0.elf` needed, `run` stops with exit 1 | verified | `zynqsim::bootbin::project_validation_reports_each_boot_problem_with_its_field` |
 | `boot-info` (text, `--json`; exit 2 for an image ZynqSim cannot run), `init --boot` (copies the image, writes and validates the project, never overwrites, refuses damaged images), MCP `boot_inspect` | verified | `zynqsim::bootbin::{boot_info_lists_the_partitions_of_a_real_image, init_boot_writes_a_valid_project_and_never_overwrites}`, `zynqsim-mcp::bootbin::boot_inspect_lists_partitions_and_findings`, `sim-api::bootbin::tests::*`, `mcp::tools::tests::*` |
 | PL bitstream partition | recognised and reported only (**not-planned** to simulate) | its destination PL and the `0xAA995566` sync word are checked; the PL is the project's RTL/native models (`init --boot` writes `pl = "demo"` and a comment on how to add `[rtl]`) |
-| FSBL execution, `ps7_init` replay | **not-planned** (stub) | the FSBL partition is never run; its register-init pairs are listed (`register_init_applied: false`) and **not applied**: PS clocks, MIO, DDR and peripheral enables change nothing (QEMU's machine has everything configured). Prompt §12's "run the FSBL as software" is not done |
+| FSBL execution | **not-planned** (stub) | the FSBL partition is never run; Prompt §12's "run the FSBL as software" is not done. The `ps7_init` sequence it would run is replayed separately, see the `ps7_init` replay row (ADR-038) |
 | Boot-ROM behaviour: timing, QSPI/SD image load, boot-mode pins, FSBL handoff logic, a second application image started on core 1 | not-planned | core 0 starts at the first application partition's execution address (which partition the real FSBL hands off to is FSBL logic, `VERIFY:`); further application images are loaded into RAM but not started; symbols are absent (bootgen strips the ELF), so breakpoints need addresses |
 | ZynqMP / Versal images | not-planned | only the Zynq-7000 layout is read; a ZynqMP image shares the magic words and is not told apart reliably |
 
@@ -540,14 +540,14 @@ instead of `--rtl`) makes one project with the XSA-derived PL and `[boot] mode =
 | Vivado 2022.1 batch flow producing the XSA and the export from one project, run twice on this machine | verified (this machine) | `fixtures/handoff/make_handoff.tcl`; other Vivado versions and machines `VERIFY:` |
 | **FSBL**: the partition in the image is a **stub** (four `b .` instructions); it is never executed; no FSBL was built or run | stub / not-planned | ADR-018, ADR-019 |
 | **Bitstream**: the partition is a **placeholder** `.bit` container; no bitstream is simulated or even compared with the RTL | not-planned | the PL is the user RTL in XSim plus the vendor-ip models |
-| **`ps7_init`** (the XSA's files and the image's register-init table) | not applied | the firmware does the SLCR PL bring-up itself (`rt::pl_bringup`); PS clocks, MIO and peripheral enables change nothing |
+| **`ps7_init`** (the XSA's files and the image's register-init table) | replayed (ADR-038); **partial on QEMU** | applied before the CPU starts on the native PS; on QEMU only registers the HP0 path reaches (SLCR) are written, the rest are skipped by `qemu_skips_addr` (DDRC, DEVCFG). The QEMU private timer stays at 100 MHz (deviation, row above) |
 | Xilinx IP behaviour vs the real IP; anything on a board; other designs, Vivado versions, SmartConnect, several user slaves | `VERIFY:` / not covered | register-level models from the product guides (see *Xilinx IP models*); this is one design |
 
 **P3 exit criterion** (prompt §15: "a Vivado-exported design and its `BOOT.BIN` run end to end"):
 demonstrated for this one design in the restricted sense above (Vivado-written XSA and
 `export_simulation`, `bootgen`-written image, PS in QEMU, user RTL in XSim, Xilinx IP as models,
 deterministic result). It is **not** the real Vivado/FSBL flow: stub FSBL not executed, no
-bitstream simulated, `ps7_init` not applied, IP models unverified against hardware. ADR-019 has
+bitstream simulated, `ps7_init` replayed only partly on QEMU (ADR-038), IP models unverified against hardware. ADR-019 has
 the full statement.
 
 ## Universality corpus (milestone P3, Vivado XSim)
@@ -578,7 +578,7 @@ timing (SDF) simulation; UVM is only probed with the library, not a full UVM tes
 `docs/conformance/bsp-apps.md`. Xilinx's own standalone BSP (Vitis 2022.1, `-Os`) and its own
 application templates and driver examples, **built without any C of ours** and run on the Xilinx
 QEMU (PS only). "Passes" means the application printed its own success line; nothing was compared
-with a board. Not run behind an FSBL/`ps7_init`.
+with a board. Not run behind an FSBL; `ps7_init` is not replayed for these runs.
 
 | Feature | Status | Evidence / note |
 |---|---|---|
@@ -596,7 +596,7 @@ with a board. Not run behind an FSBL/`ps7_init`.
 | **DEVIATION D1**: PS GPIO, SPI0/1, CAN0/1, USB0/1, device configuration, DDR controller, OCM controller, eFuse, L2C (PL310) and the SCU watchdog are not in the QEMU machine (reads 0, writes dropped, no abort). `xgpiops` (2 examples), `xspips`, `xcanps`, `xdevcfg` examples print their failure; `xscuwdt` and the Peripheral Tests' watchdog test spin forever | verified as observed behaviour; the criterion-2 applications for GPIO, SPI, CAN, USB **fail** | `bsp_apps` `DEVIATIONS` table, asserted; probe + `info mtree` in the conformance document (the probe is not committed) |
 | **DEVIATION D2**: XADC returns zero data (temperature -273.149 C, rails 0.000 V) although the driver runs to its success line | verified | `bsp_apps` `DEVIATIONS` (`bsp_xadcps_polled`) |
 | **DEVIATION D3**: the A9 global and private timers tick at 100 MHz (measured: 1,000,094 ticks in 10 ms); the BSP's `COUNTS_PER_SECOND` is 333,333,343, so `sleep()`/`usleep()`/SCU timer deadlines are 3.3x too long in simulated time | measured with a throw-away probe, **no test** | conformance document, D3 |
-| lwIP/FatFs applications, flash and EEPROM examples, FSBL/`ps7_init`, multicore, any comparison with hardware | not built / not covered | ADR-023, conformance document |
+| lwIP/FatFs applications, flash and EEPROM examples, FSBL, multicore, any comparison with hardware | not built / not covered | ADR-023, conformance document |
 
 **Criterion 2 is partly shown, not met**: UART, GIC, timers (SCU, TTC), QSPI (self test), SD
 (raw), GEM (DMA example), I2C (self test), XADC (driver runs, data wrong) and PL330 DMA applications

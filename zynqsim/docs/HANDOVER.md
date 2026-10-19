@@ -95,7 +95,9 @@ Priority is value over effort. Effort is S (hours), M (a day), L (several days);
 measurements. Every task ends with: tests named in the commit, STATUS.md rows updated honestly, an ADR when a
 decision was made, the affected `examples/` added to the determinism table, and `cargo xtask ci` green.
 
-### A. `ps7_init` replay and the PS clock tree (value high, effort M)
+### A. `ps7_init` replay and the PS clock tree (MOSTLY DONE, ADR-038)
+* **Status.** Parser, clock-tree derivation, `[boot] ps7_init` switch, poll-timeout diagnostic and the native-PS replay are **done and verified** (`cli::tests::ps7_init_replay`, ADR-038). **Open:** on QEMU only SLCR writes get through the HP0 path (DDRC/DEVCFG are skipped), and the QEMU private timer still ticks at 100 MHz, so the 333.33 MHz acceptance test on QEMU is **not met**.
+* *Original plan, kept for reference:*
 * **Why.** The XSA carries `ps7_init.tcl/.c/.h`; today the data is only listed. Real systems get their PLLs, clock
   dividers, MIO muxing, DDR and peripheral enables from it. QEMU's reset-state clock tree is why the A9 private
   timer ticks at 100 MHz instead of 333 MHz (the global timer was fixed by a DTB property; the private one was not).
