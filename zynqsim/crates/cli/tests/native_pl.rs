@@ -112,6 +112,33 @@ fn axi_quad_spi_firmware_runs_on_the_native_ps_with_the_vendor_model() {
 }
 
 #[test]
+fn clocking_wizard_firmware_runs_on_the_native_ps_with_the_vendor_model() {
+    let mut e = engine("clk-wiz-demo", "native", "native");
+    e.command(Command::Run {
+        duration_ps: 20_000_000_000,
+    })
+    .expect("runs without QEMU or XSim");
+    let uart1 = uart_text(e.as_mut(), 1);
+    for line in [
+        "clk-wiz demo",
+        "power-on: locked sr=0x1",
+        "config ok",
+        "reconfig: unlocked",
+        "reconfig: relocked",
+        "srr reset ok",
+        "RESULT: ALL PASS",
+    ] {
+        assert!(
+            uart1.contains(line),
+            "UART1 lacks `{line}`:
+{uart1}"
+        );
+    }
+    assert!(!uart1.contains("FAIL"), "{uart1}");
+    assert!(e.status(false).pl_backend == "native");
+}
+
+#[test]
 fn gpio_timer_uart_on_the_native_ps_matches_the_qemu_text() {
     if std::env::var_os("ZYNQSIM_QEMU").is_none()
         && sim_api::locate_binary("qemu-system-aarch64").is_none()

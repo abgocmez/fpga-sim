@@ -1,0 +1,31 @@
+# Clocking Wizard (xilinx.com:ip:clk_wiz:6.0, crates/vendor-ip, ADR-042) on the PL:
+# power-on lock, clocking register retention, dynamic reconfiguration with relock,
+# lock-change interrupt on IRQ_F2P[1], software reset.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "native"
+pl = "native"
+
+[sim]
+quantum_ns = 1000
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_clk_wiz.elf"
+
+[native]
+clk_wiz_0 = "clk_wiz"
+
+[native_params.clk_wiz_0]
+CLK_FREQ_HZ = 100000000
+ADDRESS_SIZE = "0x10000"
+
+[connect]
+"clk_wiz_0.S_AXI_LITE" = "M_AXI_GP0@0x43C00000"
+"clk_wiz_0.interrupt" = "IRQ_F2P[1]"

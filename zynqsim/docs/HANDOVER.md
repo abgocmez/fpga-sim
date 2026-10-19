@@ -145,8 +145,9 @@ decision was made, the affected `examples/` added to the determinism table, and 
 ### D. IP models, and real IP through the Vivado simulation export (effort M per IP; L overall)
 * **Status.**
   - **AXI Quad SPI v3.2 (COMPLETED, ADR-040):** Implemented in `crates/vendor-ip/src/spi.rs` as a `pl_native::RegisterBlock` (`DGIER`, `IPISR`, `IPIER`, `SRR`, `SPICR`, `SPISR`, `SPIDTR`, `SPIDRR`, `SPISSR`, `TX_FIFO_OCY`, `RX_FIFO_OCY`), with loopback mode, FIFO reset bits, slave select active-low masking, and interrupt generation to `IRQ_F2P`. Verified with guest firmware `firmware/spi_demo`, `fixtures/elf/rust_spi.elf`, `examples/spi-demo`, `cli::native_pl::axi_quad_spi_firmware_runs_on_the_native_ps_with_the_vendor_model`, `sim-api::vendor_ip2::the_axi_quad_spi_model_runs_loopback_transfers_and_interrupts`, and determinism 5/5 identical runs (`fnv1a64:ad75b66de3ec904e`).
-* **Remaining Models.** Candidates in order: AXI VDMA, AXI Ethernet Lite, AXI4-Stream FIFO, Clocking
-  Wizard (registers), Video Timing Controller, AXI4-Stream to Video Out. Pattern: `crates/vendor-ip`,
+  - **Clocking Wizard 6.0 (COMPLETED, ADR-042):** `crates/vendor-ip/src/clk_wiz.rs` (`SRR`, `SR` LOCKED after a lock time, `ISR`/`IER`, `CCR0..2`, `SADDR` reconfiguration load), reclassified from passive to native when it has an AXI4-Lite window. Verified with `firmware/clk_wiz_demo`, `examples/clk-wiz-demo`, `cli::native_pl::clocking_wizard_firmware_runs_on_the_native_ps_with_the_vendor_model`, `sim-api::vendor_ip2::the_clock_wizard_model_relocks_after_reconfiguration_and_raises_its_interrupt`, and determinism 5/5 identical runs. Register facts are `VERIFY:`; no clock frequency is changed by the model.
+* **Remaining Models.** Candidates in order: AXI VDMA, AXI Ethernet Lite, AXI4-Stream FIFO,
+  Video Timing Controller, AXI4-Stream to Video Out. Pattern: `crates/vendor-ip`,
   XSA mapping in `sim-api/src/xsa.rs`, an example with Rust firmware, unit tests per register and end-to-end tests.
 * **Real IP.** For designs whose IP has a Vivado simulation model, `export_simulation` gives the compiled-library flow:
   verify `-L secureip`/`unisims_ver` runs for a design with an AXI GPIO or a clocking wizard through XSim
