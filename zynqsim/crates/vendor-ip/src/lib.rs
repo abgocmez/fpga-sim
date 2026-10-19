@@ -66,6 +66,8 @@ use timer::{AxiTimer, TimerConfig, TimerHandle};
 use uartlite::{AxiUartLite, UartConfig, UartHandle};
 pub mod uart16550;
 pub use uart16550::{AxiUart16550, Uart16550Config, Uart16550Handle, Uart16550Stats};
+pub mod v_axi4s_vid_out;
+pub use v_axi4s_vid_out::{AxiVidOut, VidOutConfig, VidOutHandle, VidOutStats};
 pub use v_tc::{AxiVTc, VTcConfig, VTcHandle, VTcStats};
 pub use vdma::{AxiVdma, VdmaConfig, VdmaHandle};
 
@@ -86,6 +88,7 @@ pub const MODELS: &[&str] = &[
     "axi_fifo_mm_s",
     "clk_wiz",
     "v_tc",
+    "v_axi4s_vid_out",
 ];
 
 /// True when `name` (`axi_gpio`) is a model of this library.
@@ -193,6 +196,15 @@ pub fn param_names(model: &str) -> &'static [&'static str] {
             "C_S_AXI_ACLK_FREQ_HZ",
             "C_IS_A_16550",
             "C_HAS_EXTERNAL_XIN",
+        ],
+        "v_axi4s_vid_out" => &[
+            "C_PIXELS_PER_CLOCK",
+            "C_COMPONENTS_PER_PIXEL",
+            "C_S_AXIS_VIDEO_DATA_WIDTH",
+            "C_ADDR_WIDTH",
+            "C_HAS_ASYNC_CLK",
+            "C_SYNC_LOCK_THRESHOLD",
+            "CLK_FREQ_HZ",
         ],
         _ => &[],
     }
@@ -401,6 +413,7 @@ pub struct VendorPl {
     vtcs: Vec<(String, VTcHandle)>,
     cdmas: Vec<(String, CdmaHandle)>,
     uarts16550: Vec<(String, Uart16550Handle)>,
+    vid_outs: Vec<(String, VidOutHandle)>,
     /// Pin changes of the I2C masters, stamped with their (possibly future) bus times; they
     /// are handed out once PL time has reached them.
     iic_events: Arc<Mutex<Vec<PinEvent>>>,
@@ -452,6 +465,7 @@ impl VendorPl {
             vtcs: Vec::new(),
             cdmas: Vec::new(),
             uarts16550: Vec::new(),
+            vid_outs: Vec::new(),
             iic_events: Arc::new(Mutex::new(Vec::new())),
             board_out: Vec::new(),
             pin_events: Vec::new(),
@@ -672,6 +686,12 @@ impl VendorPl {
                 self.uarts16550.push((inst.name.clone(), handle));
                 Box::new(u)
             }
+            "v_axi4s_vid_out" => {
+                let cfg = VidOutConfig::from_params(&inst.params, size).map_err(ctx)?;
+                let (v, handle) = AxiVidOut::new(&inst.name, cfg);
+                self.vid_outs.push((inst.name.clone(), handle));
+                Box::new(v)
+            }
             other => {
                 return Err(format!(
                     "instance `{}`: `{other}` is not a vendor-ip model; available: {}",
@@ -825,6 +845,14 @@ impl VendorPl {
     /// The AXI UART 16550 handle of instance `name`.
     pub fn uart16550(&self, name: &str) -> Option<Uart16550Handle> {
         self.uarts16550
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, h)| h.clone())
+    }
+
+    /// The AXI4-Stream to Video Out handle of instance `name`.
+    pub fn vid_out(&self, name: &str) -> Option<VidOutHandle> {
+        self.vid_outs
             .iter()
             .find(|(n, _)| n == name)
             .map(|(_, h)| h.clone())
@@ -1068,14 +1096,19 @@ impl PlTarget for VendorPl {
     }
 
     fn has_media(&self) -> bool {
-        self.rtl.as_ref().is_some_and(|r| r.has_media())
+        self.rtl.as_ref().is_some_and(|r| r.has_media()) || !self.vid_outs.is_empty()
     }
 
     fn drain_media(&mut self) -> Vec<MediaEvent> {
-        self.rtl
+        let mut events = self
+            .rtl
             .as_mut()
             .map(|r| r.drain_media())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        for (_, vo) in &self.vid_outs {
+            events.extend(vo.drain_media());
+        }
+        events
     }
 
     fn set_media_sources(

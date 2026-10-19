@@ -206,6 +206,7 @@ const FIRMWARE: &[(&str, &str)] = &[
     ("vtc_demo", "rust_vtc.elf"),
     ("cdma_demo", "rust_cdma.elf"),
     ("uart16550_demo", "rust_uart16550.elf"),
+    ("vidout_demo", "rust_vidout.elf"),
 ];
 
 /// Builds `firmware/` (its own workspace) and copies the ELFs into `fixtures/elf`.

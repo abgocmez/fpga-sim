@@ -3,7 +3,7 @@
 # Build: `cargo xtask firmware` (or `cargo build --release` in this directory).
 [workspace]
 resolver = "3"
-members = ["rt", "hello", "audio_demo", "hdmi_demo", "irq_demo", "oled_demo", "pmod_simple_demo", "rgb_demo", "tmp2_demo", "als_demo", "acl_demo", "pcam_demo", "net_demo", "sd_demo", "qspi_demo", "debug_demo", "gpio_timer_uart", "vendor_mix", "handoff_demo", "board8_demo", "dma_loopback", "intc_demo", "iic_bram_demo", "dma_sg", "conf_gpiops", "conf_scutimer", "timer_rate", "conf_ttc", "conf_dmaps", "conf_iicps", "conf_spips", "conf_xadcps", "timer_modes", "dual_core_demo", "two_math", "spi_demo", "axis_fifo_demo", "clk_wiz_demo", "vdma_demo", "ethlite_demo", "vtc_demo", "cdma_demo", "uart16550_demo"]
+members = ["rt", "hello", "audio_demo", "hdmi_demo", "irq_demo", "oled_demo", "pmod_simple_demo", "rgb_demo", "tmp2_demo", "als_demo", "acl_demo", "pcam_demo", "net_demo", "sd_demo", "qspi_demo", "debug_demo", "gpio_timer_uart", "vendor_mix", "handoff_demo", "board8_demo", "dma_loopback", "intc_demo", "iic_bram_demo", "dma_sg", "conf_gpiops", "conf_scutimer", "timer_rate", "conf_ttc", "conf_dmaps", "conf_iicps", "conf_spips", "conf_xadcps", "timer_modes", "dual_core_demo", "two_math", "spi_demo", "axis_fifo_demo", "clk_wiz_demo", "vdma_demo", "ethlite_demo", "vtc_demo", "cdma_demo", "uart16550_demo", "vidout_demo"]
 
 [workspace.package]
 version = "0.1.0"

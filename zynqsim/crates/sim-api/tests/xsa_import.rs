@@ -157,6 +157,31 @@ fn the_uart16550_design_maps_the_uart16550_native_model() {
 }
 
 #[test]
+fn the_vid_out_design_maps_the_vid_out_native_model() {
+    let out = temp("vid_out_native");
+    let opts = ImportOptions {
+        rtl: vec![fixtures().join("rtl/math/my_math_ip.v")],
+        elf: Some(
+            fixtures()
+                .join("elf/math_test.elf")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        ..Default::default()
+    };
+    let plan = xsa::plan(&fixtures().join("xsa/zs_math_vid_out.hwh"), &out, &opts).unwrap();
+    assert_eq!(plan.testbench_module.as_deref(), Some("my_math_ip"));
+    assert!(plan.unmodelled.is_empty(), "{:?}", plan.unmodelled);
+    assert!(plan.runnable_design());
+    assert_eq!(plan.project.native["v_axi4s_vid_out_0"], "v_axi4s_vid_out");
+    assert_eq!(plan.project.native_irq("v_axi4s_vid_out_0"), Some(0));
+    assert_eq!(
+        plan.project.native_placement("v_axi4s_vid_out_0"),
+        Some((0, 0x4300_0000))
+    );
+}
+
+#[test]
 fn the_vdma_design_maps_the_vdma_native_model() {
     let out = temp("vdma_native");
     let opts = ImportOptions {

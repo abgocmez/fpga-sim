@@ -290,6 +290,35 @@ fn the_uart16550_design_maps_the_uart16550_model() {
     );
 }
 
+#[test]
+fn the_vid_out_design_maps_the_vid_out_model() {
+    let d = temp("vid_out_map");
+    let xsa = fixtures().join("xsa/zs_math_vid_out.hwh");
+    let rtl = fixtures().join("rtl/math/my_math_ip.v");
+    let elf = fixtures().join("elf/math_test.elf");
+    let o = zynqsim(&[
+        "--json",
+        "init",
+        "--xsa",
+        xsa.to_str().unwrap(),
+        "--out",
+        d.to_str().unwrap(),
+        "--rtl",
+        rtl.to_str().unwrap(),
+        "--elf",
+        elf.to_str().unwrap(),
+    ]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let v: Value = serde_json::from_str(&stdout(&o)).unwrap();
+    assert_eq!(v["design"], "design_vid_out");
+    assert_eq!(v["runnable"], true);
+    let toml = std::fs::read_to_string(d.join("project.toml")).unwrap();
+    assert!(
+        toml.contains("v_axi4s_vid_out_0 = \"v_axi4s_vid_out\""),
+        "{toml}"
+    );
+}
+
 /// Without the RTL the module reference has no source: that is reported, not guessed.
 #[test]
 fn a_module_reference_without_its_rtl_asks_for_it() {

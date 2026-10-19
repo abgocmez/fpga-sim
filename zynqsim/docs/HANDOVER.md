@@ -190,7 +190,14 @@ Goal: a stranger can take a trivial Vitis project + Vivado XSA and see it run, w
   `OUT2` (`MCR & 0x08`) interrupt output gating, `ip2intc_irpt` interrupt output, firmware demo `firmware/uart16550_demo`,
   example `examples/uart16550-demo/project.toml`, determinism 5/5, unit tests and integration tests passing.
   Preserved unmodelled IP rejection tests by introducing `fixtures/xsa/zs_math_hwicap.hwh` (`xilinx.com:ip:axi_hwicap:3.0`).
-* Next models in order: AXI4-Stream to Video Out (`v_axi4s_vid_out`), Video In to AXI4-Stream (`v_vid_in_axi4s`).
+* **AXI4-Stream to Video Out (`v_axi4s_vid_out` 4.0, ADR-048) — DONE:** Behavioural model in `crates/vendor-ip/src/v_axi4s_vid_out.rs`,
+  64 KiB address window (`0x10000` bytes), registers `CR` (enable, reset, master mode, test pattern generator, loopback),
+  `SR` (lock, underflow, overflow, SOF/EOL, AVIDEO/VBLANK/HBLANK status codes), `ISR`/`IER` (W1C interrupts for lock, unlock,
+  underflow, overflow, SOF, EOL, frame done), active video dimensions `ASIZE`, total frame dimensions `TSIZE`, FIFO fill level
+  and watermarks, manual stream injection data/ctrl port, frame/line/pixel counters, version `0x0400_0000`, simulated video beam
+  progression, autonomous test pattern generation, frame completion interrupts, `MediaEvent` emission, firmware demo
+  `firmware/vidout_demo`, example `examples/vidout-demo/project.toml`, determinism 5/5, unit tests and integration tests passing.
+* Next models in order: Video In to AXI4-Stream (`v_vid_in_axi4s`), ILA, VIO.
   Each: Vitis driver example passes (`fixtures/bsp` has `xaxidma`/`xiic` style apps; add the missing ones).
 * **Real IP through `export_simulation`:** verify `-L secureip`/`unisims_ver` runs for a design with an AXI GPIO or
   clocking wizard in XSim (ADR-017 says this was never verified); then document which IP can run this way instead of

@@ -386,3 +386,27 @@ fn the_axi_uart16550_model_runs_loopback_and_interrupts() {
         assert!(u.contains(line), "UART1 lacks `{line}`:\n{u}");
     }
 }
+
+#[test]
+fn the_axi_vid_out_model_runs_loopback_and_interrupts() {
+    if !qemu_present() {
+        eprintln!("SKIPPED: Xilinx QEMU not found");
+        return;
+    }
+    let mut e = engine("vidout-demo");
+    run_us(e.as_mut(), 10_000);
+    let u = uart(e.as_mut(), 1);
+    for line in [
+        "vidout demo: AXI4-Stream to Video Out 4.0 stream lock and timing",
+        "VIDOUT Version: 0x04000000",
+        "VIDOUT software reset ok",
+        "VIDOUT resolution configured (8x4 active, 10x5 total)",
+        "VIDOUT FIFO manual stream push ok (level: 1)",
+        "VIDOUT interrupt received",
+        "locked=true",
+        "VIDOUT PASS",
+        "RESULT: ALL PASS",
+    ] {
+        assert!(u.contains(line), "UART1 lacks `{line}`:\n{u}");
+    }
+}
