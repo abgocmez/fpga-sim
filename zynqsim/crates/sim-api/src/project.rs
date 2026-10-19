@@ -898,6 +898,82 @@ impl Project {
         let top = r.top.clone().or(resolved.top.clone()).ok_or_else(|| {
             ApiError::invalid_argument("backends.pl = \"rtl-native\" needs `top` in [rtl]")
         })?;
+        // Discover non-native RTL slave placements from connect:
+        let mut placements: Vec<(String, u8, u64)> = Vec::new();
+        for (k, _v) in &self.connect {
+            if let Some((inst, _port)) = k.split_once('.') {
+                if self.native.contains_key(inst) {
+                    continue;
+                }
+                if let Some((gp, addr)) = self.native_placement(inst) {
+                    if !placements.iter().any(|(i, _, _)| i == inst) {
+                        placements.push((inst.to_string(), gp, addr));
+                    }
+                }
+            }
+        }
+
+        let mut source_modules: Vec<String> = Vec::new();
+        for f in &resolved.files {
+            if let Ok(text) = std::fs::read_to_string(f) {
+                for m in crate::exportinit::module_names(&text) {
+                    if m != "cosim_top" && m != "zs_axi_checker" && !source_modules.contains(&m) {
+                        source_modules.push(m);
+                    }
+                }
+            }
+        }
+
+        let rtl_sources: Vec<PathBuf> = resolved
+            .files
+            .into_iter()
+            .filter(|f| {
+                let name = f.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                name != "cosim_top.sv" && name != "zs_axi_checker.sv"
+            })
+            .collect();
+
+        if placements.len() > 1 || (placements.len() == 1 && top == "cosim_top") {
+            let mut slaves = Vec::new();
+            for (inst, gp, addr) in placements {
+                let mod_name = if source_modules.contains(&inst) {
+                    inst.clone()
+                } else if source_modules.len() == 1 {
+                    source_modules[0].clone()
+                } else if top != "cosim_top" && source_modules.contains(&top) {
+                    top.clone()
+                } else if let Some(m) = source_modules
+                    .iter()
+                    .find(|m| inst.starts_with(m.as_str()) || inst.contains(m.as_str()))
+                {
+                    m.clone()
+                } else {
+                    source_modules
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| inst.clone())
+                };
+                slaves.push(crate::RtlNativeSlaveSpec {
+                    instance: inst.clone(),
+                    top: mod_name,
+                    gp,
+                    base: addr,
+                    irqs: self.native_irqs(&inst),
+                });
+            }
+            let first_gp = slaves.first().map(|s| s.gp).unwrap_or(0);
+            let first_base = slaves.first().map(|s| s.base).unwrap_or(0);
+            return Ok(Some(crate::RtlNativeSpec {
+                top,
+                sources: rtl_sources,
+                defines: r.defines.clone(),
+                gp: first_gp,
+                base: first_base,
+                irqs: Vec::new(),
+                slaves,
+            }));
+        }
+
         let (gp, addr) = self.native_placement(&top).ok_or_else(|| {
             ApiError::invalid_argument(format!(
                 "the RTL top `{top}` has no [connect] entry such as \
@@ -906,11 +982,12 @@ impl Project {
         })?;
         Ok(Some(crate::RtlNativeSpec {
             top: top.clone(),
-            sources: resolved.files,
+            sources: rtl_sources,
             defines: r.defines.clone(),
             gp,
             base: addr,
             irqs: self.native_irqs(&top),
+            slaves: Vec::new(),
         }))
     }
 
@@ -1237,7 +1314,13 @@ impl Project {
                         ));
                     }
                     if let Some(top) = r.top.as_deref() {
-                        if self.native_placement(top).is_none() {
+                        let has_placements = self.connect.keys().any(|k| {
+                            k.split_once('.').is_some_and(|(inst, _)| {
+                                !self.native.contains_key(inst)
+                                    && self.native_placement(inst).is_some()
+                            })
+                        });
+                        if !has_placements && self.native_placement(top).is_none() {
                             d.push(err(
                                 "rtl",
                                 format!(

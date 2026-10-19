@@ -65,35 +65,59 @@ pub fn load_project_ps7_init(
 }
 
 /// Replays `ps7_init` operations onto Native PS `SystemBus`.
+///
+/// Unmapped peripherals in Native PS (such as QSPI, Ethernet, or USB registers that are not
+/// modeled) are ignored.
 pub fn replay_native(bus: &mut SystemBus, ops: &[Ps7InitOp]) -> Result<(), ApiError> {
     for op in ops {
         match *op {
             Ps7InitOp::Write { addr, value } => {
-                bus.write(addr as u64, 4, value as u64).map_err(|e| {
-                    ApiError::internal(format!("ps7_init native write to {addr:#010x} failed: {e:?}"))
-                })?;
+                match bus.write(addr as u64, 4, value as u64) {
+                    Ok(()) => {}
+                    Err(mem_sys::BusFault::Unmapped(_)) => {}
+                    Err(e) => {
+                        return Err(ApiError::internal(format!(
+                            "ps7_init native write to {addr:#010x} failed: {e:?}"
+                        )));
+                    }
+                }
             }
             Ps7InitOp::MaskWrite { addr, mask, value } => {
-                let cur = bus.read(addr as u64, 4).map_err(|e| {
-                    ApiError::internal(format!(
-                        "ps7_init native read before mask_write on {addr:#010x} failed: {e:?}"
-                    ))
-                })? as u32;
+                let cur = match bus.read(addr as u64, 4) {
+                    Ok(v) => v as u32,
+                    Err(mem_sys::BusFault::Unmapped(_)) => continue,
+                    Err(e) => {
+                        return Err(ApiError::internal(format!(
+                            "ps7_init native read before mask_write on {addr:#010x} failed: {e:?}"
+                        )));
+                    }
+                };
                 let new_val = (cur & !mask) | (value & mask);
-                bus.write(addr as u64, 4, new_val as u64).map_err(|e| {
-                    ApiError::internal(format!(
-                        "ps7_init native mask_write to {addr:#010x} failed: {e:?}"
-                    ))
-                })?;
+                match bus.write(addr as u64, 4, new_val as u64) {
+                    Ok(()) => {}
+                    Err(mem_sys::BusFault::Unmapped(_)) => {}
+                    Err(e) => {
+                        return Err(ApiError::internal(format!(
+                            "ps7_init native mask_write to {addr:#010x} failed: {e:?}"
+                        )));
+                    }
+                }
             }
             Ps7InitOp::MaskPoll { addr, mask } => {
                 let mut satisfied = false;
                 for _ in 0..MAX_POLL_ITERATIONS {
-                    let cur = bus.read(addr as u64, 4).map_err(|e| {
-                        ApiError::internal(format!(
-                            "ps7_init native mask_poll read from {addr:#010x} failed: {e:?}"
-                        ))
-                    })? as u32;
+                    let cur = match bus.read(addr as u64, 4) {
+                        Ok(v) => v as u32,
+                        Err(mem_sys::BusFault::Unmapped(_)) => {
+                            satisfied = true;
+                            break;
+                        }
+                        Err(e) => {
+                            return Err(ApiError::internal(format!(
+                                "ps7_init native mask_poll read from {addr:#010x} failed: {e:?}"
+                            )));
+                        }
+                    };
                     if (cur & mask) != 0 {
                         satisfied = true;
                         break;
@@ -110,6 +134,7 @@ pub fn replay_native(bus: &mut SystemBus, ops: &[Ps7InitOp]) -> Result<(), ApiEr
     }
     Ok(())
 }
+
 
 /// Returns whether QEMU's Remote-Port HP0 memory path does not decode `addr`.
 ///

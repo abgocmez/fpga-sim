@@ -291,6 +291,7 @@ mod tests {
             gp: 0,
             base: 0x43C0_0000,
             irqs: Vec::new(),
+            slaves: Vec::new(),
         };
         let target = crate::pl_attach::rtl_native_target(&spec).expect("elaborates");
         let handle = new_handle(target);
@@ -314,4 +315,47 @@ mod tests {
         lock(&handle).at_cycle(10);
         assert_eq!(lock(&handle).now_ns, 1500);
     }
+
+    #[test]
+    fn multiple_rtl_modules_on_the_rtl_engine_answer_on_the_ps_bus() {
+        let src = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/rtl/math/my_math_ip.v");
+        let spec = crate::RtlNativeSpec {
+            top: "cosim_top".into(),
+            sources: vec![src],
+            defines: Vec::new(),
+            gp: 0,
+            base: 0x43C0_0000,
+            irqs: Vec::new(),
+            slaves: vec![
+                crate::RtlNativeSlaveSpec {
+                    instance: "u_math0".into(),
+                    top: "my_math_ip".into(),
+                    gp: 0,
+                    base: 0x43C0_0000,
+                    irqs: Vec::new(),
+                },
+                crate::RtlNativeSlaveSpec {
+                    instance: "u_math1".into(),
+                    top: "my_math_ip".into(),
+                    gp: 0,
+                    base: 0x43C1_0000,
+                    irqs: Vec::new(),
+                },
+            ],
+        };
+        let target = crate::pl_attach::rtl_native_target(&spec).expect("elaborates");
+        let handle = new_handle(target);
+        let mut bus = SystemBus::new(0x2000_0000).unwrap();
+        attach(&mut bus, &handle).unwrap();
+        // Math0: write 21 -> expect 42
+        bus.write(0x43C0_0000, 4, 21).unwrap();
+        assert_eq!(bus.read(0x43C0_0004, 4).unwrap(), 42);
+        // Math1: write 50 -> expect 100
+        bus.write(0x43C1_0000, 4, 50).unwrap();
+        assert_eq!(bus.read(0x43C1_0004, 4).unwrap(), 100);
+        let ev = lock(&handle).events_since_last_call();
+        assert_eq!(ev.len(), 4);
+    }
 }
+

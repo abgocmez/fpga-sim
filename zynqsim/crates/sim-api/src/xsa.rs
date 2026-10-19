@@ -460,6 +460,17 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
     let mut tb_module_instance: Option<String> = None;
     let mut mapped_user: Vec<String> = Vec::new();
     let mut module_notes: Vec<String> = Vec::new();
+    struct UserSlave {
+        instance: String,
+        module: tbgen::ModuleInfo,
+        axi: tbgen::AxiLite,
+        base: u64,
+        size: u64,
+        irq_bits: Vec<Option<u32>>,
+        master: Option<(tbgen::AxiMaster, u32)>,
+        clock_hz: Option<u64>,
+    }
+    let mut user_slaves: Vec<UserSlave> = Vec::new();
     // Vendor IP the vendor-ip library models: instance -> model, parameters, board bindings.
     let mut native: BTreeMap<String, String> = BTreeMap::new();
     let mut native_params: BTreeMap<String, BTreeMap<String, NativeParam>> = BTreeMap::new();
@@ -847,18 +858,21 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
                         continue;
                     }
                 };
-                if tbgen::detect_axi_master(&module).is_err() {
-                    unmodelled.push(mk(
-                        format!(
-                            "module `{}` has an AXI master the bridge cannot drive \
-                             (only 32-bit AXI4 masters are bridged); write a testbench by hand",
-                            ip.modtype
-                        ),
-                        None,
-                    ));
-                    continue;
-                }
-                if tb.is_none() && export_own_tb_top.is_some() && tb_module_instance.is_none() {
+                let mst_opt = match tbgen::detect_axi_master(&module) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        unmodelled.push(mk(
+                            format!(
+                                "module `{}` has an AXI master the bridge cannot drive \
+                                 (only 32-bit AXI4 masters are bridged): {e}; write a testbench by hand",
+                                ip.modtype
+                            ),
+                            None,
+                        ));
+                        continue;
+                    }
+                };
+                if export_own_tb_top.is_some() && tb_module_instance.is_none() {
                     // The export brings its own testbench: it drives this module; nothing to
                     // generate (its interrupt wiring is the testbench's business).
                     module_notes.push(format!(
@@ -873,16 +887,27 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
                     mapped_user.push(ip.instance.clone());
                     continue;
                 }
-                if let Some((first, _)) = &tb {
+                let Some(a) = base else {
                     unmodelled.push(mk(
                         format!(
-                            "a second user RTL slave: the generated testbench drives one \
-                             module (`{first}`); write a testbench that instantiates both"
+                            "module `{}` has no address window on M_AXI_GP0/M_AXI_GP1",
+                            ip.modtype
                         ),
                         None,
                     ));
                     continue;
-                }
+                };
+                let master = if let Some(mst) = mst_opt {
+                    let dev = ip
+                        .master_windows
+                        .iter()
+                        .find(|w| w.instance == ps.instance)
+                        .and_then(|w| tbgen::master_interface_device(&w.interface))
+                        .unwrap_or(2);
+                    Some((mst, dev))
+                } else {
+                    None
+                };
                 // IRQ_F2P bit of each interrupt output the generator forwards.
                 let outs = tbgen::detect_irqs(&module, &axi);
                 let bits: Vec<Option<u32>> = outs
@@ -913,34 +938,78 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
                         ));
                     }
                 }
-                let mut text = tbgen::generate_testbench_with_irqs(&module, &axi, Some(&bits));
-                // The testbench clock is the design's clock, not a fixed 100 MHz.
-                if let Some(hz) = design
+                let hz = design
                     .clocks_of(&ip.instance)
                     .find(|c| c.port == axi.clock)
-                    .and_then(|c| c.hz)
-                {
-                    if hz != 100_000_000 {
-                        let half_ns = 5.0e8 / hz as f64;
-                        let half = format!("{half_ns:.3}")
-                            .trim_end_matches('0')
-                            .trim_end_matches('.')
-                            .to_string();
-                        text = text.replace(
-                            "always #5 aclk = ~aclk;   // 100 MHz = FCLK_CLK0",
-                            &format!(
-                                "always #{half} aclk = ~aclk;   // {} MHz, from the block design",
-                                hz as f64 / 1e6
-                            ),
-                        );
-                    }
-                }
-                tb = Some((module.name.clone(), text));
-                tb_module_instance = Some(ip.instance.clone());
+                    .and_then(|c| c.hz);
+                user_slaves.push(UserSlave {
+                    instance: ip.instance.clone(),
+                    module,
+                    axi,
+                    base: a.base,
+                    size: a.size(),
+                    irq_bits: bits,
+                    master,
+                    clock_hz: hz,
+                });
                 mapped_user.push(ip.instance.clone());
             }
         }
     }
+
+    if !user_slaves.is_empty() {
+        if user_slaves.len() == 1 {
+            let s0 = &user_slaves[0];
+            let dev = s0.master.as_ref().map(|(_, d)| *d).unwrap_or(2);
+            let mut text = tbgen::generate_testbench_with_irqs(
+                &s0.module,
+                &s0.axi,
+                Some(&s0.irq_bits),
+            );
+            if dev != 2 {
+                text = text.replace(
+                    "localparam int HP0_DEV = 2;",
+                    &format!("localparam int HP0_DEV = {dev};"),
+                );
+            }
+            if let Some(hz) = s0.clock_hz {
+                if hz != 100_000_000 {
+                    let half_ns = 5.0e8 / hz as f64;
+                    let half = format!("{half_ns:.3}")
+                        .trim_end_matches('0')
+                        .trim_end_matches('.')
+                        .to_string();
+                    text = text.replace(
+                        "always #5 aclk = ~aclk;   // 100 MHz = FCLK_CLK0",
+                        &format!(
+                            "always #{half} aclk = ~aclk;   // {} MHz, from the block design",
+                            hz as f64 / 1e6
+                        ),
+                    );
+                }
+            }
+            tb = Some((s0.module.name.clone(), text));
+            tb_module_instance = Some(s0.instance.clone());
+        } else {
+            let descs: Vec<tbgen::SlaveDesc<'_>> = user_slaves
+                .iter()
+                .map(|s| tbgen::SlaveDesc {
+                    instance: &s.instance,
+                    module: &s.module,
+                    axi: &s.axi,
+                    base: s.base,
+                    size: s.size,
+                    irq_bits: &s.irq_bits,
+                    master: s.master.as_ref().map(|(m, d)| (m, *d)),
+                })
+                .collect();
+            let hz = user_slaves.iter().find_map(|s| s.clock_hz);
+            let text = tbgen::generate_multi_slave_testbench(&descs, hz);
+            tb = Some(("cosim_top".to_string(), text));
+            tb_module_instance = None;
+        }
+    }
+
     warnings.extend(module_notes);
 
     // ---- Project ----------------------------------------------------------------------------
@@ -1379,7 +1448,11 @@ fn render_report(
         } else if mapped_user.contains(&ip.instance) {
             format!(
                 "RTL in XSim (module `{}`)",
-                tb_module.unwrap_or(&ip.modtype)
+                if mapped_user.len() > 1 {
+                    &ip.modtype
+                } else {
+                    tb_module.unwrap_or(&ip.modtype)
+                }
             )
         } else if matches!(ip.class, IpClass::Infrastructure { .. }) {
             passive_disposition(&ip.modtype).to_string()
@@ -1443,14 +1516,23 @@ fn render_report(
     );
     match (&project.rtl, tb_module) {
         (Some(rtl), Some(m)) => {
-            let _ = writeln!(
-                r,
-                "* `[rtl]`: top `cosim_top` (generated, `tb/cosim_top.sv`) instantiating `{m}` \
-                 for block-design instance `{}`; the testbench answers every address of the \
-                 PS's M_AXI_GP0 window with that module, so the address map below is \
-                 informational for the RTL path.",
-                tb_instance.unwrap_or("?")
-            );
+            if mapped_user.len() > 1 {
+                let _ = writeln!(
+                    r,
+                    "* `[rtl]`: top `cosim_top` (generated, `tb/cosim_top.sv`) instantiating {} user RTL instances ({}); the testbench decodes addresses and routes M_AXI_GP0 accesses to each instance's window.",
+                    mapped_user.len(),
+                    mapped_user.join(", ")
+                );
+            } else {
+                let _ = writeln!(
+                    r,
+                    "* `[rtl]`: top `cosim_top` (generated, `tb/cosim_top.sv`) instantiating `{m}` \
+                     for block-design instance `{}`; the testbench answers every address of the \
+                     PS's M_AXI_GP0 window with that module, so the address map below is \
+                     informational for the RTL path.",
+                    tb_instance.unwrap_or("?")
+                );
+            }
             for f in &rtl.files {
                 let _ = writeln!(r, "  * `{f}`");
             }

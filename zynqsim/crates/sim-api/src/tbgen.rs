@@ -832,65 +832,112 @@ fn protocol_checkers(m: &ModuleInfo, axi: &AxiLite, master: Option<&AxiMaster>) 
     s
 }
 
+/// Remote-port device number for an AXI master interface name (e.g. `S_AXI_HP0` -> 2, `S_AXI_ACP` -> 6).
+pub fn master_interface_device(iface: &str) -> Option<u32> {
+    match iface {
+        "S_AXI_GP0" => Some(0),
+        "S_AXI_GP1" => Some(1),
+        "S_AXI_HP0" => Some(2),
+        "S_AXI_HP1" => Some(3),
+        "S_AXI_HP2" => Some(4),
+        "S_AXI_HP3" => Some(5),
+        "S_AXI_ACP" => Some(6),
+        _ => None,
+    }
+}
+
 /// The memory bridge: AXI4 bursts of the IP's master become remote-port
-/// accesses to the PS (S_AXI_HP0), with a modelled DDR latency.
-fn master_bridge(mst: &AxiMaster) -> String {
-    let g = |r: &str| mst.signals[r].clone();
+/// accesses to the PS (e.g. S_AXI_HP0 or S_AXI_ACP), with a modelled DDR latency.
+pub fn master_bridge_with_dev(mst: &AxiMaster, dev: u32, pfx: &str) -> String {
+    let g = |r: &str| {
+        let sig = mst.signals[r].as_str();
+        if pfx.is_empty() {
+            sig.to_string()
+        } else {
+            format!("{pfx}_{sig}")
+        }
+    };
+    let dev_name = match dev {
+        0 => "S_AXI_GP0",
+        1 => "S_AXI_GP1",
+        2 => "S_AXI_HP0",
+        3 => "S_AXI_HP1",
+        4 => "S_AXI_HP2",
+        5 => "S_AXI_HP3",
+        6 => "S_AXI_ACP",
+        _ => "PS memory",
+    };
+    let var_pfx = if pfx.is_empty() {
+        String::new()
+    } else {
+        format!("{pfx}_")
+    };
+    let dev_const = if pfx.is_empty() {
+        "HP0_DEV".to_string()
+    } else {
+        format!("{pfx}_DEV")
+    };
+    let lat_const = if pfx.is_empty() {
+        "DDR_LAT".to_string()
+    } else {
+        format!("{pfx}_DDR_LAT")
+    };
+
     format!(
         "
-    // ---- {prefix}* (AXI4 master) -> PS memory through S_AXI_HP0 ----
-    localparam int HP0_DEV = 2;     // remote-port device of S_AXI_HP0
-    localparam int DDR_LAT = 16;    // modelled DDR latency seen by the IP, in clocks
+    // ---- {prefix}* (AXI4 master) -> PS memory through {dev_name} ----
+    localparam int {dev_const} = {dev};     // remote-port device of {dev_name}
+    localparam int {lat_const} = 16;    // modelled DDR latency seen by the IP, in clocks
 
-    reg [31:0] ra; reg [7:0] rl; integer rslot, rst, ri;
+    reg [31:0] {var_pfx}ra; reg [7:0] {var_pfx}rl; integer {var_pfx}rslot, {var_pfx}rst, {var_pfx}ri;
     initial begin
         wait (connected);
         forever begin
             @(posedge aclk);
             if ({arvalid} && !{arready}) begin
-                ra = {araddr}; rl = {arlen};
+                {var_pfx}ra = {araddr}; {var_pfx}rl = {arlen};
                 {arready} <= 1'b1;
                 @(posedge aclk);
                 {arready} <= 1'b0;
-                rslot = rp_mem_start($time, HP0_DEV, 0, ra, (rl + 1) * 4);
-                rst = rp_mem_wait(rslot);
-                repeat (DDR_LAT) @(posedge aclk);
-                for (ri = 0; ri <= rl; ri = ri + 1) begin
-                    {rdata}  <= (rst == 1) ? rp_mem_get(rslot, ri) : 32'hBAD0_BAD0;
-                    {rresp}  <= (rst == 1) ? 2'b00 : 2'b10;
+                {var_pfx}rslot = rp_mem_start($time, {dev_const}, 0, {var_pfx}ra, ({var_pfx}rl + 1) * 4);
+                {var_pfx}rst = rp_mem_wait({var_pfx}rslot);
+                repeat ({lat_const}) @(posedge aclk);
+                for ({var_pfx}ri = 0; {var_pfx}ri <= {var_pfx}rl; {var_pfx}ri = {var_pfx}ri + 1) begin
+                    {rdata}  <= ({var_pfx}rst == 1) ? rp_mem_get({var_pfx}rslot, {var_pfx}ri) : 32'hBAD0_BAD0;
+                    {rresp}  <= ({var_pfx}rst == 1) ? 2'b00 : 2'b10;
                     {rvalid} <= 1'b1;
-                    {rlast}  <= (ri == rl);
+                    {rlast}  <= ({var_pfx}ri == {var_pfx}rl);
                     @(posedge aclk);
                     while (!{rready}) @(posedge aclk);
                     {rvalid} <= 1'b0; {rlast} <= 1'b0;
                 end
-                rp_mem_free(rslot);
+                rp_mem_free({var_pfx}rslot);
             end
         end
     end
 
-    reg [31:0] wa; reg [7:0] wl; integer wslot, wst, wi;
+    reg [31:0] {var_pfx}wa; reg [7:0] {var_pfx}wl; integer {var_pfx}wslot, {var_pfx}wst, {var_pfx}wi;
     initial begin
         wait (connected);
         forever begin
             @(posedge aclk);
             if ({awvalid} && !{awready}) begin
-                wa = {awaddr}; wl = {awlen};
+                {var_pfx}wa = {awaddr}; {var_pfx}wl = {awlen};
                 {awready} <= 1'b1;
                 @(posedge aclk);
                 {awready} <= 1'b0;
-                for (wi = 0; wi <= wl; wi = wi + 1) begin
+                for ({var_pfx}wi = 0; {var_pfx}wi <= {var_pfx}wl; {var_pfx}wi = {var_pfx}wi + 1) begin
                     {wready} <= 1'b1;
                     @(posedge aclk);
                     while (!{wvalid}) @(posedge aclk);
-                    rp_mem_put(wi, {wdata});
+                    rp_mem_put({var_pfx}wi, {wdata});
                     {wready} <= 1'b0;
                 end
-                wslot = rp_mem_start($time, HP0_DEV, 1, wa, (wl + 1) * 4);
-                wst = rp_mem_wait(wslot);
-                repeat (DDR_LAT) @(posedge aclk);
-                rp_mem_free(wslot);
-                {bvalid} <= 1'b1; {bresp} <= (wst == 1) ? 2'b00 : 2'b10;
+                {var_pfx}wslot = rp_mem_start($time, {dev_const}, 1, {var_pfx}wa, ({var_pfx}wl + 1) * 4);
+                {var_pfx}wst = rp_mem_wait({var_pfx}wslot);
+                repeat ({lat_const}) @(posedge aclk);
+                rp_mem_free({var_pfx}wslot);
+                {bvalid} <= 1'b1; {bresp} <= ({var_pfx}wst == 1) ? 2'b00 : 2'b10;
                 @(posedge aclk);
                 while (!{bready}) @(posedge aclk);
                 {bvalid} <= 1'b0;
@@ -899,6 +946,11 @@ fn master_bridge(mst: &AxiMaster) -> String {
     end
 ",
         prefix = mst.prefix,
+        dev_const = dev_const,
+        lat_const = lat_const,
+        dev = dev,
+        dev_name = dev_name,
+        var_pfx = var_pfx,
         arvalid = g("arvalid"),
         arready = g("arready"),
         araddr = g("araddr"),
@@ -919,6 +971,12 @@ fn master_bridge(mst: &AxiMaster) -> String {
         bresp = g("bresp"),
         bready = g("bready"),
     )
+}
+
+/// The memory bridge: AXI4 bursts of the IP's master become remote-port
+/// accesses to the PS (S_AXI_HP0), with a modelled DDR latency.
+fn master_bridge(mst: &AxiMaster) -> String {
+    master_bridge_with_dev(mst, 2, "")
 }
 
 /// A port of the IP that is a Pmod port or the RGB LEDs.
@@ -1391,7 +1449,467 @@ endmodule
     s
 }
 
-/// Windows `canonicalize` returns a verbatim path (backslash, backslash, question mark, backslash, then the drive); tools and TOML files want the plain drive path.
+/// One slave descriptor for multi-slave testbench generation.
+#[derive(Clone, Debug)]
+pub struct SlaveDesc<'a> {
+    /// Instance name in the block design / testbench, e.g. `u_math0`.
+    pub instance: &'a str,
+    /// Parsed module info.
+    pub module: &'a ModuleInfo,
+    /// AXI4-Lite slave interface.
+    pub axi: &'a AxiLite,
+    /// Base address of the slave.
+    pub base: u64,
+    /// Size of the address window in bytes.
+    pub size: u64,
+    /// IRQ bits for the interrupt outputs found by `detect_irqs`.
+    pub irq_bits: &'a [Option<u32>],
+    /// Master interface if the module acts as a bus master, and its remote-port device number (e.g. 2 for S_AXI_HP0).
+    pub master: Option<(&'a AxiMaster, u32)>,
+}
+
+/// Generates a testbench instantiating multiple AXI4-Lite slaves, an address decoder
+/// routing `M_AXI_GP0` accesses to each slave by address range, and optional AXI4 master
+/// bridges connecting to PS memory.
+pub fn generate_multi_slave_testbench(
+    slaves: &[SlaveDesc<'_>],
+    clock_hz: Option<u64>,
+) -> String {
+    let mut s = String::new();
+    let _ = writeln!(
+        s,
+        "`timescale 1ns / 1ps\n\
+         // Generated by `zynqsim init --xsa`: stands in for the PS7 and drives {} user RTL slave(s)\n\
+         // from the remote-port link (lock-step).\n\
+         // Edit freely: it is a plain testbench. A write of 0xC051D0DE to offset 0x3C ends the run.\n\
+         module cosim_top;",
+        slaves.len()
+    );
+    s.push_str(RP_IMPORTS);
+    let _ = writeln!(s);
+
+    let (half_str, mhz_comment) = match clock_hz {
+        Some(hz) if hz != 100_000_000 => {
+            let half_ns = 5.0e8 / hz as f64;
+            let half = format!("{half_ns:.3}")
+                .trim_end_matches('0')
+                .trim_end_matches('.')
+                .to_string();
+            (half, format!("// {} MHz, from the block design", hz as f64 / 1e6))
+        }
+        _ => ("5".to_string(), "// 100 MHz = FCLK_CLK0".to_string()),
+    };
+
+    let _ = writeln!(
+        s,
+        "    reg aclk = 1'b0;\n    reg aresetn = 1'b0;\n    always #{half_str} aclk = ~aclk;   {mhz_comment}\n"
+    );
+
+    let mut pin_blocks = String::new();
+    let mut xchg_init = String::new();
+    let mut irq_blocks = String::new();
+    let mut irq_init = String::new();
+    let mut master_blocks = String::new();
+    let mut checker_blocks = String::new();
+    let mut write_tasks = String::new();
+    let mut read_tasks = String::new();
+    let mut write_decoder = String::new();
+    let mut read_decoder = String::new();
+
+    let mut chk_id = 0usize;
+
+    for (idx, slv) in slaves.iter().enumerate() {
+        let pfx = slv.instance;
+        let pin_groups = detect_pin_groups(slv.module);
+        let mut role_of: HashMap<&str, &str> =
+            slv.axi.signals.iter().map(|(r, n)| (n.as_str(), *r)).collect();
+        if let Some((mst, _)) = &slv.master {
+            for (r, n) in &mst.signals {
+                role_of.insert(n.as_str(), *r);
+            }
+        }
+
+        // Port signal declarations
+        let _ = writeln!(s, "    // ---- Slave {idx}: {} ({}) ----", pfx, slv.module.name);
+        for p in &slv.module.ports {
+            let n = &p.name;
+            if *n == slv.axi.clock || slv.axi.reset.as_ref().is_some_and(|(r, _)| r == n) {
+                continue;
+            }
+            let w = decl(p.width);
+            let net = format!("{pfx}_{n}");
+            match (p.dir, role_of.get(n.as_str())) {
+                (Dir::In, Some(_)) => {
+                    let _ = writeln!(s, "    reg  {w}{net} = 0;");
+                }
+                (Dir::In, None) if pin_groups.iter().any(|g| &g.name == n && g.paired) => {
+                    let _ = writeln!(
+                        s,
+                        "    reg  {w}{net} = '1;     // driven by the board's devices (released = 1)"
+                    );
+                }
+                (Dir::In, None) if pin_groups.iter().any(|g| &g.name == n) => {
+                    let _ = writeln!(
+                        s,
+                        "    reg  {w}{net} = 0;      // driven by the host (Pmod/RGB input)"
+                    );
+                }
+                (Dir::In, None) => {
+                    let l = n.to_ascii_lowercase();
+                    if l.contains("clk") || l.contains("clock") {
+                        let _ = writeln!(s, "    wire {w}{net} = aclk;   // other clock: tied to FCLK0");
+                    } else {
+                        let _ = writeln!(
+                            s,
+                            "    wire {w}{net} = 0;      // not part of AXI4-Lite: tied low"
+                        );
+                    }
+                }
+                (Dir::Out, _) | (Dir::InOut, _) => {
+                    let _ = writeln!(s, "    wire {w}{net};");
+                }
+            }
+        }
+        let _ = writeln!(s);
+
+        // Instance
+        let _ = writeln!(s, "    {} {} (", slv.module.name, pfx);
+        let conns: Vec<String> = slv
+            .module
+            .ports
+            .iter()
+            .map(|p| {
+                let net = if p.name == slv.axi.clock {
+                    "aclk".to_string()
+                } else if let Some((r, low)) = &slv.axi.reset {
+                    if &p.name == r {
+                        if *low { "aresetn" } else { "~aresetn" }.to_string()
+                    } else {
+                        format!("{pfx}_{}", p.name)
+                    }
+                } else {
+                    format!("{pfx}_{}", p.name)
+                };
+                format!("        .{}({net})", p.name)
+            })
+            .collect();
+        let _ = writeln!(s, "{}\n    );\n", conns.join(",\n"));
+
+        // Pin groups
+        for g in &pin_groups {
+            let n = format!("{pfx}_{}", g.name);
+            if g.output {
+                if let Some(i) = pin_groups.iter().find(|i| !i.output && i.group == g.group) {
+                    let inp = format!("{pfx}_{}", i.name);
+                    let _ = write!(
+                        pin_blocks,
+                        "\n    // {n} <-> {inp}: pin group {gr}, answered by the board at once\n\
+                         \x20   always @({n}) if (connected) {inp} <= zs_pin_xchg({gr}, {n}, $time);\n",
+                        gr = g.group
+                    );
+                    let _ = writeln!(
+                        xchg_init,
+                        "        {} <= zs_pin_xchg({}, {n}, $time);",
+                        inp, g.group
+                    );
+                } else {
+                    let _ = write!(
+                        pin_blocks,
+                        "\n    // {n} -> pin group {gr}\n\
+                         \x20   always @({n}) if (connected) zs_pin_out({gr}, {n}, $time);\n",
+                        gr = g.group
+                    );
+                }
+            } else if !g.paired {
+                let _ = write!(
+                    pin_blocks,
+                    "\n    // {n} <- pin group {gr}\n\
+                     \x20   always #1000 {n} <= zs_pin_in({gr});\n",
+                    gr = g.group
+                );
+            }
+        }
+
+        // Interrupts
+        let irqs = detect_irqs(slv.module, slv.axi);
+        for (k, n) in irqs.iter().enumerate() {
+            let bit = slv.irq_bits.get(k).copied().flatten();
+            let Some(i) = bit else { continue };
+            let sig_name = format!("{pfx}_{n}");
+            let _ = write!(
+                irq_blocks,
+                "\n    // {pfx}.{n} -> IRQ_F2P[{i}]\n\
+                 \x20   reg {pfx}_irq{i}_q = 1'b0;\n\
+                 \x20   always @(posedge aclk) begin\n\
+                 \x20       if (connected && ({sig_name} !== {pfx}_irq{i}_q)) begin\n\
+                 \x20           {pfx}_irq{i}_q <= {sig_name};\n\
+                 \x20           rp_irq($time, {i}, {sig_name} ? 1 : 0);\n\
+                 \x20       end\n\
+                 \x20   end\n"
+            );
+            let _ = writeln!(irq_init, "        rp_irq($time, {i}, 0);");
+        }
+
+        // Tasks
+        let g_sig = |r: &str| format!("{pfx}_{}", slv.axi.signals[r]);
+        let aw_hi = slv.axi.addr_width - 1;
+        let _ = write!(
+            write_tasks,
+            "    task lite_write_{idx}(input [31:0] a, input [31:0] d, input [3:0] st, output ok);\n\
+             \x20       begin\n\
+             \x20           @(posedge aclk);\n\
+             \x20           {awaddr} <= a[{aw_hi}:0]; {wdata} <= d; {wstrb} <= st;\n\
+             \x20           {awvalid} <= 1'b1; {wvalid} <= 1'b1;\n\
+             \x20           @(posedge aclk);\n\
+             \x20           while (!({awready} && {wready})) @(posedge aclk);\n\
+             \x20           {awvalid} <= 1'b0; {wvalid} <= 1'b0; {bready} <= 1'b1;\n\
+             \x20           @(posedge aclk);\n\
+             \x20           while (!{bvalid}) @(posedge aclk);\n\
+             \x20           ok = ({bresp} == 2'b00);\n\
+             \x20           {bready} <= 1'b0;\n\
+             \x20       end\n\
+             \x20   endtask\n\n",
+            awaddr = g_sig("awaddr"),
+            wdata = g_sig("wdata"),
+            wstrb = g_sig("wstrb"),
+            awvalid = g_sig("awvalid"),
+            wvalid = g_sig("wvalid"),
+            awready = g_sig("awready"),
+            wready = g_sig("wready"),
+            bready = g_sig("bready"),
+            bvalid = g_sig("bvalid"),
+            bresp = g_sig("bresp"),
+            aw_hi = aw_hi
+        );
+
+        let _ = write!(
+            read_tasks,
+            "    task lite_read_{idx}(input [31:0] a, output [31:0] d, output ok);\n\
+             \x20       begin\n\
+             \x20           @(posedge aclk);\n\
+             \x20           {araddr} <= a[{aw_hi}:0]; {arvalid} <= 1'b1;\n\
+             \x20           @(posedge aclk);\n\
+             \x20           while (!{arready}) @(posedge aclk);\n\
+             \x20           {arvalid} <= 1'b0; {rready} <= 1'b1;\n\
+             \x20           @(posedge aclk);\n\
+             \x20           while (!{rvalid}) @(posedge aclk);\n\
+             \x20           d = {rdata}; ok = ({rresp} == 2'b00);\n\
+             \x20           {rready} <= 1'b0;\n\
+             \x20       end\n\
+             \x20   endtask\n\n",
+            araddr = g_sig("araddr"),
+            arvalid = g_sig("arvalid"),
+            arready = g_sig("arready"),
+            rready = g_sig("rready"),
+            rvalid = g_sig("rvalid"),
+            rdata = g_sig("rdata"),
+            rresp = g_sig("rresp"),
+            aw_hi = aw_hi
+        );
+
+        // Master bridge
+        if let Some((mst, dev)) = &slv.master {
+            master_blocks.push_str(&master_bridge_with_dev(mst, *dev, pfx));
+        }
+
+        // Protocol checkers
+        let dw = slv
+            .axi
+            .signals
+            .get("wdata")
+            .and_then(|n| port_width(slv.module, n))
+            .unwrap_or(32);
+        let _ = write!(
+            checker_blocks,
+            "    zs_axi_checker #(.ID({chk_id}), .FULL(0), .AW({aw}), .DW({dw})) zs_chk_lite_{idx} (\n\
+             \x20       .aclk(aclk), .aresetn(aresetn),\n\
+             \x20       .awvalid({awvalid}), .awready({awready}), .awaddr({awaddr}),\n\
+             \x20       .awlen(8'd0), .awsize(3'd2), .awburst(2'd1),\n\
+             \x20       .wvalid({wvalid}), .wready({wready}), .wdata({wdata}), .wstrb({wstrb}), .wlast(1'b1),\n\
+             \x20       .bvalid({bvalid}), .bready({bready}), .bresp({bresp}),\n\
+             \x20       .arvalid({arvalid}), .arready({arready}), .araddr({araddr}),\n\
+             \x20       .arlen(8'd0), .arsize(3'd2), .arburst(2'd1),\n\
+             \x20       .rvalid({rvalid}), .rready({rready}), .rdata({rdata}), .rresp({rresp}), .rlast(1'b1)\n\
+             \x20   );\n\n",
+            chk_id = chk_id,
+            aw = slv.axi.addr_width,
+            dw = dw,
+            awvalid = g_sig("awvalid"),
+            awready = g_sig("awready"),
+            awaddr = g_sig("awaddr"),
+            wvalid = g_sig("wvalid"),
+            wready = g_sig("wready"),
+            wdata = g_sig("wdata"),
+            wstrb = g_sig("wstrb"),
+            bvalid = g_sig("bvalid"),
+            bready = g_sig("bready"),
+            bresp = g_sig("bresp"),
+            arvalid = g_sig("arvalid"),
+            arready = g_sig("arready"),
+            araddr = g_sig("araddr"),
+            rvalid = g_sig("rvalid"),
+            rready = g_sig("rready"),
+            rdata = g_sig("rdata"),
+            rresp = g_sig("rresp"),
+        );
+        chk_id += 1;
+
+        if let Some((mst, _)) = &slv.master {
+            let m_sig = |r: &str| format!("{pfx}_{}", mst.signals[r]);
+            let maw = port_width(slv.module, &mst.signals["awaddr"]).unwrap_or(32);
+            let mdw = port_width(slv.module, &mst.signals["wdata"]).unwrap_or(32);
+            let _ = write!(
+                checker_blocks,
+                "    zs_axi_checker #(.ID({chk_id}), .FULL(1), .AW({maw}), .DW({mdw})) zs_chk_mst_{idx} (\n\
+                 \x20       .aclk(aclk), .aresetn(aresetn),\n\
+                 \x20       .awvalid({awvalid}), .awready({awready}), .awaddr({awaddr}),\n\
+                 \x20       .awlen({awlen}), .awsize({awsize}), .awburst({awburst}),\n\
+                 \x20       .wvalid({wvalid}), .wready({wready}), .wdata({wdata}), .wstrb({wstrb}), .wlast({wlast}),\n\
+                 \x20       .bvalid({bvalid}), .bready({bready}), .bresp({bresp}),\n\
+                 \x20       .arvalid({arvalid}), .arready({arready}), .araddr({araddr}),\n\
+                 \x20       .arlen({arlen}), .arsize({arsize}), .arburst({arburst}),\n\
+                 \x20       .rvalid({rvalid}), .rready({rready}), .rdata({rdata}), .rresp({rresp}), .rlast({rlast})\n\
+                 \x20   );\n\n",
+                chk_id = chk_id,
+                maw = maw,
+                mdw = mdw,
+                awvalid = m_sig("awvalid"),
+                awready = m_sig("awready"),
+                awaddr = m_sig("awaddr"),
+                awlen = m_sig("awlen"),
+                awsize = m_sig("awsize"),
+                awburst = m_sig("awburst"),
+                wvalid = m_sig("wvalid"),
+                wready = m_sig("wready"),
+                wdata = m_sig("wdata"),
+                wstrb = m_sig("wstrb"),
+                wlast = m_sig("wlast"),
+                bvalid = m_sig("bvalid"),
+                bready = m_sig("bready"),
+                bresp = m_sig("bresp"),
+                arvalid = m_sig("arvalid"),
+                arready = m_sig("arready"),
+                araddr = m_sig("araddr"),
+                arlen = m_sig("arlen"),
+                arsize = m_sig("arsize"),
+                arburst = m_sig("arburst"),
+                rvalid = m_sig("rvalid"),
+                rready = m_sig("rready"),
+                rdata = m_sig("rdata"),
+                rresp = m_sig("rresp"),
+                rlast = m_sig("rlast"),
+            );
+            chk_id += 1;
+        }
+
+        // Decoders
+        let base = slv.base;
+        let high = slv.base + slv.size.max(1) - 1;
+        let prefix_cond = if idx == 0 { "if" } else { "else if" };
+        let _ = write!(
+            write_decoder,
+            "                    {prefix_cond} (u_addr >= 32'h{base:08X} && u_addr <= 32'h{high:08X}) begin\n\
+             \x20                       lite_write_{idx}(u_addr - 32'h{base:08X}, wd_i, ws_i[3:0], wr_ok);\n\
+             \x20                       rp_done_t(0, wr_ok, $time);\n\
+             \x20                   end "
+        );
+        let _ = write!(
+            read_decoder,
+            "                    {prefix_cond} (u_addr >= 32'h{base:08X} && u_addr <= 32'h{high:08X}) begin\n\
+             \x20                       lite_read_{idx}(u_addr - 32'h{base:08X}, rd_val, rd_ok);\n\
+             \x20                       rp_done_t(rd_val, rd_ok, $time);\n\
+             \x20                   end "
+        );
+    }
+
+    let _ = write!(
+        write_decoder,
+        "else begin\n\
+         \x20                       $display(\"cosim_top: unmapped write at %08x\", u_addr);\n\
+         \x20                       rp_done_t(0, 0, $time);\n\
+         \x20                   end"
+    );
+    let _ = write!(
+        read_decoder,
+        "else begin\n\
+         \x20                       $display(\"cosim_top: unmapped read at %08x\", u_addr);\n\
+         \x20                       rp_done_t(32'hDEC0_DE00, 0, $time);\n\
+         \x20                   end"
+    );
+
+    let _ = write!(
+        s,
+        "{pin_imports}    reg        connected = 1'b0;\n\
+         \x20   reg        wr_ok;\n\
+         \x20   reg        rd_ok;\n\
+         \x20   reg [31:0] rd_val;\n\
+         {irq_blocks}{pin_blocks}\n\
+         {write_tasks}\
+         {read_tasks}\
+         {master_blocks}\
+         `ifndef ZS_NO_PROTOCOL_CHECKERS\n\
+         \x20   // AXI protocol checkers (ADR-025): they observe the bus and drive nothing.\n\
+         {checker_blocks}\
+         `endif\n\n\
+         \x20   integer a_i, wd_i, ws_i, iw_i, st;\n\
+         \x20   longint tgt, rts;\n\
+         \x20   wire [31:0] u_addr = a_i;\n\n\
+         \x20   initial begin\n\
+         \x20       repeat (20) @(posedge aclk);\n\
+         \x20       aresetn = 1'b1;\n\
+         \x20       repeat (5) @(posedge aclk);\n\
+         \x20       rp_lockstep(1);\n\
+         \x20       if (rp_open(\"\") != 0) begin\n\
+         \x20           $display(\"cosim_top: rp_open failed (is RP_SOCKET set and QEMU running?)\");\n\
+         \x20           $finish;\n\
+         \x20       end\n\
+         \x20       $display(\"cosim_top: remote-port connected\");\n\
+         \x20       connected = 1'b1;\n\
+         {xchg_init}{irq_init}\
+         \x20       forever begin\n\
+         \x20           {rp_next_call}\
+         \x20           if (st == 0) begin\n\
+         \x20               $display(\"cosim_top: peer closed, finishing at %0t\", $time);\n\
+         \x20               rp_close();\n\
+         \x20               $finish;\n\
+         \x20           end else if (st == 3) begin\n\
+         \x20               tgt = rp_sync_target();\n\
+         \x20               if (tgt > $time) #(tgt - $time);\n\
+         \x20               rp_sync_ack($time);\n\
+         \x20           end else if (st == 2) begin\n\
+         \x20               repeat (20) @(posedge aclk);\n\
+         \x20           end else begin\n\
+         \x20               rts = rp_req_ts();\n\
+         \x20               if (rts > $time) #(rts - $time);\n\
+         \x20               if (iw_i != 0 && a_i[7:0] == 8'h3C && wd_i == 32'hC051D0DE) begin\n\
+         \x20                   $display(\"cosim_top: end-of-test marker at %0t\", $time);\n\
+         \x20                   rp_done_t(0, 1, $time);\n\
+         \x20                   rp_close();\n\
+         \x20                   $finish;\n\
+         \x20               end else if (iw_i != 0) begin\n\
+         {write_decoder}\n\
+         \x20               end else begin\n\
+         {read_decoder}\n\
+         \x20               end\n\
+         \x20           end\n\
+         \x20       end\n\
+         \x20   end\n\
+         endmodule\n",
+        pin_imports = PIN_IMPORTS,
+        irq_blocks = irq_blocks,
+        pin_blocks = pin_blocks,
+        write_tasks = write_tasks,
+        read_tasks = read_tasks,
+        master_blocks = master_blocks,
+        checker_blocks = checker_blocks,
+        xchg_init = xchg_init,
+        irq_init = irq_init,
+        rp_next_call = RP_NEXT_CALL,
+        write_decoder = write_decoder,
+        read_decoder = read_decoder,
+    );
+    s
+}
 fn strip_verbatim(p: std::path::PathBuf) -> std::path::PathBuf {
     let s = p.to_string_lossy();
     match s.strip_prefix(r"\\?\") {
@@ -1937,4 +2455,106 @@ mod tests {
             assert!(sv.contains(name), "channel {name} is not documented");
         }
     }
+
+    #[test]
+    fn master_interface_device_maps_standard_ports() {
+        assert_eq!(master_interface_device("S_AXI_GP0"), Some(0));
+        assert_eq!(master_interface_device("S_AXI_GP1"), Some(1));
+        assert_eq!(master_interface_device("S_AXI_HP0"), Some(2));
+        assert_eq!(master_interface_device("S_AXI_HP1"), Some(3));
+        assert_eq!(master_interface_device("S_AXI_HP2"), Some(4));
+        assert_eq!(master_interface_device("S_AXI_HP3"), Some(5));
+        assert_eq!(master_interface_device("S_AXI_ACP"), Some(6));
+        assert_eq!(master_interface_device("M_AXI_GP0"), None);
+    }
+
+    #[test]
+    fn multi_slave_testbench_generates_instances_decoders_and_checkers() {
+        let math = parse_module(&fixture("math/my_math_ip.v"), None).unwrap();
+        let axi0 = detect_axi_lite(&math).unwrap();
+        let axi1 = detect_axi_lite(&math).unwrap();
+
+        let slaves = vec![
+            SlaveDesc {
+                instance: "u_math0",
+                module: &math,
+                axi: &axi0,
+                base: 0x43C0_0000,
+                size: 0x1000,
+                irq_bits: &[],
+                master: None,
+            },
+            SlaveDesc {
+                instance: "u_math1",
+                module: &math,
+                axi: &axi1,
+                base: 0x43C1_0000,
+                size: 0x1000,
+                irq_bits: &[],
+                master: None,
+            },
+        ];
+
+        let tb = generate_multi_slave_testbench(&slaves, Some(50_000_000));
+        assert!(tb.contains("always #10 aclk = ~aclk;   // 50 MHz, from the block design"));
+        assert!(tb.contains("my_math_ip u_math0 ("));
+        assert!(tb.contains("my_math_ip u_math1 ("));
+        assert!(tb.contains("reg  [3:0] u_math0_S_AXI_AWADDR = 0;"));
+        assert!(tb.contains("reg  [3:0] u_math1_S_AXI_AWADDR = 0;"));
+        assert!(tb.contains("task lite_write_0"));
+        assert!(tb.contains("task lite_write_1"));
+        assert!(tb.contains("task lite_read_0"));
+        assert!(tb.contains("task lite_read_1"));
+        assert!(tb.contains("if (u_addr >= 32'h43C00000 && u_addr <= 32'h43C00FFF) begin"));
+        assert!(tb.contains("lite_write_0(u_addr - 32'h43C00000, wd_i, ws_i[3:0], wr_ok);"));
+        assert!(tb.contains("else if (u_addr >= 32'h43C10000 && u_addr <= 32'h43C10FFF) begin"));
+        assert!(tb.contains("lite_write_1(u_addr - 32'h43C10000, wd_i, ws_i[3:0], wr_ok);"));
+        assert!(tb.contains("zs_axi_checker #(.ID(0), .FULL(0)"));
+        assert!(tb.contains("zs_axi_checker #(.ID(1), .FULL(0)"));
+        assert!(tb.contains("zs_chk_lite_0"));
+        assert!(tb.contains("zs_chk_lite_1"));
+    }
+
+    #[test]
+    fn multi_slave_testbench_with_master_and_irqs() {
+        let math = parse_module(&fixture("math/my_math_ip.v"), None).unwrap();
+        let axi_m = detect_axi_lite(&math).unwrap();
+        let dma = parse_module(&fixture("dma/dma_xform.v"), None).unwrap();
+        let axi_d = detect_axi_lite(&dma).unwrap();
+        let mst = detect_axi_master(&dma).unwrap().expect("master on dma");
+
+        let slaves = vec![
+            SlaveDesc {
+                instance: "u_math",
+                module: &math,
+                axi: &axi_m,
+                base: 0x43C0_0000,
+                size: 0x1000,
+                irq_bits: &[],
+                master: None,
+            },
+            SlaveDesc {
+                instance: "u_dma",
+                module: &dma,
+                axi: &axi_d,
+                base: 0x43C2_0000,
+                size: 0x10000,
+                irq_bits: &[Some(4)],
+                master: Some((&mst, 6)), // S_AXI_ACP = device 6
+            },
+        ];
+
+        let tb = generate_multi_slave_testbench(&slaves, None);
+        assert!(tb.contains("always #5 aclk = ~aclk;   // 100 MHz = FCLK_CLK0"));
+        assert!(tb.contains("// u_dma.irq -> IRQ_F2P[4]"));
+        assert!(tb.contains("rp_irq($time, 4, u_dma_irq ? 1 : 0);"));
+        assert!(tb.contains("localparam int u_dma_DEV = 6;"));
+        assert!(tb.contains("rp_mem_start($time, u_dma_DEV, 0, u_dma_ra, (u_dma_rl + 1) * 4)"));
+        assert!(tb.contains("rp_mem_start($time, u_dma_DEV, 1, u_dma_wa, (u_dma_wl + 1) * 4)"));
+        assert!(tb.contains("zs_axi_checker #(.ID(0), .FULL(0)"));
+        assert!(tb.contains("zs_axi_checker #(.ID(1), .FULL(0)"));
+        assert!(tb.contains("zs_axi_checker #(.ID(2), .FULL(1)"));
+        assert!(tb.contains("zs_chk_mst_1"));
+    }
 }
+

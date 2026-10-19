@@ -115,17 +115,22 @@ decision was made, the affected `examples/` added to the determinism table, and 
   explicit allow-list file, never silently.
 * Agent: Sonnet to design, Haiku for the parser and tests.
 
-### B. More than one AXI4-Lite slave, AXI4 slaves, HP/ACP masters from an XSA (value high, effort M-L)
-* **Why.** `init --xsa` supports one user AXI4-Lite slave; others land in `[xsa.unmodelled]`.
-* **How.** Generalise `tbgen.rs` from "one slave at one base" to a list of slaves with the address windows from the
-  HWH address map (the DPI already routes by address on the PS side: check `rp_*` bus device numbers; add per-slave
-  `s_axi` instances and one decoder in the generated testbench). Reuse the AXI4 master bridge of `init --ip` for HP/ACP
-  masters (device 2 route). Interrupts: one `IRQ_F2P` bit per slave through `xlconcat` as the HWH says.
-  AXI4 (full) slaves and AXI-Stream IP are a second step.
-* **Acceptance.** A Vivado design with two user AXI4-Lite IPs (build it with a Tcl script like
-  `fixtures/xsa/make_vendor_xsa.tcl`) runs and both give correct answers under XSim, Verilator and Icarus; a DMA-style master
-  in the XSA path reads/writes PS memory; protocol checkers report nothing for legal designs and still catch the
-  `fixtures/rtl/illegal/*` ones; `native` (`rtl-native`) supports the same two-slave design.
+### B. More than one AXI4-Lite slave, AXI4 slaves, HP/ACP masters from an XSA (COMPLETED, ADR-039)
+* **Status.** **Done and verified.** Multi-slave user RTL (`user_slaves >= 2`) generates an address decoder testbench with per-slave read/write tasks and sequential protocol checkers (`zs_chk_lite_{i}`). Pure-Rust `rtl-native` maps multiple `RtlModule` instances to the native bus. Master ports (`S_AXI_GP0..1`, `S_AXI_HP0..3`, `S_AXI_ACP`) map dynamically to remote-port devices 0..6.
+* **Evidence.**
+  - `fixtures/xsa/zs_two_math.xsa` (Vivado 2022.1 handoff with `u_math0` at `0x43C00000` and `u_math1` at `0x43C10000`).
+  - `crates/cli/tests/multi_slave.rs`:
+    - `init_xsa_multi_slave_produces_valid_project`: verified.
+    - `multi_slave_runs_on_rtl_native`: verified (`RESULT: ALL PASS`, `math0: 21 * 2 = 42`, `math1: 50 * 2 = 100`, `bus_accesses: 5`, `protocol_checks: 0`).
+    - `multi_slave_runs_on_xsim`: verified (`RESULT: ALL PASS`, `bus_accesses: 5`, `protocol_checks: 0`).
+    - `multi_slave_runs_on_verilator`: verified (`RESULT: ALL PASS`, `bus_accesses: 5`, `protocol_checks: 0`).
+    - `multi_slave_runs_on_icarus`: verified (`RESULT: ALL PASS`, `bus_accesses: 5`, `protocol_checks: 0`).
+  - `sim_api::tbgen::tests::{multi_slave_testbench_generates_instances_decoders_and_checkers, multi_slave_testbench_with_master_and_irqs, master_interface_device_maps_standard_ports}`.
+  - `sim_api::native_pl::tests::multiple_rtl_modules_on_the_rtl_engine_answer_on_the_ps_bus`.
+  - Master bridge verified by `cli::tests::cli::init_ip_generates_the_dma_testbench_with_a_memory_bridge`.
+  - Protocol checkers verified by `cli::tests::protocol_checks::*` (9 tests passing: legal produces 0, illegal fixtures caught).
+  - Single-slave backward compatibility preserved (all 6 tests in `cli::tests::xsa` pass).
+
 
 ### C. Run the Xilinx BSP applications natively and finish native-math (value medium-high, effort M)
 * **Why.** `examples/native-math` stalls: the BSP start code reads 0xF800D010 (devcfg) which the native bus did not

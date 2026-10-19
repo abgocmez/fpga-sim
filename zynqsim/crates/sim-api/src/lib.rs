@@ -39,7 +39,7 @@ pub use duration::parse_duration;
 pub use engine::Engine;
 pub use error::{ApiError, ErrorCode};
 pub use native_ps::{BATCH_CYCLES, NativePsEngine, NativeSpec, PS_PER_CYCLE};
-pub use pl_attach::RtlNativeSpec;
+pub use pl_attach::{RtlNativeSlaveSpec, RtlNativeSpec};
 pub use project::{
     BackendsSection, BoardSection, BootSection, CpuSection, DebugSection, Diagnostic, MediaSection,
     NetworkSection, Project, ProtocolCheckers, RtlSection, Severity, SimSection, StorageSection,
@@ -55,9 +55,10 @@ pub use recording::{
 pub use server::SimClient;
 pub use sim::Simulator;
 pub use tbgen::{
-    AxiLite, AxiMaster, Dir, ModuleInfo, PROTOCOL_CHECKER_FILE, PinGroup, Port, detect_axi_lite,
-    detect_axi_master, detect_irqs, detect_pin_groups, generate_project, generate_testbench,
-    parse_module, protocol_checker_source, relative_path,
+    AxiLite, AxiMaster, Dir, ModuleInfo, PROTOCOL_CHECKER_FILE, PinGroup, Port, SlaveDesc,
+    detect_axi_lite, detect_axi_master, detect_irqs, detect_pin_groups,
+    generate_multi_slave_testbench, generate_project, generate_testbench, master_bridge_with_dev,
+    master_interface_device, parse_module, protocol_checker_source, relative_path,
 };
 pub use tools::{
     BackendInfo, BackendKind, BackendRole, detect_backends, find_dpi_lib, find_on_path,

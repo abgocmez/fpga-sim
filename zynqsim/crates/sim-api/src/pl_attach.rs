@@ -60,6 +60,21 @@ pub struct NativeInstance {
     pub bindings: std::collections::BTreeMap<String, String>,
 }
 
+/// One slave behind an AXI4-Lite interface for native RTL simulation.
+#[derive(Clone, Debug)]
+pub struct RtlNativeSlaveSpec {
+    /// Instance name in the project/block design (e.g. `u_math0`).
+    pub instance: String,
+    /// Top module name for this slave (e.g. `my_math_ip`).
+    pub top: String,
+    /// `M_AXI_GP` port, 0 or 1.
+    pub gp: u8,
+    /// Base address.
+    pub base: u64,
+    /// Interrupt outputs by port name and destination (`IRQ_F2P[n]`).
+    pub irqs: Vec<(String, String)>,
+}
+
 /// An RTL design behind an AXI4-Lite slave on one GP port (`backends.pl = "rtl-native"`).
 #[derive(Clone, Debug)]
 pub struct RtlNativeSpec {
@@ -77,6 +92,9 @@ pub struct RtlNativeSpec {
     /// none, the first interrupt output found by name (as the testbench generator finds them)
     /// drives `IRQ_F2P[0]`.
     pub irqs: Vec<(String, String)>,
+    /// Optional list of multiple slaves for multi-slave designs. When not empty, each slave is
+    /// elaborated and placed in NativePl.
+    pub slaves: Vec<RtlNativeSlaveSpec>,
 }
 
 /// Builds the PL from its native models and, optionally, an RTL target that serves every
@@ -162,6 +180,51 @@ pub fn detect_irq_ports(sources: &[PathBuf], top: &str) -> Vec<String> {
 /// Builds the RTL design of `spec` on the native RTL engine: elaboration, simulation, and the
 /// AXI4-Lite slave as a register block on its GP port, its interrupt output on `IRQ_F2P`.
 pub fn rtl_native_target(spec: &RtlNativeSpec) -> Result<Box<dyn PlTarget + Send>, ApiError> {
+    if !spec.slaves.is_empty() {
+        let mut pl = NativePl::new();
+        for slave in &spec.slaves {
+            let design = Design::elaborate(&slave.top, &spec.sources, &spec.defines, &[]);
+            let mut module = RtlModule::new(design).map_err(|e| {
+                ApiError::invalid_argument(format!(
+                    "backends.pl = \"rtl-native\": `{}` (instance `{}`): {e}",
+                    slave.top, slave.instance
+                ))
+            })?;
+            let mut irqs = slave.irqs.clone();
+            if irqs.is_empty() {
+                if let Some(p) = detect_irq_ports(&spec.sources, &slave.top).first() {
+                    irqs.push((p.clone(), "IRQ_F2P[0]".to_string()));
+                }
+            }
+            let bit = match irqs.as_slice() {
+                [] => None,
+                [(port, dest)] => {
+                    let n = match vendor_ip::parse_irq_dest(dest) {
+                        Some(pl_native::IrqDest::F2p(n)) if n <= 15 => n,
+                        _ => {
+                            return Err(ApiError::invalid_argument(format!(
+                                "`{}.{port}` = `{dest}`: the RTL interrupt output goes to IRQ_F2P[0..15]",
+                                slave.instance
+                            )));
+                        }
+                    };
+                    module
+                        .set_irq_output(port)
+                        .map_err(|e| ApiError::invalid_argument(format!("`{}.{port}`: {e}", slave.instance)))?;
+                    Some(n)
+                }
+                _ => {
+                    return Err(ApiError::invalid_argument(format!(
+                        "`{}`: backends.pl = \"rtl-native\" supports one interrupt output; {} are connected",
+                        slave.instance, irqs.len()
+                    )));
+                }
+            };
+            pl.map_irq(slave.gp, slave.base, Box::new(module), bit);
+        }
+        return Ok(Box::new(pl));
+    }
+
     let design = Design::elaborate(&spec.top, &spec.sources, &spec.defines, &[]);
     let mut module = RtlModule::new(design).map_err(|e| {
         ApiError::invalid_argument(format!("backends.pl = \"rtl-native\": `{}`: {e}", spec.top))
