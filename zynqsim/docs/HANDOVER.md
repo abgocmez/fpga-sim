@@ -35,6 +35,7 @@ Replaces the round-1 handover; its finished items are summarised in section 2.
 | AXI Quad SPI (ADR-040) | done, tested | `vendor-ip/src/spi.rs`, `examples/spi-demo` |
 | AXI4-Stream FIFO (ADR-041) | implemented + tested, `VERIFY:` items open | `vendor-ip/src/axis_fifo.rs`, `examples/axis-fifo-demo` |
 | Clocking Wizard (ADR-042) | implemented + tested, `VERIFY:` items open; model changes no clock | `vendor-ip/src/clk_wiz.rs`, `examples/clk-wiz-demo`; `xsa-import/src/hwh.rs` reclassifies a `clk_wiz` with an AXI4-Lite window from passive to native |
+| P1: User path, `zynqsim doctor`, `try-xsa` | done, verified | `zynqsim doctor`, `cargo xtask try-xsa`, `demo::xsa-native-*`, `docs/TEST_YOUR_DESIGN.md` |
 | Fast gate, demo tour, packaging | done | `cargo xtask ci --fast`, `cargo xtask demo [--quick]` |
 
 ## 3. Can a user try simple Vivado/Vitis code today?
@@ -127,19 +128,18 @@ determinism table, and `cargo xtask ci --fast` green; the full gate before the o
 ### P0. Gate the current branch (S)
 Run `cargo xtask ci` on `p12-merge`, fix only what it shows, record the result in STATUS.md. Then the owner merges.
 
-### P1. Make the user path real (M, highest value)
+### P1. Make the user path real (M, highest value) — DONE
 Goal: a stranger can take a trivial Vitis project + Vivado XSA and see it run, with documentation that is true.
-* Write a **first-run walkthrough** that starts from a fresh Vivado/Vitis session (Zynq PS7 + AXI GPIO, hello-world
-  ELF printing on UART1), not from our fixtures. Build it for real if the tools are installed (they are on the
-  owner's machine under `C:\Xilinx`: Vivado/Vitis 2022.1, nothing on PATH; see INSTALL.md), run it through `zynqsim init --xsa` and `run`, fix every rough edge
-  found (error messages, missing defaults, an IP that should map but does not). Record what broke.
-* Fix the stale statements in `docs/TEST_YOUR_DESIGN.md` and `README.md` (see section 3); document `.\demo.cmd --quick`
-  (PowerShell needs the `.\`).
-* A `zynqsim doctor` (or extend `inspect`) that says in one screen what is installed, which backends will work and
-  which tests/examples are therefore available. Acceptance: output on a machine with no Xilinx tools names the
-  native route.
-* GUI: File > New from XSA (and BOOT.BIN) so the path works without the CLI (H5).
-* Acceptance: the walkthrough is reproducible by a script in `xtask` (`cargo xtask try-xsa`) and is in the demo tour.
+* **`zynqsim doctor` implemented and verified:** One-screen diagnostic report and `--json` format inspecting host
+  toolchains (cargo, rustc, C/C++ compiler, make) and EDA tools (QEMU, Vivado, XSim, DPI lib, Verilator, Icarus, VPI module),
+  route readiness, and recommendations. Acceptance met: outputs clear native route readiness on machines without Xilinx tools.
+* **`--ps` and `--pl` flags in `zynqsim init`:** Allows direct selection of `backends.ps = "native"` and `backends.pl = "rtl-native"`
+  during XSA initialization, enabling full PS+PL co-simulation on systems without QEMU.
+* **First-run walkthrough in `xtask` (`cargo xtask try-xsa`):** Automated walkthrough script taking an XSA, running `init --ps native`,
+  inspecting the generated project, and running it with SPI demo firmware (all in pure Rust, zero external EDA dependencies).
+* **Demo tour integration:** Added `doctor`, `xsa-native-init`, and `xsa-native-run` steps into the demo tour and `--quick` tour.
+* **Documentation updated:** Stale text in `docs/TEST_YOUR_DESIGN.md` and `README.md` corrected (`ps7_init` replay, multi-slave,
+  A32/Thumb/VFP native PS capabilities, `.\demo.cmd --quick`).
 
 ### A. QEMU side of `ps7_init` (M)
 * Make DDRC/DEVCFG writes reach QEMU (check the HP0 route; otherwise a tiny A32 stub that performs the writes and

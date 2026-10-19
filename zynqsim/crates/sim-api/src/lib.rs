@@ -61,8 +61,9 @@ pub use tbgen::{
     master_interface_device, parse_module, protocol_checker_source, relative_path,
 };
 pub use tools::{
-    BackendInfo, BackendKind, BackendRole, detect_backends, find_dpi_lib, find_on_path,
-    find_vivado, locate, locate_binary,
+    BackendInfo, BackendKind, BackendRole, DoctorReport, DoctorSummary, HostInfo, RouteStatus,
+    ToolStatus, detect_backends, diagnose, find_dpi_lib, find_on_path, find_vivado, locate,
+    locate_binary,
 };
 pub use types::{
     AudioSpec, BreakKind, BreakpointInfo, Capability, Command, CpuRegs, DebugStatus,

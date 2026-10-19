@@ -211,6 +211,7 @@ fn inspect_lists_backends_without_claiming_unbuilt_ones() {
             "native",
             "demo",
             "native",
+            "rtl-native",
             "verilator",
             "icarus",
             "xsim"
@@ -1446,4 +1447,79 @@ fn pcam_demo_gates_frames_on_the_streaming_registers() {
     assert_eq!(reg("TEST_PATTERN"), Some(0x00));
     let (w, h, _) = sim_api::board::decode_png_rgb(&std::fs::read(&cam_png).unwrap()).unwrap();
     assert_eq!((w, h), (128, 32));
+}
+
+#[test]
+fn doctor_text_output_includes_host_and_native_route() {
+    let o = zynqsim(&["doctor"]);
+    assert_eq!(
+        o.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let s = stdout(&o);
+    assert!(s.contains("ZynqSim Doctor Diagnostic"), "{s}");
+    assert!(s.contains("Host:"), "{s}");
+    assert!(s.contains("Simulation Routes:"), "{s}");
+    assert!(s.contains("Verdict:"), "{s}");
+    assert!(s.contains("native"), "{s}");
+    assert!(s.contains("rtl-native"), "{s}");
+}
+
+#[test]
+fn doctor_json_output_reports_valid_schema() {
+    let o = zynqsim(&["--json", "doctor"]);
+    assert_eq!(
+        o.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let v: Value = serde_json::from_str(&stdout(&o)).expect("must parse JSON");
+    assert!(v["summary"]["native_route_ready"].as_bool().unwrap());
+    assert!(
+        v["routes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["name"] == "native" && r["role"] == "ps" && r["ready"] == true)
+    );
+    assert!(
+        v["routes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["name"] == "rtl-native" && r["role"] == "pl" && r["ready"] == true)
+    );
+}
+
+#[test]
+fn init_xsa_accepts_ps_native_flag() {
+    let d = temp("init-ps-native");
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let xsa = fixtures.join("xsa/zs_vendor_ip.xsa");
+    let elf = fixtures.join("elf/rust_spi.elf");
+    let o = zynqsim(&[
+        "init",
+        "--xsa",
+        xsa.to_str().unwrap(),
+        "--ps",
+        "native",
+        "--elf",
+        elf.to_str().unwrap(),
+        d.to_str().unwrap(),
+    ]);
+    assert_eq!(
+        o.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let toml = std::fs::read_to_string(d.join("project.toml")).expect("project.toml exists");
+    assert!(
+        toml.contains("ps = \"native\""),
+        "expected ps = native in project.toml:\n{toml}"
+    );
+    let _ = std::fs::remove_dir_all(&d);
 }

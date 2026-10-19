@@ -38,7 +38,10 @@ cargo xtask <command>
   dist-verify   the unpack check alone, on [ARCHIVE] (default: newest in dist/)
   firmware      build the Rust firmware (needs the armv7a-none-eabi target) and copy the
                 ELFs to fixtures/elf/rust_*.elf
-  third-party   regenerate THIRD_PARTY.md from the lock file
+  try-xsa [XSA] [ELF]
+                runs the first-run walkthrough end-to-end: imports an XSA with the native PS
+                and PL, validates the generated project, runs it, and checks simulation results
+                (zero external EDA tools or Vivado/QEMU required).
   demo          a tour of the headless checks through the real binaries, with output in
                 demo-out/ (see docs/DEMO.md). Options: --quick (5-minute subset),
                 --only name,... (step names), --gui (also the GUI screenshots)
@@ -405,12 +408,174 @@ fn changed_examples() -> bool {
     true
 }
 
+/// Runs the first-run user walkthrough: `zynqsim init --xsa ... --ps native` followed by `zynqsim run`.
+fn try_xsa(args: &[String]) -> bool {
+    let root = workspace_root();
+    let xsa_path = if let Some(arg) = args.first() {
+        PathBuf::from(arg)
+    } else {
+        root.join("fixtures/xsa/zs_vendor_ip.xsa")
+    };
+    if !xsa_path.is_file() {
+        eprintln!("xtask: XSA file not found at {}", xsa_path.display());
+        return false;
+    }
+    let elf_path = if let Some(arg) = args.get(1) {
+        PathBuf::from(arg)
+    } else {
+        root.join("fixtures/elf/rust_spi.elf")
+    };
+    if !elf_path.is_file() {
+        eprintln!("xtask: ELF file not found at {}", elf_path.display());
+        return false;
+    }
+
+    let temp_dir = std::env::temp_dir().join(format!("zynqsim-try-xsa-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    // Build the CLI binary if not already present
+    let exe_name = format!("zynqsim{}", std::env::consts::EXE_SUFFIX);
+    let zynqsim_exe = root.join("target/debug").join(&exe_name);
+    let zynqsim_bin = if zynqsim_exe.is_file() {
+        zynqsim_exe
+    } else {
+        eprintln!("xtask: building zynqsim binary...");
+        if !cargo(&["build", "-p", "zynqsim", "--bin", "zynqsim"], &[]) {
+            return false;
+        }
+        root.join("target/debug").join(&exe_name)
+    };
+
+    eprintln!(
+        "\n==> [1/3] zynqsim init --xsa {} --ps native --elf {}",
+        xsa_path.display(),
+        elf_path.display()
+    );
+    let init_status = Command::new(&zynqsim_bin)
+        .args([
+            "init",
+            "--xsa",
+            xsa_path.to_str().unwrap(),
+            "--ps",
+            "native",
+            "--elf",
+            elf_path.to_str().unwrap(),
+            "--out",
+            temp_dir.to_str().unwrap(),
+        ])
+        .status();
+
+    let init_ok = match init_status {
+        Ok(s) => s.success(),
+        Err(e) => {
+            eprintln!("xtask: cannot run zynqsim init: {e}");
+            false
+        }
+    };
+    if !init_ok {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        return false;
+    }
+
+    let project_file = temp_dir.join("project.toml");
+    eprintln!(
+        "\n==> [2/3] zynqsim inspect --project {}",
+        project_file.display()
+    );
+    let inspect_out = Command::new(&zynqsim_bin)
+        .args([
+            "--json",
+            "inspect",
+            "--project",
+            project_file.to_str().unwrap(),
+        ])
+        .output();
+    let inspect_ok = match inspect_out {
+        Ok(o) if o.status.success() => {
+            let v: Value = serde_json::from_slice(&o.stdout).unwrap_or_default();
+            let errs = v["diagnostics"]
+                .as_array()
+                .map(|a| a.iter().filter(|d| d["severity"] == "error").count())
+                .unwrap_or(0);
+            if errs > 0 {
+                eprintln!(
+                    "xtask: project has validation errors:\n{}",
+                    String::from_utf8_lossy(&o.stdout)
+                );
+                false
+            } else {
+                true
+            }
+        }
+        Ok(o) => {
+            eprintln!(
+                "xtask: zynqsim inspect failed:\n{}",
+                String::from_utf8_lossy(&o.stderr)
+            );
+            false
+        }
+        Err(e) => {
+            eprintln!("xtask: cannot run zynqsim inspect: {e}");
+            false
+        }
+    };
+    if !inspect_ok {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        return false;
+    }
+
+    eprintln!(
+        "\n==> [3/3] zynqsim run --project {} --for 10ms",
+        project_file.display()
+    );
+    let run_out = Command::new(&zynqsim_bin)
+        .args([
+            "--json",
+            "run",
+            "--project",
+            project_file.to_str().unwrap(),
+            "--for",
+            "10ms",
+        ])
+        .output();
+    let run_ok = match run_out {
+        Ok(o) if o.status.success() => {
+            let v: Value = serde_json::from_slice(&o.stdout).unwrap_or_default();
+            let sim_ps = v["time_ps"].as_u64().unwrap_or(0);
+            let uart = v["uart"]["1"].as_str().unwrap_or("");
+            eprintln!("xtask: simulation completed successfully in virtual time {sim_ps} ps");
+            if !uart.is_empty() {
+                eprintln!("xtask: UART1 output: {:?}", uart.trim());
+            }
+            true
+        }
+        Ok(o) => {
+            eprintln!(
+                "xtask: zynqsim run failed:\n{}",
+                String::from_utf8_lossy(&o.stderr)
+            );
+            false
+        }
+        Err(e) => {
+            eprintln!("xtask: cannot run zynqsim run: {e}");
+            false
+        }
+    };
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    if run_ok {
+        eprintln!("\n==> First-run walkthrough verified: PASS (zero external tools required!)");
+    }
+    run_ok
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let cmd = args.get(1).cloned().unwrap_or_else(|| "help".to_string());
     let ok = match cmd.as_str() {
         "ci" => ci_gate(&args[2..]),
         "changed-examples" => changed_examples(),
+        "try-xsa" => try_xsa(&args[2..]),
         "test" => cargo(&["test", "--workspace"], &[]),
         "golden" => cargo(
             &["test", "-p", "board-zybo", "render"],

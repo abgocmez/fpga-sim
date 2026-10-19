@@ -10,7 +10,7 @@ use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 use sim_api::{
     ApiError, Command, ErrorCode, Fidelity, Project, Ps, Query, Recording, Response, Severity,
-    SimConfig, Simulator, detect_backends, starter_project_toml,
+    SimConfig, Simulator, detect_backends, diagnose, starter_project_toml,
 };
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -155,6 +155,12 @@ enum Cmd {
         /// `[boot] mode = "boot_bin"` (no --elf).
         #[arg(long, alias = "boot-bin")]
         boot: Option<PathBuf>,
+        /// Override the processing system backend in project.toml (e.g. "native", "qemu", "demo").
+        #[arg(long)]
+        ps: Option<String>,
+        /// Override the programmable logic backend in project.toml (e.g. "native", "rtl-native", "xsim", "demo").
+        #[arg(long)]
+        pl: Option<String>,
     },
     /// Parse Verilog/SystemVerilog with the native front end and print its diagnostics.
     ///
@@ -179,6 +185,8 @@ enum Cmd {
         /// The BOOT.BIN.
         file: PathBuf,
     },
+    /// Diagnose host environment, toolchains, EDA tools and backend readiness.
+    Doctor,
     /// Show the board, the backends and, with --project, validate a project.
     Inspect {
         /// Validate this project.toml and list every finding.
@@ -366,6 +374,8 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
             elf1,
             base,
             boot,
+            ps: _,
+            pl: _,
         } if boot.is_some() && xsa.is_none() && export_sim.is_none() => {
             let _ = (rtl, filelist, ip, module, elf, elf1, base);
             init_from_boot(json, &out.unwrap_or(dir), &boot.unwrap_or_default())
@@ -377,6 +387,7 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
             define,
         } => cmd_rtl_check(json, &files, top.as_deref(), &include, &define),
         Cmd::BootInfo { file } => cmd_boot_info(json, &file),
+        Cmd::Doctor => cmd_doctor(json),
         Cmd::Init {
             dir,
             xsa,
@@ -390,6 +401,8 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
             elf1,
             base,
             boot,
+            ps,
+            pl,
         } => {
             let ip = InitIp {
                 ip,
@@ -399,6 +412,8 @@ fn dispatch(cli: Cli) -> Result<u8, Failure> {
                 base,
                 boot,
                 export: None,
+                ps,
+                pl,
             };
             match (export_sim, xsa) {
                 (Some(x), None) => init_from_export(json, &out.unwrap_or(dir), &x, ip),
@@ -1199,6 +1214,10 @@ struct InitIp {
     boot: Option<PathBuf>,
     /// `--export-sim` next to `--xsa`.
     export: Option<PathBuf>,
+    /// `--ps` override backend.
+    ps: Option<String>,
+    /// `--pl` override backend.
+    pl: Option<String>,
 }
 
 /// `init --ip`: a testbench and project for an AXI4-Lite slave IP.
@@ -1538,6 +1557,8 @@ fn init_from_xsa(
         filelist,
         boot_bin: o.boot,
         export: o.export,
+        ps: o.ps,
+        pl: o.pl,
     };
     let plan = xsa::plan(xsa, dir, &opts).map_err(|e| fail(2, e.message))?;
     let created = plan.write(dir).map_err(|e| fail(2, e.message))?;
@@ -1778,6 +1799,19 @@ fn cmd_bench(json: bool, project: Option<&Path>, duration: &str) -> Result<u8, F
             ),
             None => println!("guest     : n/a (no QEMU guest CPU in this run)"),
         }
+    }
+    Ok(0)
+}
+
+fn cmd_doctor(json: bool) -> Result<u8, Failure> {
+    let report = diagnose();
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|e| fail(2, e.to_string()))?
+        );
+    } else {
+        print!("{}", report.format_text());
     }
     Ok(0)
 }

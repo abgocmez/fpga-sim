@@ -14,7 +14,7 @@ you can see, drive from a GUI, a CLI or an MCP server, and replay exactly.
 
 ```
 cargo xtask demo --quick       # builds, then runs the 5-minute tour of headless checks
-demo.cmd                       # the same on Windows (double-click it, or run it in any terminal)
+demo.cmd --quick               # the same on Windows (in PowerShell: .\demo.cmd --quick)
 ```
 
 The tour runs the real `zynqsim`, `zynqsim-gui` and `zynqsim-mcp` binaries, checks each result
@@ -51,6 +51,7 @@ Installing from a release archive (no Rust needed), or building the archive your
 ## Use
 
 ```
+zynqsim doctor                             # diagnose host tools, compilers, and route readiness
 zynqsim run --for 1s --at 10ms=sw0:on --at 20ms=btn1:tap --record session.json --vcd run.vcd
 zynqsim test session.json                  # replay and check the trace digest (exit 1 on mismatch)
 zynqsim inspect                            # board, backends, what is implemented
@@ -72,11 +73,10 @@ switch is **Simulation > Debugger (restart)**; `zynqsim-gui --project P --debugg
 does it at start-up. Under the debugger timing is not reproducible, and the status bar says so.
 The run button reads **Continue** while the guest is stopped; it runs on to the next breakpoint.
 
-For a PS-only project (no PL, one core) the offer also has **Use the native engine**
-(`backends.ps = "native"`): its registers can be read whenever the simulation is paused, with no
-QEMU. The native engine does not implement Thumb or VFP instructions; it stops with a message when
-the firmware uses one. Whether a project can move there is decided by its validation, not by
-scanning the ELF.
+For projects using the built-in CPU engine (`backends.ps = "native"`), Cortex-A9
+firmware runs directly in pure Rust (supporting full A32, Thumb-2, and VFPv3 floating-point
+instructions, dual-core, and PS+PL co-simulation): its registers can be inspected whenever the
+simulation is paused, with zero external QEMU dependencies.
 
 ### Waveforms
 
@@ -311,8 +311,8 @@ XSim and to the vendor-ip models, and prints `RESULT: ALL PASS`. With `--export-
 fixtures/handoff/export/xsim` instead of `--rtl`, the RTL and its testbench come from the Vivado
 export (the Xilinx IP still from the XSA) and the UART text and trace digest are the same. The
 FSBL in the image is a **stub and is not executed**, the bitstream is a **placeholder and is not
-simulated**, `ps7_init` is **not applied**: this is not Vivado's flow on a board. See
-[examples/vivado-handoff](examples/vivado-handoff/README.md) and
+simulated**; `ps7_init` clock tree, PLL and SLCR registers are **replayed and applied** automatically (ADR-038).
+See [examples/vivado-handoff](examples/vivado-handoff/README.md) and
 [docs/adr/019-p3-exit.md](docs/adr/019-p3-exit.md).
 
 ### From a Vivado simulation export or a post-synthesis netlist

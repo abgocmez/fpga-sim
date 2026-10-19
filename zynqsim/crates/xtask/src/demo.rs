@@ -258,7 +258,15 @@ fn ps(
 /// Steps of sections a, g, i and j, and named steps, are in `--quick`.
 fn quick_step(s: &Step) -> bool {
     matches!(s.section, 'a' | 'g' | 'i' | 'j')
-        || matches!(s.name, "math-qemu" | "math-verilator" | "native-math")
+        || matches!(
+            s.name,
+            "math-qemu"
+                | "math-verilator"
+                | "native-math"
+                | "doctor"
+                | "xsa-native-init"
+                | "xsa-native-run"
+        )
 }
 
 pub fn tour() -> Vec<Step> {
@@ -753,6 +761,45 @@ fn tour_steps() -> Vec<Step> {
             args: &["boot-info", "fixtures/handoff/BOOT.BIN"],
             checks: &[Check::Stdout("runnable: yes")],
             ..step('h', "boot-info", Kind::Cmd)
+        },
+        Step {
+            section: 'h',
+            kind: Kind::Cmd,
+            args: &["doctor"],
+            checks: &[
+                Check::Stdout("ZynqSim Doctor Diagnostic"),
+                Check::Stdout("Verdict:"),
+            ],
+            ..step('h', "doctor", Kind::Cmd)
+        },
+        Step {
+            section: 'h',
+            kind: Kind::Cmd,
+            args: &[
+                "init",
+                "--xsa",
+                "fixtures/xsa/zs_vendor_ip.xsa",
+                "--ps",
+                "native",
+                "--elf",
+                "fixtures/elf/rust_spi.elf",
+                "--out",
+                "{out}/xsa-native-project",
+            ],
+            clean: "xsa-native-project",
+            checks: &[Check::Stdout("created")],
+            ..step('h', "xsa-native-init", Kind::Cmd)
+        },
+        Step {
+            section: 'h',
+            project: "{out}/xsa-native-project/project.toml",
+            ..ps(
+                "xsa-native-run",
+                "",
+                "10ms",
+                &[Check::Uart1("axi-quad-spi demo")],
+                &[],
+            )
         },
         // (i) determinism
         Step {

@@ -116,6 +116,10 @@ pub struct ImportOptions {
     /// has no testbench of its own (a source calling the `rp_*` DPI functions), one is generated
     /// for the user module as with `rtl`. Not combinable with `rtl` or `filelist`.
     pub export: Option<PathBuf>,
+    /// Processing system backend override (e.g. "native", "qemu", "demo").
+    pub ps: Option<String>,
+    /// Programmable logic backend override (e.g. "native", "rtl-native", "xsim", "demo").
+    pub pl: Option<String>,
 }
 
 /// A planned import: nothing is written until [`XsaImport::write`].
@@ -1186,15 +1190,17 @@ pub fn plan(xsa: &Path, out: &Path, opts: &ImportOptions) -> Result<XsaImport, A
         schema_version: 1,
         board: BoardSection::named("zybo-z7-20"),
         backends: BackendsSection {
-            ps: "qemu".to_string(),
-            pl: if tb.is_some() || export_rel.is_some() {
-                "xsim"
-            } else if !native.is_empty() {
-                "native"
-            } else {
-                "demo"
-            }
-            .to_string(),
+            ps: opts.ps.clone().unwrap_or_else(|| "qemu".to_string()),
+            pl: opts.pl.clone().unwrap_or_else(|| {
+                if tb.is_some() || export_rel.is_some() {
+                    "xsim"
+                } else if !native.is_empty() {
+                    "native"
+                } else {
+                    "demo"
+                }
+                .to_string()
+            }),
         },
         sim: SimSection::default(),
         boot: Some(match &boot_init {

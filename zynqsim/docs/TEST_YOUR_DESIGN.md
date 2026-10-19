@@ -4,11 +4,25 @@ This is the shortest path from "I have a Cortex-A9 program and an AXI4-Lite IP" 
 test. Everything here is verified by the test suite unless it says otherwise; see
 [STATUS.md](STATUS.md) for the details and limits.
 
-## Requirements
+## Requirements and Environment Diagnosis
 
-* Xilinx QEMU (from Vitis) and Vivado XSim, both found automatically (or set `ZYNQSIM_QEMU`,
-  `ZYNQSIM_VIVADO`). XSim runs on Windows only.
-* The DPI library, once: `cargo xtask dpi`.
+Run `zynqsim doctor` to diagnose what is installed on your host and inspect simulation route readiness:
+
+```
+zynqsim doctor
+```
+
+ZynqSim provides two primary execution paths:
+
+1. **Pure-Rust Native Route (zero external EDA tools):**
+   * **PS:** Built-in Cortex-A9 interpreter (`cpu-a9`, F0) supporting full A32, Thumb-2, and VFPv3 (single and double precision floating-point), dual-core, and PS+PL co-simulation (`backends.ps = "native"`).
+   * **PL:** Built-in transaction-level Xilinx IP models (`vendor-ip`, `backends.pl = "native"`) and pure-Rust RTL simulation (`rtl-engine`, `backends.pl = "rtl-native"`).
+   * Runs out of the box with zero external dependencies — no Vivado, no QEMU, no C/C++ compiler needed.
+   * To verify this route end-to-end: `cargo xtask try-xsa` or `demo.cmd --quick` (or `.\demo.cmd --quick` in PowerShell).
+
+2. **External EDA Co-simulation Route (optional):**
+   * **PS:** Xilinx QEMU (from Vitis 2022.1) for Cortex-A9 functional emulation with instruction-count timing.
+   * **PL:** Vivado XSim (Windows only) via the Rust DPI library (`cargo xtask dpi`), or open-source RTL engines: Verilator (`backend-rtl-verilator`) and Icarus Verilog (`cargo xtask vpi`). All tools are discovered automatically on `PATH` or standard install roots.
 
 ## 1. The firmware (PS)
 
@@ -114,29 +128,37 @@ tested instance of this walk-through (`fixtures/handoff/make_handoff.tcl` builds
 3. **Firmware and `BOOT.BIN`.** Build the ELF as in section 1, then pack it with
    `bootgen -arch zynq -image boot.bif -o BOOT.BIN` (`fixtures/handoff/boot.bif` is a working
    recipe). A stub FSBL and a placeholder bitstream are fine: ZynqSim runs neither (the FSBL is
-   not executed, the bitstream is not simulated, `ps7_init` is not applied). With a real FSBL
+   not executed, the bitstream is not simulated; the PS clock tree, PLLs and SLCR registers are
+   applied via `ps7_init` replay automatically, see ADR-038). With a real FSBL
    and bitstream the image still boots the same way; only the application partition runs.
 4. **One `init`** for the project:
 
    ```
+   # Pure-Rust Native route (runs without Vivado or QEMU):
+   zynqsim init --xsa design.xsa --ps native --elf fw/app.elf --out myproj_native
+
+   # Co-simulation with Vivado XSim and QEMU:
    zynqsim init --xsa design.xsa --rtl rtl/my_ip.v --boot-bin BOOT.BIN --out myproj
    zynqsim init --xsa design.xsa --export-sim export/xsim --boot-bin BOOT.BIN --out myproj2
    ```
 
-   `--xsa` maps the address map, interrupts and clocks and the Xilinx IP (AXI GPIO, Timer, UART
-   Lite become `vendor-ip` models bound to the board, `[native]`); the user RTL becomes `[rtl]`
-   with a generated testbench (first form) or is taken from the export with its own testbench
-   (second form, `[rtl] export_dir`); `--boot-bin` writes `[boot] mode = "boot_bin"` and copies the
-   image next to `project.toml` (no `--elf`). `xsa-report.md` lists what was mapped and what was
-   not; any IP without a model is listed under `[xsa.unmodelled]` and stops the run.
+   `--xsa` maps the address map, interrupts, clocks and Xilinx IP (AXI GPIO, Timer, UART Lite,
+   DMA, IIC, BRAM, INTC, Quad SPI, AXI4-Stream FIFO, Clocking Wizard become `vendor-ip` models
+   bound to the board, `[native]`); the user RTL becomes `[rtl]` with a generated testbench (first form)
+   or is taken from the export with its own testbench (second form, `[rtl] export_dir`); `--boot-bin` writes
+   `[boot] mode = "boot_bin"` and copies the image next to `project.toml` (no `--elf`). Passing `--ps native`
+   configures `backends.ps = "native"` so the design runs in pure Rust without QEMU. `xsa-report.md`
+   lists what was mapped and what was not; any IP without a model is listed under `[xsa.unmodelled]`
+   and stops the run.
 5. **Run and test.** `zynqsim run --project myproj/project.toml --for 8ms --json`; the UART text
    is `uart["1"]`, the PL's UART Lite lines `uart["pl"]["2"]`, the LEDs `leds`. Run it three times
    and compare `trace_hash` (section 4). `crates/cli/tests/handoff.rs` does exactly this.
 
-What this does not prove: it is not Vivado's flow on a board. The FSBL, `ps7_init`, the PS clock
-tree and MIO routing, and the bitstream are not simulated; the Xilinx IP are register-level
-models from the product guides (`VERIFY:` items in STATUS.md); one user AXI4-Lite slave per
-project.
+What this does not prove: it is not Vivado's physical flow on a real FPGA board. The FSBL binary
+itself and bitstream programming are not simulated (the PS clock tree and SLCR configuration are
+applied via `ps7_init` replay, ADR-038); the Xilinx IP are register-level models from the product
+guides (`VERIFY:` items in STATUS.md); multiple user AXI4-Lite slaves and AXI4 HP/ACP masters from
+the block design are supported (ADR-039).
 
 ## 3. Run it
 

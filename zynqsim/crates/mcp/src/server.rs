@@ -845,6 +845,8 @@ impl McpServer {
             filelist: None,
             boot_bin,
             export,
+            ps: a.get("ps").and_then(Value::as_str).map(String::from),
+            pl: a.get("pl").and_then(Value::as_str).map(String::from),
         };
         let plan = xsa::plan(&xsa_file, &out_dir, &opts)?;
         let created = plan.write(&out_dir)?;
