@@ -1,0 +1,10 @@
+[package]
+name = "showcase_model_test"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Host unit tests for the showcase's pure model (`../src/model.rs`). Not a member of
+# `firmware/` (that workspace targets armv7a-none-eabi). Run with:
+#   cargo test --target x86_64-pc-windows-gnu   (from this directory)
+[workspace]
