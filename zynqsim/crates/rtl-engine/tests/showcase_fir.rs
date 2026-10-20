@@ -35,7 +35,8 @@ fn fir() -> RtlModule {
 
 fn set_coefs(m: &mut RtlModule, c: [i16; 8]) {
     for (k, v) in c.iter().enumerate() {
-        m.write(COEF0 + 4 * k as u64, *v as u16 as u32, 0xF).unwrap();
+        m.write(COEF0 + 4 * k as u64, *v as u16 as u32, 0xF)
+            .unwrap();
     }
 }
 

@@ -98,7 +98,9 @@ set_property name spi_0 [get_bd_intf_ports SPI_0_0]
 
 set first 1
 foreach s {zs_fir axi_gpio_0 axi_gpio_1 axi_timer_0 axi_uartlite_0 axi_quad_spi_0} {
-    set pin [get_bd_intf_pins $s/S_AXI]
+    set bus S_AXI
+    if {$s eq "axi_quad_spi_0"} { set bus AXI_LITE }
+    set pin [get_bd_intf_pins $s/$bus]
     if {$first} {
         set intc {New AXI Interconnect}
         set first 0
@@ -107,7 +109,7 @@ foreach s {zs_fir axi_gpio_0 axi_gpio_1 axi_timer_0 axi_uartlite_0 axi_quad_spi_
     }
     apply_bd_automation -rule xilinx.com:bd_rule:axi4 \
         -config [list Clk_master {/processing_system7_0/FCLK_CLK0 (100 MHz)} Clk_slave {Auto} Clk_xbar {Auto} \
-                      Master {/processing_system7_0/M_AXI_GP0} Slave "/$s/S_AXI" ddr_seg {Auto} \
+                      Master {/processing_system7_0/M_AXI_GP0} Slave "/$s/$bus" ddr_seg {Auto} \
                       intc_ip $intc master_apm {0}] $pin
 }
 # The Quad SPI's SPI-side clock (standard mode) is a separate pin: same FCLK_CLK0.
@@ -145,7 +147,7 @@ update_compile_order -fileset sources_1
 set_property top design_1_wrapper [current_fileset]
 
 # The ZynqSim testbench (stands in for the PS7 towards the user RTL) goes into the simulation set.
-add_files -fileset sim_1 -norecurse $out/rtl/cosim_top.sv
+add_files -fileset sim_1 -norecurse [list $out/rtl/zs_axi_checker.sv $out/rtl/cosim_top.sv]
 update_compile_order -fileset sim_1
 
 # A pre-synthesis write_hw_platform leaves the handoff out, so synthesise once.
