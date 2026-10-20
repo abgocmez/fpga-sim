@@ -66,6 +66,8 @@ use timer::{AxiTimer, TimerConfig, TimerHandle};
 use uartlite::{AxiUartLite, UartConfig, UartHandle};
 pub mod ila;
 pub use ila::{AxiIla, IlaConfig, IlaHandle, IlaStats};
+pub mod vio;
+pub use vio::{AxiVio, AxiVioHandle, VioConfig, VioStats};
 pub mod uart16550;
 pub use uart16550::{AxiUart16550, Uart16550Config, Uart16550Handle, Uart16550Stats};
 pub mod v_axi4s_vid_out;
@@ -95,6 +97,7 @@ pub const MODELS: &[&str] = &[
     "v_axi4s_vid_out",
     "v_vid_in_axi4s",
     "ila",
+    "vio",
 ];
 
 /// True when `name` (`axi_gpio`) is a model of this library.
@@ -226,6 +229,18 @@ pub fn param_names(model: &str) -> &'static [&'static str] {
             "C_PROBE0_WIDTH",
             "C_DATA_DEPTH",
             "C_EN_STRG_QUAL",
+            "CLK_FREQ_HZ",
+        ],
+        "vio" => &[
+            "C_NUM_PROBE_IN",
+            "C_NUM_PROBE_OUT",
+            "C_PROBE_IN0_WIDTH",
+            "C_PROBE_IN1_WIDTH",
+            "C_PROBE_OUT0_WIDTH",
+            "C_PROBE_OUT1_WIDTH",
+            "C_PROBE_OUT0_INIT_VAL",
+            "C_PROBE_OUT1_INIT_VAL",
+            "C_EN_PROBE_IN_ACTIVITY",
             "CLK_FREQ_HZ",
         ],
         _ => &[],
@@ -438,6 +453,7 @@ pub struct VendorPl {
     vid_outs: Vec<(String, VidOutHandle)>,
     vid_ins: Vec<(String, VidInHandle)>,
     ilas: Vec<(String, IlaHandle)>,
+    vios: Vec<(String, AxiVioHandle)>,
     /// Pin changes of the I2C masters, stamped with their (possibly future) bus times; they
     /// are handed out once PL time has reached them.
     iic_events: Arc<Mutex<Vec<PinEvent>>>,
@@ -492,6 +508,7 @@ impl VendorPl {
             vid_outs: Vec::new(),
             vid_ins: Vec::new(),
             ilas: Vec::new(),
+            vios: Vec::new(),
             iic_events: Arc::new(Mutex::new(Vec::new())),
             board_out: Vec::new(),
             pin_events: Vec::new(),
@@ -730,6 +747,12 @@ impl VendorPl {
                 self.ilas.push((inst.name.clone(), handle));
                 Box::new(i)
             }
+            "vio" => {
+                let cfg = VioConfig::from_params(&inst.params, size).map_err(ctx)?;
+                let (v, handle) = AxiVio::new(&inst.name, cfg);
+                self.vios.push((inst.name.clone(), handle));
+                Box::new(v)
+            }
             other => {
                 return Err(format!(
                     "instance `{}`: `{other}` is not a vendor-ip model; available: {}",
@@ -907,6 +930,14 @@ impl VendorPl {
     /// The Integrated Logic Analyzer handle of instance `name`.
     pub fn ila(&self, name: &str) -> Option<IlaHandle> {
         self.ilas
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, h)| h.clone())
+    }
+
+    /// The Virtual Input/Output handle of instance `name`.
+    pub fn vio(&self, name: &str) -> Option<AxiVioHandle> {
+        self.vios
             .iter()
             .find(|(n, _)| n == name)
             .map(|(_, h)| h.clone())

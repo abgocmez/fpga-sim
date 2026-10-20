@@ -1,0 +1,48 @@
+# Virtual Input/Output (vio 3.0, PG159) with no RTL: the Xilinx IP runs as a vendor-ip model
+# (crates/vendor-ip, ADR-051) on the native PL.
+#
+# Firmware: firmware/vio_demo (Rust, no_std). CPU tests version, software reset,
+# staged output commit, loopback routing, live vs latched probe input reading,
+# activity detection, and autonomous stimulus generation, receiving interrupt on IRQ_F2P[0].
+#
+#   zynqsim run --project examples/vio-demo/project.toml --for 6ms
+#   expect on UART1: "VIO Version:", "VIO software reset ok", "VIO staged output commit ok", "VIO loopback and input latch ok", "VIO activity detection ok", "VIO interrupt received", "VIO PASS", "RESULT: ALL PASS"
+#
+# Needs: the Xilinx QEMU (Vitis). No Vivado is needed to RUN this.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "native"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_vio.elf"
+
+[native]
+vio_0 = "vio"
+
+[native_params.vio_0]
+C_NUM_PROBE_IN = 2
+C_NUM_PROBE_OUT = 2
+C_PROBE_IN0_WIDTH = 32
+C_PROBE_IN1_WIDTH = 32
+C_PROBE_OUT0_WIDTH = 32
+C_PROBE_OUT1_WIDTH = 32
+C_EN_PROBE_IN_ACTIVITY = 1
+CLK_FREQ_HZ = 100000000
+ADDRESS_SIZE = "0x10000"
+
+[connect]
+"vio_0.ctrl" = "M_AXI_GP0@0x43000000"
+"vio_0.irq" = "IRQ_F2P[0]"
+

@@ -211,7 +211,14 @@ Goal: a stranger can take a trivial Vitis project + Vivado XSA and see it run, w
   version `0x0602_0000`, sequential trace readout port (`TRACE_RADDR`/`TRACE_RDATA` with auto-increment), direct memory-mapped
   trace buffer window (`0x1000..=0x1000 + 4*depth`), live probe readout, autonomous probe stimulus generator, firmware demo
   `firmware/ila_demo`, example `examples/ila-demo/project.toml`, determinism 5/5, unit tests and integration tests passing.
-* Next model: Virtual Input/Output (`vio` 3.0, PG159, ADR-051).
+* **Virtual Input/Output (`vio` 3.0, ADR-051) — DONE:** Behavioural model in `crates/vendor-ip/src/vio.rs`,
+  64 KiB address window (`0x10000` bytes), registers `CR` (reset, update_out, latch_in, auto_update, loopback_en, stim_en),
+  `SR` (out_updated, in_latched, activity_det, probe counts), `ISR`/`IER` (W1C interrupts for input state change, output commit ack,
+  and input activity), staged output writing and atomic commit (`PROBE_OUT_VAL`/`PROBE_OUT_STAGING`), live and latched
+  input sampling (`PROBE_IN_VAL`/`PROBE_IN_LIVE`), activity/toggle detection flags (`PROBE_IN_ACT`, W1C), initial reset values
+  (`PROBE_OUT_INIT`), version `0x0300_0000`, autonomous loopback and stimulus generation, firmware demo `firmware/vio_demo`,
+  example `examples/vio-demo/project.toml`, determinism 5/5, unit tests and integration tests passing.
+* Next model: XADC Wizard (`xadc_wiz` 3.3, PG091, ADR-052).
   Each: Vitis driver example passes (`fixtures/bsp` has `xaxidma`/`xiic` style apps; add the missing ones).
 * **Real IP through `export_simulation`:** verify `-L secureip`/`unisims_ver` runs for a design with an AXI GPIO or
   clocking wizard in XSim (ADR-017 says this was never verified); then document which IP can run this way instead of

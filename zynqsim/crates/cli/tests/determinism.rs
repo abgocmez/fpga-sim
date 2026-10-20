@@ -112,6 +112,7 @@ const CASES: &[Case] = &[
     case("vidout-demo", "6ms"),
     case("vidin-demo", "6ms"),
     case("ila-demo", "6ms"),
+    case("vio-demo", "6ms"),
     case("gpio-timer-uart", "20ms"),
     Case {
         // The button press is scripted: capture on its rising edge at 3 ms.

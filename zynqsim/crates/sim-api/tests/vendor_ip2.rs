@@ -458,3 +458,27 @@ fn the_axi_ila_model_runs_capture_and_interrupts() {
         assert!(u.contains(line), "UART1 lacks `{line}`:\n{u}");
     }
 }
+
+#[test]
+fn the_axi_vio_model_runs_probes_and_interrupts() {
+    if !qemu_present() {
+        eprintln!("SKIPPED: Xilinx QEMU not found");
+        return;
+    }
+    let mut e = engine("vio-demo");
+    run_us(e.as_mut(), 10_000);
+    let u = uart(e.as_mut(), 1);
+    for line in [
+        "vio demo: Virtual Input/Output 3.0 virtual probe monitoring and control",
+        "VIO Version: 0x03000000",
+        "VIO software reset ok",
+        "VIO staged output commit ok",
+        "VIO loopback and input latch ok",
+        "VIO activity detection ok",
+        "VIO interrupt received",
+        "VIO PASS",
+        "RESULT: ALL PASS",
+    ] {
+        assert!(u.contains(line), "UART1 lacks `{line}`:\n{u}");
+    }
+}
