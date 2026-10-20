@@ -86,6 +86,10 @@ const CASES: &[Case] = &[
     },
     Case {
         qemu: false,
+        ..case("showcase-native", "40ms")
+    },
+    Case {
+        qemu: false,
         ..case("spi-demo", "20ms")
     },
     Case {
@@ -200,6 +204,10 @@ const CASES: &[Case] = &[
     Case {
         xsim: true,
         ..case("vivado-handoff", "20ms")
+    },
+    Case {
+        xsim: true,
+        ..case("showcase", "40ms")
     },
     Case {
         xsim: true,

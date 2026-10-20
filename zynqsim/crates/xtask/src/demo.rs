@@ -725,6 +725,27 @@ fn tour_steps() -> Vec<Step> {
                 &[Need::Qemu, Need::Xsim],
             )
         },
+        // The showcase: Vivado block design (user FIR RTL + five Xilinx IP) and Rust firmware.
+        Step {
+            section: 'h',
+            ..ps(
+                "showcase",
+                "examples/showcase/project.toml",
+                "40ms",
+                &[Check::Uart1("fir highpass: 64 samples hw==sw"), MATH_CHECK],
+                &[Need::Qemu, Need::Xsim],
+            )
+        },
+        Step {
+            section: 'h',
+            ..ps(
+                "showcase-native",
+                "examples/showcase-native/project.toml",
+                "40ms",
+                &[Check::Uart1("fir highpass: 64 samples hw==sw"), MATH_CHECK],
+                &[],
+            )
+        },
         Step {
             section: 'h',
             kind: Kind::Cmd,

@@ -26,6 +26,9 @@ const SWBTN: usize = 0x4121_0000; // axi_gpio_1
 const TIMER: usize = 0x4280_0000;
 const UART: usize = 0x4060_0000;
 const SPI: usize = 0x41E0_0000;
+const GLOBAL_TIMER: usize = 0xF8F0_0200;
+const GT_COUNTER_LO: usize = 0x00;
+const GT_CONTROL: usize = 0x08;
 
 // zs_fir register map.
 const FIR_CTRL: usize = 0x00;
@@ -217,10 +220,13 @@ pub extern "C" fn main() -> ! {
         fail("fir irq count");
     }
 
-    // 2. Highpass, polled.
+    // 2. Highpass, polled. The A9 global timer (enabled here) measures the pass.
+    write32(GLOBAL_TIMER + GT_CONTROL, 1);
+    let t0 = read32(GLOBAL_TIMER + GT_COUNTER_LO);
     if let Err(e) = highpass_pass(&x, &y_high) {
         fail(e);
     }
+    let gt_ticks = read32(GLOBAL_TIMER + GT_COUNTER_LO).wrapping_sub(t0);
     println!("fir highpass: {N} samples hw==sw");
 
     // 3. LEDs: walk 0x1, 0x2, 0x4, 0x8 (channel 1, tri-state cleared = outputs).
@@ -289,9 +295,8 @@ pub extern "C" fn main() -> ! {
     }
     println!("uartlite sent");
 
-    // ASSUMPTION: "hw fir: <N> timer ticks per sample" is informational. One FIR sample takes
-    // 9 cycles at 100 MHz (90 ns), which is less than one 1 ms timer tick, so N is 0.
-    println!("hw fir: 0 timer ticks per sample");
+    // Informational (not asserted): the polled pass, in A9 global-timer ticks per sample.
+    println!("hw fir: {} global-timer ticks per sample (polled)", gt_ticks / N as u32);
 
     // Final LED pattern, then `rt::finish` (end-of-test write 0xC051D0DE to 0x43C0003C).
     write32(LEDS + GPIO_DATA, 0x9);

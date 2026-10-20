@@ -236,6 +236,11 @@ done by re-execution, not a memory copy (docs/STATUS.md).
 The trace strip has a filter field (text, no regex) and the checkboxes uart, board, bus, marker,
 protocol. Type `uart` to show only those lines; **copy visible** puts the shown lines on the clipboard.
 
+## The big one: the showcase
+
+A Vivado block design (the user's FIR in Verilog + five Xilinx IP) and Rust firmware, run from a `BOOT.BIN`
+on the Xilinx QEMU + XSim, or natively with no Xilinx tool: see [SHOWCASE.md](SHOWCASE.md).
+
 ## Try your own design
 
 1. A Vivado hardware handoff (`design.xsa` exported from Vivado):
