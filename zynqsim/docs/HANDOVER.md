@@ -218,7 +218,13 @@ Goal: a stranger can take a trivial Vitis project + Vivado XSA and see it run, w
   input sampling (`PROBE_IN_VAL`/`PROBE_IN_LIVE`), activity/toggle detection flags (`PROBE_IN_ACT`, W1C), initial reset values
   (`PROBE_OUT_INIT`), version `0x0300_0000`, autonomous loopback and stimulus generation, firmware demo `firmware/vio_demo`,
   example `examples/vio-demo/project.toml`, determinism 5/5, unit tests and integration tests passing.
-* Next model: XADC Wizard (`xadc_wiz` 3.3, PG091, ADR-052).
+* **XADC Wizard (`xadc_wiz` 3.3, ADR-052) — DONE:** Behavioural model in `crates/vendor-ip/src/xadc_wiz.rs`,
+  64 KiB address window (`0x10000` bytes), registers `SRR` (reset key `0x0000_000A`), `SR` (done, eoc, eos, busy, channel, alarms, OT),
+  `AIFR`, `CONVST`, `IPISR`/`IPIER` (W1C interrupts for alarms, OT, EOS, EOC), `GIER`, direct memory-mapped DRP registers
+  (`0x200..=0x3FC`: `TEMP`, `VCCINT`, `VCCAUX`, `VCCBRAM`, `VAUX[0..15]`, Max/Min tracking, alarm thresholds), simulated conversion
+  sequencer with EOC/EOS/alarm interrupts, physical transfer functions, firmware demo `firmware/xadc_demo`, example `examples/xadc-demo/project.toml`,
+  determinism 5/5, unit tests and integration tests passing.
+* Next model: AXI Performance Monitor (`axi_perf_mon` 5.0, PG037, ADR-053). Preserve unmodelled IP rejection test on `fixtures/xsa/zs_math_hwicap.hwh`.
   Each: Vitis driver example passes (`fixtures/bsp` has `xaxidma`/`xiic` style apps; add the missing ones).
 * **Real IP through `export_simulation`:** verify `-L secureip`/`unisims_ver` runs for a design with an AXI GPIO or
   clocking wizard in XSim (ADR-017 says this was never verified); then document which IP can run this way instead of

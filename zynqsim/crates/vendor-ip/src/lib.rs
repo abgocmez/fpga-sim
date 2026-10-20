@@ -68,6 +68,8 @@ pub mod ila;
 pub use ila::{AxiIla, IlaConfig, IlaHandle, IlaStats};
 pub mod vio;
 pub use vio::{AxiVio, AxiVioHandle, VioConfig, VioStats};
+pub mod xadc_wiz;
+pub use xadc_wiz::{AxiXadc, AxiXadcHandle, XadcConfig, XadcStats};
 pub mod uart16550;
 pub use uart16550::{AxiUart16550, Uart16550Config, Uart16550Handle, Uart16550Stats};
 pub mod v_axi4s_vid_out;
@@ -98,6 +100,7 @@ pub const MODELS: &[&str] = &[
     "v_vid_in_axi4s",
     "ila",
     "vio",
+    "xadc_wiz",
 ];
 
 /// True when `name` (`axi_gpio`) is a model of this library.
@@ -241,6 +244,12 @@ pub fn param_names(model: &str) -> &'static [&'static str] {
             "C_PROBE_OUT0_INIT_VAL",
             "C_PROBE_OUT1_INIT_VAL",
             "C_EN_PROBE_IN_ACTIVITY",
+            "CLK_FREQ_HZ",
+        ],
+        "xadc_wiz" => &[
+            "C_SIM_MONITOR_FILE",
+            "ENABLE_EXTERNAL_MUX",
+            "C_HAS_ALARM",
             "CLK_FREQ_HZ",
         ],
         _ => &[],
@@ -454,6 +463,7 @@ pub struct VendorPl {
     vid_ins: Vec<(String, VidInHandle)>,
     ilas: Vec<(String, IlaHandle)>,
     vios: Vec<(String, AxiVioHandle)>,
+    xadcs: Vec<(String, AxiXadcHandle)>,
     /// Pin changes of the I2C masters, stamped with their (possibly future) bus times; they
     /// are handed out once PL time has reached them.
     iic_events: Arc<Mutex<Vec<PinEvent>>>,
@@ -509,6 +519,7 @@ impl VendorPl {
             vid_ins: Vec::new(),
             ilas: Vec::new(),
             vios: Vec::new(),
+            xadcs: Vec::new(),
             iic_events: Arc::new(Mutex::new(Vec::new())),
             board_out: Vec::new(),
             pin_events: Vec::new(),
@@ -753,6 +764,12 @@ impl VendorPl {
                 self.vios.push((inst.name.clone(), handle));
                 Box::new(v)
             }
+            "xadc_wiz" => {
+                let cfg = XadcConfig::from_params(&inst.params, size).map_err(ctx)?;
+                let (x, handle) = AxiXadc::new(&inst.name, cfg);
+                self.xadcs.push((inst.name.clone(), handle));
+                Box::new(x)
+            }
             other => {
                 return Err(format!(
                     "instance `{}`: `{other}` is not a vendor-ip model; available: {}",
@@ -938,6 +955,14 @@ impl VendorPl {
     /// The Virtual Input/Output handle of instance `name`.
     pub fn vio(&self, name: &str) -> Option<AxiVioHandle> {
         self.vios
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, h)| h.clone())
+    }
+
+    /// The XADC Wizard handle of instance `name`.
+    pub fn xadc(&self, name: &str) -> Option<AxiXadcHandle> {
+        self.xadcs
             .iter()
             .find(|(n, _)| n == name)
             .map(|(_, h)| h.clone())

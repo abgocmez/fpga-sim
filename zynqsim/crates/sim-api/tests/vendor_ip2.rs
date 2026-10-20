@@ -482,3 +482,26 @@ fn the_axi_vio_model_runs_probes_and_interrupts() {
         assert!(u.contains(line), "UART1 lacks `{line}`:\n{u}");
     }
 }
+
+#[test]
+fn the_axi_xadc_model_runs_readings_and_interrupts() {
+    if !qemu_present() {
+        eprintln!("SKIPPED: Xilinx QEMU not found");
+        return;
+    }
+    let mut e = engine("xadc-demo");
+    run_us(e.as_mut(), 10_000);
+    let u = uart(e.as_mut(), 1);
+    for line in [
+        "xadc demo: 7-Series / Zynq-7000 XADC Wizard 3.3 analog monitoring and alarms",
+        "XADC Status:",
+        "XADC software reset ok",
+        "XADC Raw Sensors:",
+        "XADC sensor ranges ok",
+        "XADC interrupt received",
+        "XADC PASS",
+        "RESULT: ALL PASS",
+    ] {
+        assert!(u.contains(line), "UART1 lacks `{line}`:\n{u}");
+    }
+}

@@ -1,0 +1,42 @@
+# 7-Series / Zynq-7000 XADC Wizard (xadc_wiz 3.3, PG091) with no RTL: the Xilinx IP runs as a vendor-ip model
+# (crates/vendor-ip, ADR-052) on the native PL.
+#
+# Firmware: firmware/xadc_demo (Rust, no_std). CPU tests version, software reset via SRR key 0xA,
+# DRP sensor reading of on-chip sensors (temperature, VCCINT, VCCAUX, VCCBRAM),
+# sequencer conversion progression, and End-of-Sequence / End-of-Conversion interrupts on IRQ_F2P[0].
+#
+#   zynqsim run --project examples/xadc-demo/project.toml --for 6ms
+#   expect on UART1: "XADC Status:", "XADC software reset ok", "XADC Raw Sensors:", "XADC sensor ranges ok", "XADC interrupt received", "XADC PASS", "RESULT: ALL PASS"
+#
+# Needs: the Xilinx QEMU (Vitis). No Vivado is needed to RUN this.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "native"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_xadc.elf"
+
+[native]
+xadc_wiz_0 = "xadc_wiz"
+
+[native_params.xadc_wiz_0]
+C_HAS_ALARM = 1
+CLK_FREQ_HZ = 100000000
+ADDRESS_SIZE = "0x10000"
+
+[connect]
+"xadc_wiz_0.ctrl" = "M_AXI_GP0@0x43000000"
+"xadc_wiz_0.irq" = "IRQ_F2P[0]"
+
