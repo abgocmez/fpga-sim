@@ -1,0 +1,43 @@
+# Xilinx AXI Performance Monitor (axi_perf_mon 5.0, PG037) with no RTL: the Xilinx IP runs as a vendor-ip model
+# (crates/vendor-ip, ADR-053) on the native PL.
+#
+# Firmware: firmware/perf_mon_demo (Rust, no_std). CPU tests version, software reset via SRR key 0xA,
+# metric selection registers (MSR0, MSR1), sample interval timer, active metric counter readout,
+# sampled snapshot latching, manual snapshot triggering, and sample interval interrupts on IRQ_F2P[0].
+#
+#   zynqsim run --project examples/perf-mon-demo/project.toml --for 6ms
+#   expect on UART1: "APM Status:", "APM software reset ok", "APM metric selection registers ok", "APM sample interval register ok", "APM sample interval interrupt received", "APM Active Metrics:", "APM Sampled Metrics:", "APM manual snapshot ok", "PERF_MON PASS", "RESULT: ALL PASS"
+#
+# Needs: the Xilinx QEMU (Vitis). No Vivado is needed to RUN this.
+schema_version = 1
+
+[board]
+name = "zybo-z7-20"
+
+[backends]
+ps = "qemu"
+pl = "native"
+
+[sim]
+quantum_ns = 1000
+icount_shift = 1
+
+[boot]
+mode = "elf"
+
+[cpu0]
+elf = "../../fixtures/elf/rust_perf_mon.elf"
+
+[native]
+axi_perf_mon_0 = "axi_perf_mon"
+
+[native_params.axi_perf_mon_0]
+C_NUM_MONITOR_SLOTS = 2
+C_METRIC_COUNT_WIDTH = 64
+CLK_FREQ_HZ = 100000000
+ADDRESS_SIZE = "0x10000"
+
+[connect]
+"axi_perf_mon_0.ctrl" = "M_AXI_GP0@0x43000000"
+"axi_perf_mon_0.irq" = "IRQ_F2P[0]"
+

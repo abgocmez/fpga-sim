@@ -224,7 +224,13 @@ Goal: a stranger can take a trivial Vitis project + Vivado XSA and see it run, w
   (`0x200..=0x3FC`: `TEMP`, `VCCINT`, `VCCAUX`, `VCCBRAM`, `VAUX[0..15]`, Max/Min tracking, alarm thresholds), simulated conversion
   sequencer with EOC/EOS/alarm interrupts, physical transfer functions, firmware demo `firmware/xadc_demo`, example `examples/xadc-demo/project.toml`,
   determinism 5/5, unit tests and integration tests passing.
-* Next model: AXI Performance Monitor (`axi_perf_mon` 5.0, PG037, ADR-053). Preserve unmodelled IP rejection test on `fixtures/xsa/zs_math_hwicap.hwh`.
+* **AXI Performance Monitor (`axi_perf_mon` 5.0, ADR-053) — DONE:** Behavioural model in `crates/vendor-ip/src/axi_perf_mon.rs`,
+  64 KiB address window (`0x10000` bytes), registers `SRR` (reset key `0x0000_000A`), `SR` (metric/sample count enable, sample expired),
+  `CR` (metric/sample count enables, resets, sample load), `SICR` (manual snapshot trigger), `IPISR`/`IPIER` (W1C interrupts for sample expired
+  and metric overflow), `SI_REG`/`SIC_REG` (sample interval timer with auto-reload), `MSR0`/`MSR1` (metric selection), active metric counters
+  (`0x100..=0x17C`, MC0..MC7) and sampled snapshot counters (`0x200..=0x27C`, SMC0..SMC7), simulated bus traffic progression, external
+  transaction recording via handle, firmware demo `firmware/perf_mon_demo`, example `examples/perf-mon-demo/project.toml`, determinism 5/5,
+  unit tests and integration tests passing. Preserved unmodelled IP rejection test on `fixtures/xsa/zs_math_hwicap.hwh`.
   Each: Vitis driver example passes (`fixtures/bsp` has `xaxidma`/`xiic` style apps; add the missing ones).
 * **Real IP through `export_simulation`:** verify `-L secureip`/`unisims_ver` runs for a design with an AXI GPIO or
   clocking wizard in XSim (ADR-017 says this was never verified); then document which IP can run this way instead of

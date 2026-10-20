@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<!--
+  HAND-WRITTEN handoff in Vivado's HWH schema: the user's math IP plus an
+  AXI Performance Monitor core (axi_perf_mon 5.0).
+-->
+<EDKSYSTEM EDWVERSION="1.2" VIVADOVERSION="2022.1">
+  <SYSTEMINFO ARCH="zynq" DEVICE="7z020" NAME="design_perf_mon"/>
+  <MODULES>
+    <MODULE INSTANCE="processing_system7_0" MODTYPE="processing_system7" VLNV="xilinx.com:ip:processing_system7:5.5">
+      <PARAMETERS>
+        <PARAMETER NAME="PCW_USE_M_AXI_GP0" VALUE="1"/>
+        <PARAMETER NAME="PCW_USE_FABRIC_INTERRUPT" VALUE="1"/>
+        <PARAMETER NAME="PCW_IRQ_F2P_INTR" VALUE="1"/>
+        <PARAMETER NAME="PCW_EN_CLK0_PORT" VALUE="1"/>
+        <PARAMETER NAME="PCW_FPGA0_PERIPHERAL_FREQMHZ" VALUE="100"/>
+      </PARAMETERS>
+      <PORTS>
+        <PORT DIR="I" LEFT="0" NAME="IRQ_F2P" RIGHT="0" SENSITIVITY="LEVEL_HIGH" SIGIS="INTERRUPT">
+          <CONNECTIONS><CONNECTION INSTANCE="axi_perf_mon_0" PORT="core_interrupt"/></CONNECTIONS>
+        </PORT>
+        <PORT CLKFREQUENCY="100000000" DIR="O" NAME="FCLK_CLK0" SIGIS="clk"/>
+      </PORTS>
+      <MEMORYMAP>
+        <MEMRANGE ADDRESSBLOCK="Reg" BASEVALUE="0x43C00000" HIGHVALUE="0x43C00FFF" INSTANCE="u_math" MASTERBUSINTERFACE="M_AXI_GP0" MEMTYPE="REGISTER" SLAVEBUSINTERFACE="S_AXI"/>
+        <MEMRANGE ADDRESSBLOCK="Reg" BASEVALUE="0x43000000" HIGHVALUE="0x4300FFFF" INSTANCE="axi_perf_mon_0" MASTERBUSINTERFACE="M_AXI_GP0" MEMTYPE="REGISTER" SLAVEBUSINTERFACE="s_axi"/>
+      </MEMORYMAP>
+    </MODULE>
+    <MODULE INSTANCE="u_math" MODTYPE="my_math_ip" VLNV="xilinx.com:module_ref:my_math_ip:1.0">
+      <PORTS>
+        <PORT CLKFREQUENCY="100000000" DIR="I" NAME="S_AXI_ACLK" SIGIS="clk">
+          <CONNECTIONS><CONNECTION INSTANCE="processing_system7_0" PORT="FCLK_CLK0"/></CONNECTIONS>
+        </PORT>
+      </PORTS>
+    </MODULE>
+    <MODULE INSTANCE="axi_perf_mon_0" MODTYPE="axi_perf_mon" VLNV="xilinx.com:ip:axi_perf_mon:5.0">
+      <PORTS>
+        <PORT CLKFREQUENCY="100000000" DIR="I" NAME="core_aclk" SIGIS="clk">
+          <CONNECTIONS><CONNECTION INSTANCE="processing_system7_0" PORT="FCLK_CLK0"/></CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" NAME="core_interrupt" SENSITIVITY="LEVEL_HIGH" SIGIS="INTERRUPT">
+          <CONNECTIONS><CONNECTION INSTANCE="processing_system7_0" PORT="IRQ_F2P"/></CONNECTIONS>
+        </PORT>
+      </PORTS>
+    </MODULE>
+  </MODULES>
+</EDKSYSTEM>
+

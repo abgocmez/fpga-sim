@@ -338,6 +338,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "perf_mon_demo"
+version = "0.1.0"
+dependencies = [
+ "rt",
+]
+
+[[package]]
 name = "pmod_simple_demo"
 version = "0.1.0"
 dependencies = [

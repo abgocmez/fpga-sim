@@ -426,6 +426,32 @@ fn the_xadc_design_maps_the_xadc_model() {
     assert!(toml.contains("xadc_wiz_0 = \"xadc_wiz\""), "{toml}");
 }
 
+#[test]
+fn the_perf_mon_design_maps_the_perf_mon_model() {
+    let d = temp("perf_mon_map");
+    let xsa = fixtures().join("xsa/zs_math_perf_mon.hwh");
+    let rtl = fixtures().join("rtl/math/my_math_ip.v");
+    let elf = fixtures().join("elf/math_test.elf");
+    let o = zynqsim(&[
+        "--json",
+        "init",
+        "--xsa",
+        xsa.to_str().unwrap(),
+        "--out",
+        d.to_str().unwrap(),
+        "--rtl",
+        rtl.to_str().unwrap(),
+        "--elf",
+        elf.to_str().unwrap(),
+    ]);
+    assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
+    let v: Value = serde_json::from_str(&stdout(&o)).unwrap();
+    assert_eq!(v["design"], "design_perf_mon");
+    assert_eq!(v["runnable"], true);
+    let toml = std::fs::read_to_string(d.join("project.toml")).unwrap();
+    assert!(toml.contains("axi_perf_mon_0 = \"axi_perf_mon\""), "{toml}");
+}
+
 /// Without the RTL the module reference has no source: that is reported, not guessed.
 #[test]
 fn a_module_reference_without_its_rtl_asks_for_it() {

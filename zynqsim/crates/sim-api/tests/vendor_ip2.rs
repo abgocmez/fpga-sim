@@ -505,3 +505,29 @@ fn the_axi_xadc_model_runs_readings_and_interrupts() {
         assert!(u.contains(line), "UART1 lacks `{line}`:\n{u}");
     }
 }
+
+#[test]
+fn the_axi_perf_mon_model_runs_metrics_and_interrupts() {
+    if !qemu_present() {
+        eprintln!("SKIPPED: Xilinx QEMU not found");
+        return;
+    }
+    let mut e = engine("perf-mon-demo");
+    run_us(e.as_mut(), 10_000);
+    let u = uart(e.as_mut(), 1);
+    for line in [
+        "perf_mon demo: Xilinx AXI Performance Monitor 5.0 (PG037)",
+        "APM Status:",
+        "APM software reset ok:",
+        "APM metric selection registers ok",
+        "APM sample interval register ok",
+        "APM sample interval interrupt received",
+        "APM Active Metrics:",
+        "APM Sampled Metrics:",
+        "APM manual snapshot ok:",
+        "PERF_MON PASS",
+        "RESULT: ALL PASS",
+    ] {
+        assert!(u.contains(line), "UART1 lacks `{line}`:\n{u}");
+    }
+}

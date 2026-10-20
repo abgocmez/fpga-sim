@@ -282,6 +282,31 @@ fn the_xadc_design_maps_the_xadc_native_model() {
 }
 
 #[test]
+fn the_perf_mon_design_maps_the_perf_mon_native_model() {
+    let out = temp("perf_mon_native");
+    let opts = ImportOptions {
+        rtl: vec![fixtures().join("rtl/math/my_math_ip.v")],
+        elf: Some(
+            fixtures()
+                .join("elf/math_test.elf")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        ..Default::default()
+    };
+    let plan = xsa::plan(&fixtures().join("xsa/zs_math_perf_mon.hwh"), &out, &opts).unwrap();
+    assert_eq!(plan.testbench_module.as_deref(), Some("my_math_ip"));
+    assert!(plan.unmodelled.is_empty(), "{:?}", plan.unmodelled);
+    assert!(plan.runnable_design());
+    assert_eq!(plan.project.native["axi_perf_mon_0"], "axi_perf_mon");
+    assert_eq!(plan.project.native_irq("axi_perf_mon_0"), Some(0));
+    assert_eq!(
+        plan.project.native_placement("axi_perf_mon_0"),
+        Some((0, 0x4300_0000))
+    );
+}
+
+#[test]
 fn the_vdma_design_maps_the_vdma_native_model() {
     let out = temp("vdma_native");
     let opts = ImportOptions {

@@ -192,6 +192,7 @@ fn plumbing_clock_wizards_and_block_memory_are_passive_ip() {
         ("xilinx.com:ip:ila:6.2", "ila"),
         ("xilinx.com:ip:vio:3.0", "vio"),
         ("xilinx.com:ip:xadc_wiz:3.3", "xadc_wiz"),
+        ("xilinx.com:ip:axi_perf_mon:5.0", "axi_perf_mon"),
     ] {
         assert!(matches!(classify(vlnv, name), VendorIp { .. }), "{name}");
     }

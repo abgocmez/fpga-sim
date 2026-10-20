@@ -46,6 +46,7 @@ pub const NATIVE_MODELS: &[&str] = &[
     "ila",
     "vio",
     "xadc_wiz",
+    "axi_perf_mon",
 ];
 
 /// A native PL model to place on a GP port.
