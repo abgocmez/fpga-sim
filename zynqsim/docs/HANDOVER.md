@@ -4,6 +4,9 @@ For the next engineer or agent (written for continuing in Antigravity). Read it 
 per-subsystem status; it wins over any prose here), `docs/DEMO.md` (what to run to see everything),
 `docs/TEST_YOUR_DESIGN.md` (the user path) and the ADRs in `docs/adr/`.
 
+The showcase demo and the findings of its first real trial (native `BOOT.BIN`, stale `ps7_init` text, interactive
+switches) are in `docs/HANDOVER_SHOWCASE.md`; read it next.
+
 Written on 2026-10-19 at commit `050f010` (branch `p12-merge`, pushed to `origin/p12-merge`).
 Replaces the round-1 handover; its finished items are summarised in section 2.
 
