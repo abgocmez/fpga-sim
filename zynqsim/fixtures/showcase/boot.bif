@@ -1,0 +1,18 @@
+// BOOT.BIN of the ZynqSim showcase (bootgen 2022.1, -arch zynq). Run from this directory:
+//
+//   bootgen -arch zynq -image boot.bif -w on -o BOOT.BIN
+//
+// Same recipe as fixtures/boot/boot.bif (see fixtures/boot/mkstubs.py for the two stand-ins):
+// ../boot/fsbl_stub.elf : an ARM ELF (four `b .` at 0x0) standing in for the FSBL; no FSBL is
+//                         built on this machine, and ZynqSim never executes it
+// ../boot/dummy.bit     : a valid .bit container that is NOT a design (the PL is simulated from
+//                         the design.xsa / export RTL, never from a bitstream)
+// the application       : fixtures/elf/rust_showcase.elf, the firmware of the showcase
+//                         (firmware/showcase_demo, built by `cargo xtask firmware`)
+the_ROM_image:
+{
+	[init] ../boot/regs.int
+	[bootloader] ../boot/fsbl_stub.elf
+	../boot/dummy.bit
+	[checksum=md5] ../elf/rust_showcase.elf
+}
