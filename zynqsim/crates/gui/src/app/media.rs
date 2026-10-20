@@ -40,7 +40,8 @@ pub(super) fn storage_table(ui: &mut egui::Ui, st: &sim_api::StorageStatus) {
                 } else {
                     ui.label(RichText::new("read-only").color(Color32::GRAY))
                         .on_hover_text(
-                            "Writes discarded: they go to a throw-away overlay, and the host \n                             file is never modified.",
+                            "Writes discarded: they go to a throw-away overlay, and the host \
+                             file is never modified.",
                         );
                 }
                 ui.end_row();

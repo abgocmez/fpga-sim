@@ -64,6 +64,64 @@ impl App {
         }
     }
 
+    /// Asks for a Vivado XSA or HWH handoff file and imports it into a project.
+    pub(super) fn new_from_xsa_dialog(&mut self) {
+        let dir = self.draft.dir.clone();
+        let Some(file) = dialogs::pick_file(
+            "New project from Vivado hardware handoff (XSA or HWH)",
+            &dir,
+            &[
+                ("Vivado hardware handoff", &["xsa", "hwh"]),
+                ("all files", &["*"]),
+            ],
+        ) else {
+            if !dialogs::AVAILABLE {
+                self.draft_msg = Some(
+                    "this build has no file dialogs: use `zynqsim init --xsa` on the command line"
+                        .to_string(),
+                );
+                self.project_open = true;
+            }
+            return;
+        };
+        self.new_from_xsa_file(file);
+    }
+
+    /// Imports `xsa_file` into a project directory and builds it.
+    pub(super) fn new_from_xsa_file(&mut self, xsa_file: PathBuf) {
+        self.new_from_xsa_file_with_opts(xsa_file, sim_api::xsa::ImportOptions::default());
+    }
+
+    /// Imports `xsa_file` with explicit options into a project directory and builds it.
+    pub(super) fn new_from_xsa_file_with_opts(
+        &mut self,
+        xsa_file: PathBuf,
+        opts: sim_api::xsa::ImportOptions,
+    ) {
+        let stem = xsa_file
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "design".to_string());
+        let parent = xsa_file.parent().unwrap_or(&self.draft.dir);
+        let out_dir = parent.join(format!("{stem}_project"));
+        match sim_api::xsa::plan(&xsa_file, &out_dir, &opts) {
+            Ok(plan) => match plan.write(&out_dir) {
+                Ok(_) => {
+                    let project_file = out_dir.join("project.toml");
+                    self.open_project_file(project_file);
+                }
+                Err(e) => {
+                    self.draft_msg = Some(format!("cannot write project: {}", e.message));
+                    self.project_open = true;
+                }
+            },
+            Err(e) => {
+                self.draft_msg = Some(format!("cannot import XSA: {}", e.message));
+                self.project_open = true;
+            }
+        }
+    }
+
     fn browse_into(
         draft_dir: &std::path::Path,
         title: &str,
@@ -416,6 +474,9 @@ impl App {
                     if ui.button("Open project…").clicked() {
                         self.open_requested = true;
                     }
+                    if ui.button("New from XSA…").clicked() {
+                        self.xsa_requested = true;
+                    }
                 });
                 if !dialogs::AVAILABLE {
                     ui.label(
@@ -434,6 +495,10 @@ impl App {
         if self.open_requested {
             self.open_requested = false;
             self.open_project_dialog();
+        }
+        if self.xsa_requested {
+            self.xsa_requested = false;
+            self.new_from_xsa_dialog();
         }
     }
 }

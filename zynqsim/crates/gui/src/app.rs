@@ -119,6 +119,7 @@ pub struct App {
     draft: ProjectDraft,
     draft_msg: Option<String>,
     open_requested: bool,
+    xsa_requested: bool,
     autoplay: bool,
     seen_generation: u32,
     // media panels
@@ -217,6 +218,7 @@ impl App {
             draft,
             draft_msg: None,
             open_requested: false,
+            xsa_requested: false,
             autoplay: false,
             seen_generation: 0,
             media: media::MediaUi::default(),
@@ -300,6 +302,13 @@ impl App {
                 .clicked()
             {
                 self.open_requested = true;
+            }
+            if ui
+                .button("New from XSA…")
+                .on_hover_text("Import a Vivado hardware handoff (XSA or HWH) into a new project")
+                .clicked()
+            {
+                self.xsa_requested = true;
             }
             if ui
                 .button("Project…")
@@ -1465,6 +1474,33 @@ pub(super) mod tests {
         h.app
             .open_project_file(std::path::PathBuf::from("no/such/project.toml"));
         assert!(h.app.draft_msg.is_some());
+    }
+
+    #[test]
+    fn the_gui_new_from_xsa_imports_and_opens_the_project() {
+        let mut h = Harness::new();
+        let fixtures = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+        let xsa = fixtures.join("xsa/zs_math_perf_mon.hwh");
+        let temp_dir =
+            std::env::temp_dir().join(format!("zynqsim-gui-xsa-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let test_hwh = temp_dir.join("test_math_gpio.hwh");
+        std::fs::copy(&xsa, &test_hwh).unwrap();
+
+        let g = h.app.model.generation;
+        let opts = sim_api::xsa::ImportOptions {
+            rtl: vec![fixtures.join("rtl/math/my_math_ip.v")],
+            ps: Some("demo".to_string()),
+            pl: Some("demo".to_string()),
+            ..Default::default()
+        };
+        h.app.new_from_xsa_file_with_opts(test_hwh, opts);
+        assert!(h.app.draft_msg.is_none(), "error: {:?}", h.app.draft_msg);
+        wait_for_engine(&mut h, g);
+        assert_eq!(h.app.draft.board_name, "zybo-z7-20");
+        assert_eq!(h.app.model.status.ps_backend, "demo");
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     /// Waits until the model has adopted a freshly built engine.

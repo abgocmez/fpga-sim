@@ -247,7 +247,7 @@ Goal: a stranger can take a trivial Vitis project + Vivado XSA and see it run, w
 * **H4.** Gate speed: use the per-step timings; candidates `cargo nextest`, fewer test binaries, shorter simulated
   durations, smaller determinism table for unchanged examples (`ci --det-only`).
 * **H5.** GUI leftovers: 3D view, memory viewer, running-status text not re-photographed; Pmod panel for the Pcam;
-  storage panel "writes discarded" wording; New from XSA (see P1).
+  storage panel "writes discarded" wording fixed; "New from XSA…" dialog and control-bar button implemented (see P1).
 * **H6.** Document the QEMU-machine limits (private timer rate, no devcfg/SCU watchdog in this QEMU build) and the
   native-PS route instead of patching QEMU.
 
